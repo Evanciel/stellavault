@@ -16,6 +16,7 @@ import { briefCommand } from './commands/brief-cmd.js';
 import { digestCommand } from './commands/digest-cmd.js';
 import { initCommand } from './commands/init-cmd.js';
 import { learnCommand } from './commands/learn-cmd.js';
+import { contradictionsCommand } from './commands/contradictions-cmd.js';
 
 const program = new Command();
 
@@ -67,6 +68,11 @@ program
   .command('learn')
   .description('AI learning path — personalized recommendations based on decay + gaps')
   .action(learnCommand);
+
+program
+  .command('contradictions')
+  .description('Detect contradicting statements across your notes')
+  .action(contradictionsCommand);
 
 program
   .command('decay')

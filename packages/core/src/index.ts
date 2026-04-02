@@ -47,6 +47,12 @@ export type { DecayState, AccessEvent, DecayReport } from './intelligence/types.
 export { computeRetrievability, updateStability, estimateInitialStability, elapsedDays } from './intelligence/fsrs.js';
 export { detectDuplicates } from './intelligence/duplicate-detector.js';
 export { detectKnowledgeGaps } from './intelligence/gap-detector.js';
+export { detectContradictions } from './intelligence/contradiction-detector.js';
+export type { ContradictionPair } from './intelligence/contradiction-detector.js';
+export { computeSemanticDrift, findMostDrifted, hashEmbedding } from './intelligence/semantic-versioning.js';
+export type { SemanticChangelog, SemanticVersion } from './intelligence/semantic-versioning.js';
+export { predictKnowledgeGaps } from './intelligence/predictive-gaps.js';
+export type { PredictedGap } from './intelligence/predictive-gaps.js';
 export type { DuplicatePair } from './intelligence/duplicate-detector.js';
 export { generateLearningPath } from './intelligence/learning-path.js';
 export type { LearningPath, LearningItem, LearningPathInput } from './intelligence/learning-path.js';
@@ -56,6 +62,14 @@ export type { Notification, NotificationConfig } from './intelligence/notificati
 // Plugin SDK
 export { PluginManager } from './plugins/index.js';
 export type { StellavaultPlugin, PluginManifest, PluginEvent, PluginContext } from './plugins/index.js';
+export { WebhookManager } from './plugins/webhooks.js';
+export type { WebhookConfig, WebhookDelivery } from './plugins/webhooks.js';
+export { loadCustomTools } from './mcp/custom-tools.js';
+export type { CustomToolDef, LoadedCustomTool } from './mcp/custom-tools.js';
+
+// i18n
+export { t, setLocale, getLocale, detectLocale } from './i18n/index.js';
+export type { Locale } from './i18n/index.js';
 
 // Error Recovery
 export { withRetry, StellavaultError, wrapError, errors } from './utils/retry.js';

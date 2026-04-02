@@ -14,10 +14,12 @@ import { useGraphStore } from '../stores/graph-store.js';
 import { useLayout } from '../hooks/useLayout.js';
 import { usePulse } from '../hooks/usePulse.js';
 import { useDecay } from '../hooks/useDecay.js';
+import { useKeyboardNav } from '../hooks/useKeyboardNav.js';
 
 function Scene() {
   useLayout();
   useDecay(); // 감쇠 데이터 로딩
+  useKeyboardNav(); // 키보드 그래프 탐색
   const { startPulse, stopPulse } = usePulse();
   const hoveredNodeId = useGraphStore((s) => s.hoveredNodeId);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
