@@ -55,6 +55,10 @@ interface GraphState {
   timelineRange: [number, number] | null; // [startMs, endMs] or null = show all
   searchHistory: string[];
   maxVisibleNodes: number; // performance cap for large vaults
+  viewMode: 'universe' | 'multiverse';
+  federationPeers: Array<{ peerId: string; displayName: string; documentCount: number; topTopics: string[] }>;
+  setViewMode: (mode: 'universe' | 'multiverse') => void;
+  setFederationPeers: (peers: Array<{ peerId: string; displayName: string; documentCount: number; topTopics: string[] }>) => void;
 
   setGraphData: (nodes: GraphNode[], edges: GraphEdge[], clusters: Cluster[]) => void;
   selectNode: (id: string | null) => void;
@@ -105,6 +109,10 @@ export const useGraphStore = create<GraphState>((set) => ({
   timelineRange: null,
   searchHistory: JSON.parse(localStorage.getItem('sv_search_history') ?? '[]') as string[],
   maxVisibleNodes: 5000,
+  viewMode: 'universe' as const,
+  federationPeers: [],
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setFederationPeers: (peers) => set({ federationPeers: peers }),
 
   setGraphData: (nodes, edges, clusters) => set({ nodes, edges, clusters, hiddenClusters: new Set() }),
   selectNode: (id) => set({ selectedNodeId: id }),

@@ -13,8 +13,18 @@ import { MotionOverlay } from './MotionOverlay.js';
 import { useMotion } from '../hooks/useMotion.js';
 import { useGraphStore } from '../stores/graph-store.js';
 import { ToolsPanel } from './ToolsPanel.js';
+import { MultiverseView } from './MultiverseView.js';
 
 export function Layout() {
+  const viewMode = useGraphStore((s) => s.viewMode);
+  const setViewMode = useGraphStore((s) => s.setViewMode);
+
+  // 멀티버스 모드면 멀티버스 뷰 렌더링
+  if (viewMode === 'multiverse') {
+    return <MultiverseView />;
+  }
+
+  // 기존 universe 모드
   const error = useGraphStore((s) => s.error);
   const loading = useGraphStore((s) => s.loading);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
@@ -71,6 +81,17 @@ export function Layout() {
         position: 'relative',
         zIndex: 10,
       }}>
+        <button
+          onClick={() => setViewMode('multiverse')}
+          style={{
+            padding: '4px 10px', fontSize: '11px', border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.12)'}`,
+            borderRadius: '4px', cursor: 'pointer',
+            background: isDark ? 'rgba(100,120,255,0.06)' : 'rgba(0,0,0,0.03)',
+            color: isDark ? '#88aaff' : '#4466aa', marginRight: '8px',
+          }}
+        >
+          Multiverse
+        </button>
         <span style={{ fontSize: '14px', fontWeight: 600, color: isDark ? '#c0c0f0' : '#2a2a4a', letterSpacing: '0.5px' }}>
           Stellavault
         </span>
