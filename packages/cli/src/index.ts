@@ -19,6 +19,8 @@ import { learnCommand } from './commands/learn-cmd.js';
 import { contradictionsCommand } from './commands/contradictions-cmd.js';
 import { federateJoinCommand, federateStatusCommand } from './commands/federate-cmd.js';
 import { cloudSyncCommand, cloudRestoreCommand, cloudStatusCommand } from './commands/cloud-cmd.js';
+import { vaultAddCommand, vaultListCommand, vaultRemoveCommand, vaultSearchAllCommand } from './commands/vault-cmd.js';
+import { captureCommand } from './commands/capture-cmd.js';
 
 const program = new Command();
 
@@ -132,6 +134,21 @@ federate.command('join')
 federate.command('status')
   .description('Show federation identity and status')
   .action(federateStatusCommand);
+
+program
+  .command('capture <audio-file>')
+  .description('Voice capture — transcribe audio to knowledge note (requires Whisper)')
+  .option('-m, --model <model>', 'Whisper model (tiny/base/small/medium/large)', 'base')
+  .option('-l, --language <lang>', 'Language (auto-detect if omitted)')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .option('-f, --folder <folder>', 'Vault subfolder', '01_Knowledge/voice')
+  .action(captureCommand);
+
+const vault = program.command('vault').description('Multi-Vault — manage and search across vaults');
+vault.command('add <id> <path>').description('Register a vault').option('-n, --name <name>', 'Display name').option('-s, --shared', 'Allow federation sharing').action(vaultAddCommand);
+vault.command('list').description('List registered vaults').action(vaultListCommand);
+vault.command('remove <id>').description('Unregister a vault').action(vaultRemoveCommand);
+vault.command('search-all <query>').description('Search across all registered vaults').option('-l, --limit <n>', 'Max results', '10').action(vaultSearchAllCommand);
 
 const cloud = program.command('cloud').description('Cloud — E2E encrypted backup');
 cloud.command('sync').description('Upload encrypted DB to cloud').action(cloudSyncCommand);

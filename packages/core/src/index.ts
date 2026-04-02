@@ -59,6 +59,21 @@ export type { LearningPath, LearningItem, LearningPathInput } from './intelligen
 export { checkNotifications } from './intelligence/notifications.js';
 export type { Notification, NotificationConfig } from './intelligence/notifications.js';
 
+// Multi-Vault
+export { addVault, removeVault, listVaults, getVault, searchAllVaults } from './multi-vault/index.js';
+export type { VaultEntry, CrossVaultSearchResult } from './multi-vault/index.js';
+
+// Voice Capture
+export { captureVoice, transcribeAudio, isWhisperAvailable } from './capture/voice.js';
+export type { CaptureResult, CaptureOptions } from './capture/voice.js';
+
+// Dashboard + PWA
+export { mountDashboard } from './api/dashboard.js';
+export { mountPWA } from './api/pwa.js';
+
+// Agentic Graph
+export { createAgenticGraphTools } from './mcp/tools/agentic-graph.js';
+
 // Cloud
 export { syncToCloud, restoreFromCloud, getSyncState, encrypt, decrypt, getOrCreateEncryptionKey } from './cloud/index.js';
 export type { CloudConfig, SyncResult } from './cloud/index.js';
