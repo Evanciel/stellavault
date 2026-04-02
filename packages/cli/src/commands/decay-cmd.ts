@@ -4,7 +4,9 @@
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine } from '@stellavault/core';
 
-export async function decayCommand() {
+export async function decayCommand(_opts: any, cmd: any) {
+  const globalOpts = cmd?.parent?.opts?.() ?? {};
+  const jsonMode = globalOpts.json;
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
 
@@ -19,6 +21,12 @@ export async function decayCommand() {
 
   const decayEngine = new DecayEngine(db);
   const report = await decayEngine.computeAll();
+
+  if (jsonMode) {
+    console.log(JSON.stringify(report, null, 2));
+    await hub.store.close();
+    return;
+  }
 
   console.log(chalk.green('\n🧠 Knowledge Decay Report'));
   console.log(chalk.dim('─'.repeat(50)));

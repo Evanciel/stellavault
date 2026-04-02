@@ -48,6 +48,14 @@ export { computeRetrievability, updateStability, estimateInitialStability, elaps
 export { detectDuplicates } from './intelligence/duplicate-detector.js';
 export { detectKnowledgeGaps } from './intelligence/gap-detector.js';
 export type { DuplicatePair } from './intelligence/duplicate-detector.js';
+export { generateLearningPath } from './intelligence/learning-path.js';
+export type { LearningPath, LearningItem, LearningPathInput } from './intelligence/learning-path.js';
+export { checkNotifications } from './intelligence/notifications.js';
+export type { Notification, NotificationConfig } from './intelligence/notifications.js';
+
+// Plugin SDK
+export { PluginManager } from './plugins/index.js';
+export type { StellavaultPlugin, PluginManifest, PluginEvent, PluginContext } from './plugins/index.js';
 
 // Error Recovery
 export { withRetry, StellavaultError, wrapError, errors } from './utils/retry.js';

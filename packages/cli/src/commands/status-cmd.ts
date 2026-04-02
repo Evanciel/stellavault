@@ -1,7 +1,9 @@
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore } from '@stellavault/core';
 
-export async function statusCommand() {
+export async function statusCommand(_opts: any, cmd: any) {
+  const globalOpts = cmd?.parent?.opts?.() ?? {};
+  const jsonMode = globalOpts.json;
   const config = loadConfig();
 
   const store = createSqliteVecStore(config.dbPath);
@@ -9,6 +11,11 @@ export async function statusCommand() {
   const stats = await store.getStats();
   const topics = await store.getTopics();
   await store.close();
+
+  if (jsonMode) {
+    console.log(JSON.stringify({ ...stats, vaultPath: config.vaultPath, dbPath: config.dbPath, topics: topics.slice(0, 20) }, null, 2));
+    return;
+  }
 
   console.log('');
   console.log(chalk.bold('📊 Stellavault Status'));
@@ -22,7 +29,7 @@ export async function statusCommand() {
   if (topics.length > 0) {
     console.log('');
     console.log(chalk.bold('🏷️ Top topics:'));
-    topics.slice(0, 10).forEach(t => {
+    topics.slice(0, 10).forEach((t: any) => {
       console.log(`  #${t.topic} (${t.count})`);
     });
   }

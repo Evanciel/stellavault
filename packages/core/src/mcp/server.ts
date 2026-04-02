@@ -3,6 +3,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
 import { searchToolDef, handleSearch } from './tools/search.js';
@@ -15,6 +16,7 @@ import { logDecisionToolDef, findDecisionsToolDef, handleLogDecision, handleFind
 import { exportToolDef, handleExport } from './tools/export.js';
 import { getDecayStatusToolDef, handleGetDecayStatus } from './tools/decay.js';
 import { getMorningBriefToolDef, handleGetMorningBrief } from './tools/brief.js';
+import { createLearningPathTool } from './tools/learning-path.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 
 export interface McpServerOptions {
@@ -27,8 +29,10 @@ export interface McpServerOptions {
 export function createMcpServer(options: McpServerOptions) {
   const { store, searchEngine, vaultPath = '', decayEngine } = options;
 
+  const learningPathTool = createLearningPathTool(store);
+
   const server = new Server(
-    { name: 'evan-knowledge-hub', version: '0.1.0' },
+    { name: 'stellavault', version: '0.2.0' },
     { capabilities: { tools: {} } },
   );
 
@@ -39,6 +43,7 @@ export function createMcpServer(options: McpServerOptions) {
       generateClaudeMdToolDef, createSnapshotToolDef, loadSnapshotToolDef,
       logDecisionToolDef, findDecisionsToolDef, exportToolDef,
       ...(decayEngine ? [getDecayStatusToolDef, getMorningBriefToolDef] : []),
+      { name: learningPathTool.name, description: learningPathTool.description, inputSchema: learningPathTool.inputSchema },
     ],
   }));
 
@@ -98,6 +103,9 @@ export function createMcpServer(options: McpServerOptions) {
           if (!decayEngine) { result = { error: 'Decay engine not available' }; break; }
           result = await handleGetMorningBrief(decayEngine, store);
           break;
+        case 'get-learning-path':
+          result = await learningPathTool.handler(args as any);
+          return result as any;
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
@@ -112,6 +120,22 @@ export function createMcpServer(options: McpServerOptions) {
     async startStdio() {
       const transport = new StdioServerTransport();
       await server.connect(transport);
+    },
+    async startHttp(port: number = 3334) {
+      const { createServer } = await import('node:http');
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => `sv-${Date.now()}` });
+      await server.connect(transport);
+
+      const httpServer = createServer(async (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+        await transport.handleRequest(req, res);
+      });
+      httpServer.listen(port, '127.0.0.1', () => {
+        console.error(`🔌 MCP HTTP server running at http://127.0.0.1:${port}/mcp`);
+      });
     },
     server,
   };

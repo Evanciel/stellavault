@@ -425,6 +425,62 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // GET /api/profile — Knowledge Profile summary (F-A09)
+  app.get('/api/profile', async (_req, res) => {
+    try {
+      const stats = await store.getStats();
+      const topics = await store.getTopics();
+      const docs = await store.getAllDocuments();
+
+      let decaySummary = { averageR: 1.0, criticalCount: 0, healthScore: 100 };
+      if (decayEngine) {
+        const report = await decayEngine.computeAll();
+        const avgR = report.averageR ?? 1.0;
+        decaySummary = {
+          averageR: avgR,
+          criticalCount: report.criticalCount ?? 0,
+          healthScore: Math.round(avgR * 100),
+        };
+      }
+
+      // Source/Type distribution
+      const sourceDist: Record<string, number> = {};
+      const typeDist: Record<string, number> = {};
+      for (const doc of docs) {
+        const s = doc.source ?? 'local';
+        const t = doc.type ?? 'note';
+        sourceDist[s] = (sourceDist[s] ?? 0) + 1;
+        typeDist[t] = (typeDist[t] ?? 0) + 1;
+      }
+
+      // Activity: docs per month (last 12)
+      const monthlyActivity: Record<string, number> = {};
+      for (const doc of docs) {
+        const month = doc.lastModified?.slice(0, 7);
+        if (month) monthlyActivity[month] = (monthlyActivity[month] ?? 0) + 1;
+      }
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.json({
+        name: vaultName || 'Knowledge Vault',
+        stats: {
+          documents: stats.documentCount,
+          chunks: stats.chunkCount,
+          topics: topics.length,
+        },
+        healthScore: decaySummary.healthScore,
+        topTopics: topics.slice(0, 15).map(t => ({ name: t.topic, count: t.count })),
+        distribution: { source: sourceDist, type: typeDist },
+        activity: Object.fromEntries(
+          Object.entries(monthlyActivity).sort((a, b) => a[0].localeCompare(b[0])).slice(-12)
+        ),
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(err); res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/embed — 임베드용 경량 그래프 데이터 (F-A08)
   app.get('/api/embed', async (req, res) => {
     try {

@@ -1,7 +1,9 @@
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore, createLocalEmbedder, createSearchEngine } from '@stellavault/core';
 
-export async function searchCommand(query: string, options: { limit?: string }) {
+export async function searchCommand(query: string, options: { limit?: string }, cmd: any) {
+  const globalOpts = cmd?.parent?.opts?.() ?? {};
+  const jsonMode = globalOpts.json;
   const config = loadConfig();
   const limit = parseInt(options.limit ?? '5', 10);
 
@@ -15,6 +17,18 @@ export async function searchCommand(query: string, options: { limit?: string }) 
   const results = await engine.search({ query, limit });
 
   await store.close();
+
+  if (jsonMode) {
+    console.log(JSON.stringify({
+      query, count: results.length,
+      results: results.map(r => ({
+        title: r.document.title, path: r.document.filePath,
+        score: r.score, heading: r.chunk.heading,
+        snippet: r.chunk.content.slice(0, 200),
+      })),
+    }, null, 2));
+    return;
+  }
 
   if (results.length === 0) {
     console.log(chalk.yellow('검색 결과가 없습니다.'));

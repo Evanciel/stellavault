@@ -15,13 +15,16 @@ import { clipCommand } from './commands/clip-cmd.js';
 import { briefCommand } from './commands/brief-cmd.js';
 import { digestCommand } from './commands/digest-cmd.js';
 import { initCommand } from './commands/init-cmd.js';
+import { learnCommand } from './commands/learn-cmd.js';
 
 const program = new Command();
 
 program
   .name('stellavault')
   .description('Stellavault — Turn your Obsidian vault into a 3D neural knowledge graph')
-  .version('0.1.0');
+  .version('0.1.0')
+  .option('--json', 'Output in JSON format (for scripting)')
+  .option('--quiet', 'Suppress non-essential output');
 
 program
   .command('init')
@@ -59,6 +62,11 @@ program
   .description('SVG 프로필 카드를 생성합니다')
   .option('-o, --output <path>', '출력 파일 경로', 'knowledge-card.svg')
   .action(cardCommand);
+
+program
+  .command('learn')
+  .description('AI learning path — personalized recommendations based on decay + gaps')
+  .action(learnCommand);
 
 program
   .command('decay')

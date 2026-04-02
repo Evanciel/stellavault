@@ -54,6 +54,7 @@ interface GraphState {
   showTimeline: boolean;
   timelineRange: [number, number] | null; // [startMs, endMs] or null = show all
   searchHistory: string[];
+  maxVisibleNodes: number; // performance cap for large vaults
 
   setGraphData: (nodes: GraphNode[], edges: GraphEdge[], clusters: Cluster[]) => void;
   selectNode: (id: string | null) => void;
@@ -103,6 +104,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   showTimeline: false,
   timelineRange: null,
   searchHistory: JSON.parse(localStorage.getItem('sv_search_history') ?? '[]') as string[],
+  maxVisibleNodes: 5000,
 
   setGraphData: (nodes, edges, clusters) => set({ nodes, edges, clusters, hiddenClusters: new Set() }),
   selectNode: (id) => set({ selectedNodeId: id }),
