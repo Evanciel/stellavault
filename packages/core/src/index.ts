@@ -59,9 +59,27 @@ export type { LearningPath, LearningItem, LearningPathInput } from './intelligen
 export { checkNotifications } from './intelligence/notifications.js';
 export type { Notification, NotificationConfig } from './intelligence/notifications.js';
 
+// Cloud
+export { syncToCloud, restoreFromCloud, getSyncState, encrypt, decrypt, getOrCreateEncryptionKey } from './cloud/index.js';
+export type { CloudConfig, SyncResult } from './cloud/index.js';
+
+// Team
+export { inviteMember, authenticateMember, hasPermission, listMembers, removeMember, createAuthMiddleware, loadTeamConfig, generateToken } from './team/index.js';
+export type { TeamMember, TeamRole, TeamConfig } from './team/index.js';
+
+// Pack Marketplace
+export { searchMarketplace, createPackageJson, getPublishInstructions } from './pack/marketplace.js';
+export type { PackListing } from './pack/marketplace.js';
+
 // Federation
 export { FederationNode, FederatedSearch, getOrCreateIdentity } from './federation/index.js';
 export type { PeerInfo, FederatedSearchResult, FederationMessage, NodeIdentity } from './federation/index.js';
+export { vouch, revoke, block, getTrustLevel, isBlocked, listTrusted, computeTrustScore } from './federation/trust.js';
+export type { TrustEntry } from './federation/trust.js';
+export { addDPNoise, addDPNoiseNormalized, maskSnippet } from './federation/privacy.js';
+export type { DPConfig } from './federation/privacy.js';
+export { getBalance, getAccount, earn, spend, earnForSearchResponse, spendForSearch, getRecentTransactions } from './federation/credits.js';
+export type { CreditAccount, CreditTransaction } from './federation/credits.js';
 
 // Plugin SDK
 export { PluginManager } from './plugins/index.js';

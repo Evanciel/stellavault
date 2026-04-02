@@ -18,6 +18,7 @@ import { initCommand } from './commands/init-cmd.js';
 import { learnCommand } from './commands/learn-cmd.js';
 import { contradictionsCommand } from './commands/contradictions-cmd.js';
 import { federateJoinCommand, federateStatusCommand } from './commands/federate-cmd.js';
+import { cloudSyncCommand, cloudRestoreCommand, cloudStatusCommand } from './commands/cloud-cmd.js';
 
 const program = new Command();
 
@@ -131,6 +132,11 @@ federate.command('join')
 federate.command('status')
   .description('Show federation identity and status')
   .action(federateStatusCommand);
+
+const cloud = program.command('cloud').description('Cloud — E2E encrypted backup');
+cloud.command('sync').description('Upload encrypted DB to cloud').action(cloudSyncCommand);
+cloud.command('restore').description('Download and decrypt DB from cloud').action(cloudRestoreCommand);
+cloud.command('status').description('Show last sync status').action(cloudStatusCommand);
 
 const pack = program.command('pack').description('Knowledge Pack 관리');
 
