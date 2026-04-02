@@ -17,6 +17,7 @@ import { digestCommand } from './commands/digest-cmd.js';
 import { initCommand } from './commands/init-cmd.js';
 import { learnCommand } from './commands/learn-cmd.js';
 import { contradictionsCommand } from './commands/contradictions-cmd.js';
+import { federateJoinCommand, federateStatusCommand } from './commands/federate-cmd.js';
 
 const program = new Command();
 
@@ -119,6 +120,17 @@ program
   .option('--upload', 'PDCA 문서를 Notion에 업로드')
   .option('--watch', '5분 간격 자동 동기화')
   .action(syncCommand);
+
+const federate = program.command('federate').description('Federation — P2P knowledge network');
+
+federate.command('join')
+  .description('Join the federation network (interactive mode)')
+  .option('-n, --name <name>', 'Display name for this node')
+  .action(federateJoinCommand);
+
+federate.command('status')
+  .description('Show federation identity and status')
+  .action(federateStatusCommand);
 
 const pack = program.command('pack').description('Knowledge Pack 관리');
 

@@ -59,6 +59,10 @@ export type { LearningPath, LearningItem, LearningPathInput } from './intelligen
 export { checkNotifications } from './intelligence/notifications.js';
 export type { Notification, NotificationConfig } from './intelligence/notifications.js';
 
+// Federation
+export { FederationNode, FederatedSearch, getOrCreateIdentity } from './federation/index.js';
+export type { PeerInfo, FederatedSearchResult, FederationMessage, NodeIdentity } from './federation/index.js';
+
 // Plugin SDK
 export { PluginManager } from './plugins/index.js';
 export type { StellavaultPlugin, PluginManifest, PluginEvent, PluginContext } from './plugins/index.js';
