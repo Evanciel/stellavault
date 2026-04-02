@@ -1,41 +1,126 @@
 # Stellavault
 
-> Turn your Obsidian vault into a 3D neural knowledge graph with AI-powered search, memory decay tracking, and MCP integration.
+> **Notes die in folders. Stellavault keeps your knowledge alive.**
 
-## Features
+Your notes are not just files. They form a living network — connections emerge, memories fade, gaps appear. Stellavault turns your Obsidian vault into a knowledge system that **discovers hidden connections**, **detects fading memories**, **finds blind spots**, and **gives AI agents direct access to everything you know**.
 
-- **3D Knowledge Graph** — React Three Fiber based interactive neural network visualization
-- **Constellation View** — MST-based star map with 3-level LOD zoom
-- **Hybrid Search** — BM25 + Cosine Similarity + RRF fusion for high-quality results
-- **FSRS Memory Decay** — Spaced repetition tracking shows which knowledge is fading
-- **Intelligence Panel** — Gap detection, duplicate finder, health dashboard, web clipper
-- **Timeline Slider** — Filter notes by date range with histogram visualization
-- **Type/Source Filter** — Filter by note type (note, clip, bridge) and source (local, notion)
-- **Search History** — Recent searches saved locally with quick-access dropdown
-- **MCP Server** — 10+ tools for Claude Code and other AI agents to access your knowledge
-- **Knowledge Pack** — `.sv-pack` format for portable knowledge export/import with PII masking
-- **Motion Control** — MediaPipe hand gesture control for 3D graph
-- **Export** — Screenshot (PNG) and recording (WebM) with watermark
-- **Dark/Light Mode** — Space theme (Dark) + clean blueprint theme (Light)
+## Why Stellavault?
+
+| Problem | Stellavault |
+|---------|-------------|
+| Notes pile up, connections stay invisible | **Auto-discovers** semantic links between notes and visualizes them in 3D |
+| You forget what you wrote 3 months ago | **FSRS decay engine** tracks retrievability and alerts before knowledge fades |
+| Knowledge gaps hide in plain sight | **Gap detector** finds missing bridges between topic clusters |
+| Duplicate ideas scattered across files | **Duplicate finder** catches semantic overlaps you'd never spot manually |
+| AI assistants can't access your knowledge | **MCP server** lets Claude and other agents search, reason over, and learn from your vault |
+| No way to see the big picture | **3D neural graph** with constellation view, timeline slider, and type filters |
+
+## What It Actually Does
+
+**1. Understands your knowledge** — Vectorizes every note with local embeddings (all-MiniLM-L6-v2), chunks intelligently, builds a semantic similarity graph with K-means clustering.
+
+**2. Keeps it alive** — FSRS spaced repetition algorithm tracks how well you remember each piece of knowledge. Retrievability decays over time. Stellavault tells you what's fading and when to review.
+
+**3. Finds what's missing** — Gap detector identifies weak connections between topic clusters. Duplicate detector catches redundant notes. Health dashboard gives you a full picture of your knowledge state.
+
+**4. Connects to AI** — MCP server with 12 tools. Your AI coding assistant can search your notes, pull context, track decisions, and build on what you already know — instead of starting from scratch every time.
+
+**5. Makes it visible** — Interactive 3D graph where you can explore connections, filter by type/source/time, zoom from universe to individual notes, and export screenshots.
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# Install
 npm install
 
-# 2. Index your Obsidian vault
-npx stellavault index /path/to/your/obsidian/vault
+# Index your Obsidian vault
+npx stellavault index /path/to/your/vault
 
-# 3. Launch 3D graph
+# See your knowledge come alive
 npx stellavault graph
-# Opens http://localhost:5173 in your browser
 ```
 
-You can also use the short alias `sv`:
+Short alias: `sv`
 ```bash
 npx sv index /path/to/vault
 npx sv graph
+npx sv decay    # what's fading?
+npx sv brief    # daily knowledge briefing
+```
+
+## Give Your AI Agent Memory
+
+```bash
+claude mcp add stellavault -- npx stellavault serve
+```
+
+Now Claude Code can:
+- Search your entire knowledge base semantically
+- Pull full documents with context
+- Find related notes to what you're working on
+- Track and recall your technical decisions
+- Tell you what knowledge is decaying
+- Give you a morning briefing of your knowledge health
+
+### MCP Tools
+
+| Tool | What it does |
+|------|-------------|
+| `search` | Hybrid search (BM25 + vector + RRF fusion) |
+| `get-document` | Full document with metadata |
+| `get-related` | Semantically similar documents |
+| `list-topics` | Topic cloud from your vault |
+| `get-decay-status` | What's fading, what needs review |
+| `get-morning-brief` | Daily knowledge health briefing |
+| `log-decision` / `find-decisions` | Technical decision journal |
+| `create-snapshot` / `load-snapshot` | Context snapshots |
+| `generate-claude-md` | Auto-generate CLAUDE.md from your knowledge |
+| `export` | Export as JSON/CSV |
+
+## Intelligence Features
+
+### Memory Decay (FSRS)
+Every note has a retrievability score (0-100%). It decays over time based on the FSRS spaced repetition algorithm. Access a note — retrievability resets. Ignore it — it fades. `stellavault decay` shows what needs attention. `stellavault review` runs an interactive review session.
+
+### Knowledge Gaps
+Analyzes cluster structure to find disconnected topic areas. Suggests bridge topics and can auto-generate bridge notes to fill the gaps.
+
+### Duplicate Detection
+Vector similarity finds notes that say the same thing differently. One-click merge keeps the longer version and appends unique content from the shorter one.
+
+### Health Dashboard
+One view for everything: average retrievability, critical notes count, gap severity, duplicate pairs, source/type distribution, monthly growth trends.
+
+## 3D Knowledge Graph
+
+- **Semantic mode** — K-means clustering by meaning, edges by cosine similarity
+- **Folder mode** — Cluster by Obsidian folder structure
+- **Constellation view** — MST-based star map with 3-level LOD (universe → constellation → note)
+- **Timeline slider** — Filter by date range with histogram
+- **Type/source filter** — Show only clips, synced notes, bridges, etc.
+- **Search with history** — Highlight matching nodes, camera auto-focuses, recent searches saved
+- **Decay overlay** — Nodes fade as retrievability drops
+- **Motion control** — MediaPipe hand gestures
+- **Export** — PNG screenshots, WebM recordings
+
+## CLI Commands
+
+```bash
+stellavault index <vault-path>    # Vectorize + chunk + embed your vault
+stellavault search <query>        # Terminal search with highlights
+stellavault graph                 # Launch 3D graph + API server
+stellavault serve                 # MCP server (stdio)
+stellavault status                # Index stats
+stellavault decay                 # Memory decay report
+stellavault brief                 # Daily briefing
+stellavault digest                # Weekly activity report
+stellavault review                # FSRS-based review session
+stellavault gaps                  # Knowledge gap detection
+stellavault duplicates            # Duplicate detection
+stellavault clip <url>            # Clip web/YouTube to vault
+stellavault sync                  # Notion → Obsidian sync
+stellavault card                  # SVG profile card
+stellavault pack <cmd>            # Knowledge Pack management
 ```
 
 ## Architecture
@@ -43,72 +128,32 @@ npx sv graph
 ```
 stellavault/
 ├── packages/
-│   ├── core/       Vector search engine + MCP server + REST API
-│   ├── cli/        CLI commands (15 commands)
-│   ├── graph/      3D Knowledge Graph (React Three Fiber)
-│   └── sync/       Notion-Obsidian sync
-├── scripts/
-│   └── api-only.mjs   Standalone API server
-├── LICENSE            MIT
-└── CONTRIBUTING.md    Contributing guide
+│   ├── core/       Search engine, MCP server, REST API, intelligence layer
+│   ├── cli/        15 CLI commands
+│   ├── graph/      3D visualization (React Three Fiber)
+│   └── sync/       Notion ↔ Obsidian sync
+└── scripts/
+    └── api-only.mjs   Standalone API server
 ```
-
-## CLI Commands
-
-```bash
-stellavault index <vault-path>    # Index Obsidian vault (vectorize + chunk + embed)
-stellavault search <query>        # Search from terminal
-stellavault graph                 # Launch 3D graph + API server
-stellavault serve                 # Start MCP server (stdio)
-stellavault status                # Index stats
-stellavault decay                 # Memory decay health report
-stellavault brief                 # Daily briefing (decay + gaps + activity)
-stellavault digest                # Weekly activity report
-stellavault review                # Daily review session (FSRS-based)
-stellavault gaps                  # Knowledge gap detection
-stellavault duplicates            # Duplicate note detection
-stellavault clip <url>            # Clip web page / YouTube to vault
-stellavault sync                  # Notion → Obsidian sync
-stellavault card                  # Generate SVG profile card
-stellavault pack create|export|import|list|info   # Knowledge Pack management
-```
-
-## MCP Integration
-
-```bash
-claude mcp add stellavault -- npx stellavault serve
-```
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `search` | RRF hybrid search |
-| 2 | `get-document` | Full document retrieval |
-| 3 | `list-topics` | Topic cloud |
-| 4 | `get-related` | Related document discovery |
-| 5 | `generate-claude-md` | Auto-generate CLAUDE.md |
-| 6 | `create-snapshot` | Context snapshot |
-| 7 | `load-snapshot` | Restore snapshot |
-| 8 | `log-decision` | Record technical decisions |
-| 9 | `find-decisions` | Search decisions |
-| 10 | `export` | Export knowledge (JSON/CSV) |
-| 11 | `get-decay-status` | Memory decay report |
-| 12 | `get-morning-brief` | Daily knowledge briefing |
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+ (ESM)
-- **Language**: TypeScript (strict mode)
-- **Vector Store**: SQLite-vec (better-sqlite3)
-- **Embedding**: all-MiniLM-L6-v2 (384d, local inference)
-- **Search**: BM25 + Cosine Similarity + RRF Fusion (K=60)
-- **3D**: React Three Fiber + drei + Three.js
-- **State**: Zustand
-- **Testing**: Vitest
-- **MCP**: @modelcontextprotocol/sdk
+| Layer | Tech |
+|-------|------|
+| Runtime | Node.js 20+ (ESM) |
+| Language | TypeScript (strict) |
+| Vector Store | SQLite-vec (better-sqlite3) |
+| Embedding | all-MiniLM-L6-v2 (384d, local) |
+| Search | BM25 + Cosine + RRF Fusion |
+| 3D | React Three Fiber + Three.js |
+| State | Zustand |
+| Memory Model | FSRS (Free Spaced Repetition Scheduler) |
+| AI Integration | MCP (Model Context Protocol) |
+| Testing | Vitest |
 
 ## Configuration
 
-Create `.stellavault.json` in your project root or home directory:
+`.stellavault.json` in project root or home directory:
 
 ```json
 {
