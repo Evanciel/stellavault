@@ -6,6 +6,7 @@ import type { Document } from '../types/document.js';
 import type { Chunk } from '../types/chunk.js';
 import { scanVault } from './scanner.js';
 import { chunkDocument, type ChunkOptions } from './chunker.js';
+import { withRetry, errors } from '../utils/retry.js';
 
 export { type Embedder } from './embedder.js';
 export { createLocalEmbedder } from './local-embedder.js';
@@ -24,6 +25,7 @@ export interface IndexResult {
   indexed: number;
   skipped: number;
   deleted: number;
+  failed: number;
   totalChunks: number;
   elapsedMs: number;
 }
@@ -47,9 +49,10 @@ export async function indexVault(
 
   let indexed = 0;
   let skipped = 0;
+  let failed = 0;
   let totalChunks = 0;
 
-  // 3. 증분 처리
+  // 3. 증분 처리 (에러 복구 포함)
   const scannedIds = new Set<string>();
   for (let i = 0; i < documents.length; i++) {
     const doc = documents[i];
@@ -62,23 +65,32 @@ export async function indexVault(
       continue;
     }
 
-    // 청킹
-    const chunks = chunkDocument(doc.id, doc.content, chunkOptions);
+    try {
+      // 청킹
+      const chunks = chunkDocument(doc.id, doc.content, chunkOptions);
 
-    // 임베딩
-    const texts = chunks.map(c => c.content);
-    const embeddings = await embedder.embedBatch(texts);
-    const chunksWithEmbeddings: Chunk[] = chunks.map((c, j) => ({
-      ...c,
-      embedding: embeddings[j],
-    }));
+      // 임베딩 (retry with backoff)
+      const texts = chunks.map(c => c.content);
+      const embeddings = await withRetry(
+        () => embedder.embedBatch(texts),
+        { maxRetries: 2, baseDelayMs: 1000 },
+      );
+      const chunksWithEmbeddings: Chunk[] = chunks.map((c, j) => ({
+        ...c,
+        embedding: embeddings[j],
+      }));
 
-    // 저장 (document → chunks)
-    await store.upsertDocument(doc);
-    await store.upsertChunks(chunksWithEmbeddings);
+      // 저장 (document → chunks)
+      await store.upsertDocument(doc);
+      await store.upsertChunks(chunksWithEmbeddings);
 
-    indexed++;
-    totalChunks += chunks.length;
+      indexed++;
+      totalChunks += chunks.length;
+    } catch (err) {
+      // Graceful degradation: skip failed file, continue with rest
+      failed++;
+      console.error(errors.indexingFailed(doc.filePath, err).format());
+    }
   }
 
   // 4. 삭제된 파일 처리
@@ -94,6 +106,7 @@ export async function indexVault(
     indexed,
     skipped,
     deleted,
+    failed,
     totalChunks,
     elapsedMs: Date.now() - start,
   };

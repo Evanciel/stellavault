@@ -34,7 +34,7 @@ export async function indexCommand(vaultPath?: string) {
 
   console.log('');
   console.log(chalk.green('✅ 인덱싱 완료'));
-  console.log(`  📄 인덱싱: ${result.indexed}건 | ⏭️ 스킵: ${result.skipped}건 | 🗑️ 삭제: ${result.deleted}건`);
+  console.log(`  📄 인덱싱: ${result.indexed}건 | ⏭️ 스킵: ${result.skipped}건 | 🗑️ 삭제: ${result.deleted}건${result.failed ? ` | ❌ 실패: ${result.failed}건` : ''}`);
   console.log(`  🧩 청크: ${result.totalChunks}개 | ⏱ ${(result.elapsedMs / 1000).toFixed(1)}초`);
   console.log(`  💾 DB: ${config.dbPath}`);
 }

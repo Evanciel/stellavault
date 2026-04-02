@@ -14,6 +14,7 @@ import { gapsCommand } from './commands/gaps-cmd.js';
 import { clipCommand } from './commands/clip-cmd.js';
 import { briefCommand } from './commands/brief-cmd.js';
 import { digestCommand } from './commands/digest-cmd.js';
+import { initCommand } from './commands/init-cmd.js';
 
 const program = new Command();
 
@@ -21,6 +22,11 @@ program
   .name('stellavault')
   .description('Stellavault — Turn your Obsidian vault into a 3D neural knowledge graph')
   .version('0.1.0');
+
+program
+  .command('init')
+  .description('Interactive setup wizard — get started in 3 minutes')
+  .action(initCommand);
 
 program
   .command('index [vault-path]')

@@ -31,3 +31,9 @@ export async function fetchHealth() {
   if (!res.ok) throw new Error(`Health API error: ${res.status}`);
   return res.json();
 }
+
+export async function fetchEmbed(apiUrl: string, max = 200) {
+  const res = await fetch(`${apiUrl}/api/embed?max=${max}`);
+  if (!res.ok) throw new Error(`Embed API error: ${res.status}`);
+  return res.json();
+}
