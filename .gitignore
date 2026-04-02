@@ -1,0 +1,48 @@
+# 환경변수 (API 키 포함)
+.env
+
+# 동기화 상태 파일
+.sync-state.json
+.upload-state.json
+
+# 의존성
+node_modules/
+
+# 로그
+logs/
+
+# 빌드 출력
+dist/
+
+# 자동 생성 배치 파일
+run-sync.bat
+
+# Stellavault 설정 (사용자별)
+.stellavault.json
+
+# Stellavault 데이터베이스
+*.db
+*.db-journal
+
+# TypeScript 캐시
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# bkit / claude internal
+.bkit/
+.claude/
+
+# MCP / Playwright logs
+.mcp.json
+.playwright-mcp/
+
+# Legacy config
+.ekh.json

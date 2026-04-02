@@ -1,0 +1,16 @@
+{
+  "name": "@stellavault/sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "노션 프로젝트 페이지 → 옵시디언 마크다운 동기화 + 로컬 PDCA → 노션 업로드",
+  "type": "module",
+  "scripts": {
+    "sync": "node sync-to-obsidian.mjs",
+    "upload": "node upload-pdca-to-notion.mjs",
+    "setup-scheduler": "node setup-scheduler.mjs"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "notion-to-md": "^3.1.1"
+  }
+}

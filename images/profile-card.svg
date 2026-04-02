@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420" viewBox="0 0 800 420">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1028"/><stop offset="100%" stop-color="#050510"/>
+    </linearGradient>
+    <linearGradient id="rf" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.3"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="420" rx="16" fill="url(#bg)"/>
+  <rect width="800" height="420" rx="16" fill="none" stroke="#6366f140"/>
+  <text x="30" y="40" font-size="20" font-weight="700" fill="#c0c0f0" font-family="system-ui">🧠 Knowledge Universe</text>
+  <text x="30" y="65" font-size="13" fill="#556" font-family="monospace">1512 docs · 10 clusters · 5258 connections</text>
+  <line x1="30" y1="80" x2="770" y2="80" stroke="#6366f120"/>
+  <text x="200" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">KNOWLEDGE DISTRIBUTION</text>
+  <path d="M200,187 L228.57883832488648,203.5 L228.57883832488648,236.5 L200,253 L171.42116167511352,236.5 L171.42116167511352,203.5Z" fill="none" stroke="#6366f115" stroke-width="0.5"/>
+  <path d="M200,154 L257.15767664977295,187 L257.15767664977295,253 L200,286 L142.84232335022705,253.00000000000003 L142.84232335022705,187Z" fill="none" stroke="#6366f115" stroke-width="0.5"/>
+  <path d="M200,120 L286.60254037844385,170 L286.6025403784439,270 L200,320 L113.39745962155615,270.00000000000006 L113.39745962155614,170Z" fill="none" stroke="#6366f115" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="200" y2="100" stroke="#6366f110" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="303.92304845413264" y2="160" stroke="#6366f110" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="303.92304845413264" y2="280" stroke="#6366f110" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="200" y2="340" stroke="#6366f110" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="96.07695154586739" y2="280.00000000000006" stroke="#6366f110" stroke-width="0.5"/>
+  <line x1="200" y1="220" x2="96.07695154586737" y2="160" stroke="#6366f110" stroke-width="0.5"/>
+  <path d="M200,120 L267.53122282218004,181.01083032490976 L263.46684367084515,256.6425992779783 L200,280.64981949458485 L152.47802838439182,247.43682310469316 L153.1033174845972,192.92418772563175Z" fill="url(#rf)" stroke="#818cf8" stroke-width="1.5"/>
+  <circle cx="200" cy="120" r="3" fill="#8b5cf6"/><text x="200" y="104" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">AI</text>
+  <circle cx="267.53122282218004" cy="181.01083032490976" r="3" fill="#10b981"/><text x="303.92304845413264" y="164" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">macOS</text>
+  <circle cx="263.46684367084515" cy="256.6425992779783" r="3" fill="#f97316"/><text x="303.92304845413264" y="284" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">Analysis</text>
+  <circle cx="200" cy="280.64981949458485" r="3" fill="#ef4444"/><text x="200" y="344" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">Plan</text>
+  <circle cx="152.47802838439182" cy="247.43682310469316" r="3" fill="#06b6d4"/><text x="96.07695154586739" y="284.00000000000006" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">macOS</text>
+  <circle cx="153.1033174845972" cy="192.92418772563175" r="3" fill="#14b8a6"/><text x="96.07695154586737" y="164" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">Report</text>
+  <text x="580" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">TOP TOPICS</text>
+  <rect x="440" y="115" width="320" height="240" rx="8" fill="#6366f108"/>
+    <text x="480" y="140" font-size="24" fill="#88aaff" opacity="1" font-family="monospace">#N</text>
+    <text x="480" y="170" font-size="21.666666666666668" fill="#88aaff" opacity="0.9166666666666667" font-family="monospace">#bbb-</text>
+    <text x="540" y="140" font-size="14.666666666666666" fill="#88aaff" opacity="0.6666666666666666" font-family="monospace">#security</text>
+    <text x="540" y="170" font-size="14.666666666666666" fill="#88aaff" opacity="0.6666666666666666" font-family="monospace">#beta-signup</text>
+    <text x="600" y="140" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#use-cases</text>
+    <text x="600" y="170" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#solution</text>
+    <text x="660" y="140" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#showcase</text>
+    <text x="660" y="170" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#pricing</text>
+    <text x="720" y="140" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#help</text>
+    <text x="720" y="170" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#faq</text>
+    <text x="480" y="210" font-size="12.333333333333332" fill="#88aaff" opacity="0.5833333333333334" font-family="monospace">#RRGGBB</text>
+  <text x="400" y="405" font-size="10" fill="#334" text-anchor="middle" font-family="monospace">Generated by Evan Knowledge Hub</text>
+</svg>
