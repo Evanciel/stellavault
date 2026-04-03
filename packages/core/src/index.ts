@@ -90,6 +90,8 @@ export type { PackListing } from './pack/marketplace.js';
 export { FederationNode, FederatedSearch, getOrCreateIdentity } from './federation/index.js';
 export type { PeerInfo, FederatedSearchResult, FederationMessage, NodeIdentity } from './federation/index.js';
 export { vouch, revoke, block, getTrustLevel, isBlocked, listTrusted, computeTrustScore } from './federation/trust.js';
+export { computeReputation, verifyConsensus, recordInteraction, recordConsistency, recordFeedback, recordConsensus, getReputationBoard, filterByReputation } from './federation/reputation.js';
+export type { ReputationRecord } from './federation/reputation.js';
 export type { TrustEntry } from './federation/trust.js';
 export { addDPNoise, addDPNoiseNormalized, maskSnippet } from './federation/privacy.js';
 export type { DPConfig } from './federation/privacy.js';
