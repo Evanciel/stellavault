@@ -1,12 +1,13 @@
 {
   "name": "stellavault",
   "version": "0.1.0",
-  "private": true,
   "description": "Turn your Obsidian vault into a 3D neural knowledge graph with AI-powered search, memory decay tracking, and MCP integration.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/stellavault"
+    "url": "https://github.com/Evanciel/stellavault"
   },
+  "homepage": "https://github.com/Evanciel/stellavault",
+  "bugs": "https://github.com/Evanciel/stellavault/issues",
   "keywords": ["obsidian", "knowledge-graph", "3d-visualization", "vector-search", "mcp", "fsrs", "ai"],
   "license": "MIT",
   "author": "Evan",
