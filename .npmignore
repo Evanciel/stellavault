@@ -4,7 +4,9 @@ images/
 .claude/
 .bkit/
 .playwright-mcp/
+.github/
 scripts/
+memory/
 *.db
 *.db-journal
 
@@ -12,10 +14,23 @@ scripts/
 packages/*/node_modules/
 packages/core/dist/
 
+# Test screenshots and images
+*.png
+*.jpg
+
+# Sync state and logs
+packages/sync/.sync-state.json
+packages/sync/.upload-state.json
+packages/sync/logs/
+
+# Graph test scripts
+packages/graph/test-*.mjs
+
 # Dev files
 .env
 .ekh.json
 .stellavault.json
 .mcp.json
 tsconfig.json
+tsconfig.base.json
 vitest.config.*

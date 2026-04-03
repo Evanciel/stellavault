@@ -1,6 +1,6 @@
 {
   "name": "stellavault",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turn your Obsidian vault into a 3D neural knowledge graph with AI-powered search, memory decay tracking, and MCP integration.",
   "repository": {
     "type": "git",
