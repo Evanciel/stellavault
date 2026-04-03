@@ -29,7 +29,7 @@
 | **Plan** | `docs/01-plan/features/core.plan.md` | ✅ Approved | 4개 모듈 + 3개 세션 구조 확정 |
 | **Design** | `docs/02-design/features/core.design.md` | ✅ Approved | Option C (Pragmatic Balance) 선택, 11개 구현 아이템 |
 | **Do** | Implementation Complete | ✅ Done | 22개 파일 수정/신규, ~950 lines 추가 |
-| **Check** | Analysis (생성 예정) | ⏸️ On Demand | Match Rate 예상 92%+ |
+| **Check** | `docs/03-analysis/features/core.analysis.md` | ✅ Done | Match Rate 85% (8.5/10 항목) |
 | **Act** | Report (현재) | ✅ Complete | 최종 검증 및 교훈 기록 |
 
 ### 1.3 Value Delivered
@@ -133,7 +133,13 @@ packages/graph/src/
 
 ### 2.4 Check Phase (Gap Analysis)
 
-**Status**: 예상 92%+ (실제 분석은 사용자 요청 후 수행)
+**Status**: ✅ Complete (2026-04-04)
+**Document**: `docs/03-analysis/features/core.analysis.md`
+**Match Rate**: 85% (8.5/10)
+
+**Gap Summary**:
+- ⚠️ ExportPanel 배치: Graph3D sibling → StatusBar 통합 (설계 변경, 기능 동등)
+- ❌ graph 패키지 테스트: 미구현 (export-utils 순수 함수 테스트 추가 권장)
 
 **Design vs Implementation Verification**:
 
@@ -192,7 +198,7 @@ packages/graph/src/
 | **Plan Document** | `docs/01-plan/features/core.plan.md` | ✅ 완료 |
 | **Design Document** | `docs/02-design/features/core.design.md` | ✅ 완료 |
 | **Implementation** | 22개 파일 (packages/graph + packages/core + root) | ✅ 완료 |
-| **Analysis** | `docs/03-analysis/core.analysis.md` | ⏸️ On Demand |
+| **Analysis** | `docs/03-analysis/features/core.analysis.md` | ✅ 완료 (2026-04-04) |
 | **Report** | `docs/04-report/features/core.report.md` | ✅ 현재 (완료) |
 
 ### 3.3 Incomplete/Deferred Items
@@ -383,7 +389,7 @@ packages/graph/src/
 
 - **Plan**: [core.plan.md](../../01-plan/features/core.plan.md)
 - **Design**: [core.design.md](../../02-design/features/core.design.md)
-- **Analysis**: core.analysis.md (생성 예정)
+- **Analysis**: [core.analysis.md](../../03-analysis/features/core.analysis.md)
 - **PRD**: [core.prd.md](../../00-pm/core.prd.md)
 - **Previous Phase 4 Reports**:
   - [evan-knowledge-hub.report.md](./evan-knowledge-hub.report.md)
