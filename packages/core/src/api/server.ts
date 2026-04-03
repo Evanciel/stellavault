@@ -165,7 +165,8 @@ export function createApiServer(options: ApiServerOptions) {
 
       const tags20 = topics.slice(0, 20);
       const maxTag = Math.max(1, ...tags20.map((t: any) => t.count));
-      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // HIGH-07: SVG injection 방어 — 모든 특수문자 이스케이프
+      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
       const tagEls = tags20.map((t: any, i: number) => {
         const sz = 10 + 14 * (t.count / maxTag);
@@ -260,14 +261,19 @@ export function createApiServer(options: ApiServerOptions) {
       if (!docA || !docB) { res.status(404).json({ error: 'Document not found' }); return; }
 
       const { readFileSync, writeFileSync, unlinkSync } = await import('node:fs');
-      const { join } = await import('node:path');
+      const { join, resolve, relative } = await import('node:path');
 
       // 긴 노트를 기준으로 유지, 짧은 노트의 고유 내용을 추가
       const [keeper, removed] = docA.content.length >= docB.content.length
         ? [docA, docB] : [docB, docA];
 
-      const keeperPath = join(vaultPath, keeper.filePath);
-      const removedPath = join(vaultPath, removed.filePath);
+      // HIGH-02: Path Traversal 방어 — vault 외부 접근 차단
+      const keeperPath = resolve(join(vaultPath, keeper.filePath));
+      const removedPath = resolve(join(vaultPath, removed.filePath));
+      const vaultRoot = resolve(vaultPath);
+      if (!keeperPath.startsWith(vaultRoot) || !removedPath.startsWith(vaultRoot)) {
+        res.status(400).json({ error: 'Invalid file path' }); return;
+      }
 
       // 병합: keeper 끝에 removed 고유 내용 추가
       const keeperContent = readFileSync(keeperPath, 'utf-8');
@@ -343,7 +349,9 @@ export function createApiServer(options: ApiServerOptions) {
       ].join('\n');
 
       const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ');
-      const dir = join(vaultPath, '01_Knowledge');
+      const { resolve } = await import('node:path');
+      const dir = resolve(join(vaultPath, '01_Knowledge'));
+      if (!dir.startsWith(resolve(vaultPath))) { res.status(400).json({ error: 'Invalid path' }); return; }
       mkdirSync(dir, { recursive: true });
       const filePath = join(dir, `${safeTitle}.md`);
       writeFileSync(filePath, content, 'utf-8');

@@ -25,6 +25,15 @@ export class WebhookManager {
   private deliveries: WebhookDelivery[] = [];
 
   register(config: WebhookConfig): void {
+    // MED: webhook URL 검증
+    try {
+      const parsed = new URL(config.url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid protocol');
+      const host = parsed.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.')) {
+        throw new Error('Internal URLs not allowed for webhooks');
+      }
+    } catch (e) { throw new Error(`Invalid webhook URL: ${e instanceof Error ? e.message : e}`); }
     this.configs.push(config);
   }
 

@@ -18,7 +18,8 @@ export async function searchMarketplace(query: string, limit = 10): Promise<Pack
 
   try {
     // npm registry search
-    const npmUrl = `https://registry.npmjs.org/-/v1/search?text=stellavault-pack+${encodeURIComponent(query)}&size=${limit}`;
+    const safeLimit = Math.min(limit, 20); // MED: 최대 20개 제한
+    const npmUrl = `https://registry.npmjs.org/-/v1/search?text=stellavault-pack+${encodeURIComponent(query)}&size=${safeLimit}`;
     const res = await fetch(npmUrl, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
       const data = await res.json() as any;

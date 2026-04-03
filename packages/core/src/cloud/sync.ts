@@ -67,8 +67,13 @@ export function getOrCreateEncryptionKey(userKey?: string): Buffer {
 async function s3Put(config: CloudConfig, objectKey: string, data: Buffer, contentType = 'application/octet-stream'): Promise<boolean> {
   const { endpoint, bucket, accessKeyId, secretAccessKey } = config;
 
-  // AWS Signature V4 간소화 — fetch + basic auth header
-  // 실제 프로덕션에서는 @aws-sdk/client-s3 사용 권장
+  // HIGH-05: endpoint 검증
+  try {
+    const parsed = new URL(endpoint);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid protocol');
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') throw new Error('Local endpoint');
+  } catch (e) { throw new Error(`Invalid cloud endpoint: ${endpoint}. ${e instanceof Error ? e.message : ''}`); }
+
   const url = `${endpoint}/${bucket}/${objectKey}`;
   const date = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
 

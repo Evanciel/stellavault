@@ -37,7 +37,7 @@ type EventHandler = (data: unknown) => Promise<void>;
 
 export class PluginManager {
   private plugins = new Map<string, StellavaultPlugin>();
-  private handlers = new Map<PluginEvent, EventHandler[]>();
+  private handlers = new Map<PluginEvent, Array<{ pluginName: string; handler: EventHandler }>>();
   private context: PluginContext;
 
   constructor(context: PluginContext) {
@@ -51,11 +51,14 @@ export class PluginManager {
 
     this.plugins.set(plugin.manifest.name, plugin);
 
-    // Register event handlers
+    // Register event handlers (MED fix: track by plugin name for proper unregister)
     for (const event of plugin.manifest.events) {
       if (!this.handlers.has(event)) this.handlers.set(event, []);
       if (plugin.onEvent) {
-        this.handlers.get(event)!.push((data) => plugin.onEvent!(event, data));
+        this.handlers.get(event)!.push({
+          pluginName: plugin.manifest.name,
+          handler: (data) => plugin.onEvent!(event, data),
+        });
       }
     }
 
@@ -70,19 +73,15 @@ export class PluginManager {
     await plugin.deactivate?.();
     this.plugins.delete(name);
 
-    // Remove handlers
-    for (const [event, handlers] of this.handlers) {
-      this.handlers.set(event, handlers.filter(h => {
-        // Can't directly compare, but removing all handlers from this plugin
-        // In practice, plugins should clean up in deactivate()
-        return true;
-      }));
+    // MED fix: properly remove handlers by plugin name
+    for (const [event, entries] of this.handlers) {
+      this.handlers.set(event, entries.filter(e => e.pluginName !== name));
     }
   }
 
   async emit(event: PluginEvent, data: unknown): Promise<void> {
-    const handlers = this.handlers.get(event) ?? [];
-    for (const handler of handlers) {
+    const entries = this.handlers.get(event) ?? [];
+    for (const { handler } of entries) {
       try {
         await handler(data);
       } catch (err) {

@@ -6,6 +6,7 @@ import type { FederationNode } from './node.js';
 import type { VectorStore } from '../store/types.js';
 import type { Embedder } from '../indexer/embedder.js';
 import type { FederatedSearchResult } from './types.js';
+import { maskSnippet } from './privacy.js';
 
 export interface FederatedSearchOptions {
   limit?: number;
@@ -108,7 +109,7 @@ export class FederatedSearch {
           safe.push({
             title: doc?.title ?? chunk.heading ?? 'Untitled',
             similarity: Math.round(s.score * 1000) / 1000,
-            snippet: chunk.content.slice(0, 50),
+            snippet: maskSnippet(chunk.content.slice(0, 50), 0.2), // MED: DP 마스킹 적용
           });
         }
 

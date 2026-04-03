@@ -155,14 +155,27 @@ export class FederationNode extends EventEmitter {
     conn.on('error', () => { /* swallow */ });
   }
 
+  // MED: 메시지 스키마 기본 검증
+  private validateMessage(msg: any): boolean {
+    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return false;
+    if (msg.type === 'handshake' && (typeof msg.peerId !== 'string' || typeof msg.displayName !== 'string')) return false;
+    if (msg.type === 'search_query' && (!Array.isArray(msg.embedding) || msg.embedding.length !== 384)) return false;
+    if (msg.type === 'search_result' && !Array.isArray(msg.results)) return false;
+    return true;
+  }
+
   private handleMessage(conn: any, msg: FederationMessage) {
+    if (!this.validateMessage(msg)) return; // 스키마 불일치 메시지 무시
+
     switch (msg.type) {
       case 'handshake': {
+        // MED: displayName 길이 제한
+        const safeName = (msg.displayName ?? '').slice(0, 50);
         const peerInfo: PeerInfo = {
           peerId: msg.peerId,
-          displayName: msg.displayName,
-          documentCount: msg.documentCount,
-          topTopics: msg.topTopics ?? [],
+          displayName: safeName,
+          documentCount: Math.min(msg.documentCount ?? 0, 1000000), // 합리적 상한
+          topTopics: (msg.topTopics ?? []).slice(0, 10),
           joinedAt: new Date().toISOString(),
           lastSeen: new Date().toISOString(),
         };
