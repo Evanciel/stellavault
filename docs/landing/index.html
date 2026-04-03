@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stellavault — Notes die in folders. Keep your knowledge alive.</title>
+  <meta name="description" content="Turn your Obsidian vault into a 3D neural knowledge graph with AI-powered search, memory decay tracking, and P2P federation.">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #050510; color: #c0c0f0; overflow-x: hidden; }
+    a { color: #88aaff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Hero */
+    .hero { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 20px; position: relative; }
+    .hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse at 50% 30%, rgba(99,102,241,0.15) 0%, transparent 70%); pointer-events: none; }
+    .hero h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); font-weight: 800; line-height: 1.1; margin-bottom: 16px; letter-spacing: -0.02em; }
+    .hero h1 span { background: linear-gradient(135deg, #818cf8, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero .tagline { font-size: clamp(1rem, 2.5vw, 1.4rem); color: #8888bb; max-width: 600px; margin-bottom: 40px; line-height: 1.6; }
+    .hero .cta { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .btn { padding: 14px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+    .btn-primary { background: #6366f1; color: white; }
+    .btn-primary:hover { background: #818cf8; text-decoration: none; }
+    .btn-secondary { background: rgba(99,102,241,0.1); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+    .btn-secondary:hover { background: rgba(99,102,241,0.2); text-decoration: none; }
+    .install-cmd { margin-top: 24px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px 20px; font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #a5b4fc; cursor: pointer; }
+    .install-cmd:hover { background: rgba(255,255,255,0.08); }
+
+    /* Features */
+    .section { padding: 80px 20px; max-width: 1100px; margin: 0 auto; }
+    .section h2 { font-size: 2rem; font-weight: 700; text-align: center; margin-bottom: 48px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+    .card { background: rgba(99,102,241,0.04); border: 1px solid rgba(99,102,241,0.1); border-radius: 16px; padding: 28px; transition: border-color 0.2s; }
+    .card:hover { border-color: rgba(99,102,241,0.3); }
+    .card .icon { font-size: 28px; margin-bottom: 12px; }
+    .card h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+    .card p { color: #8888bb; font-size: 14px; line-height: 1.6; }
+
+    /* How it works */
+    .steps { display: flex; flex-direction: column; gap: 32px; max-width: 700px; margin: 0 auto; }
+    .step { display: flex; gap: 20px; align-items: flex-start; }
+    .step-num { width: 40px; height: 40px; border-radius: 50%; background: rgba(99,102,241,0.15); color: #818cf8; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+    .step-content h3 { font-size: 1rem; margin-bottom: 4px; }
+    .step-content p { color: #8888bb; font-size: 14px; }
+    .step-content code { background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px; font-size: 13px; color: #a5b4fc; }
+
+    /* Federation */
+    .federation-visual { text-align: center; margin: 40px 0; font-family: monospace; font-size: 14px; color: #556; line-height: 1.8; }
+
+    /* CTA bottom */
+    .cta-bottom { text-align: center; padding: 80px 20px; }
+    .cta-bottom h2 { font-size: 2rem; margin-bottom: 16px; }
+    .cta-bottom p { color: #8888bb; margin-bottom: 32px; }
+
+    /* Footer */
+    footer { text-align: center; padding: 40px 20px; color: #445; font-size: 13px; border-top: 1px solid rgba(99,102,241,0.08); }
+
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; }
+      .step { flex-direction: column; align-items: center; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Notes die in folders.<br><span>Stellavault</span> keeps them alive.</h1>
+  <p class="tagline">Turn your Obsidian vault into a 3D neural knowledge graph. AI-powered search, memory decay tracking, and P2P federation — all local, all yours.</p>
+  <div class="cta">
+    <a href="https://github.com/Evanciel/stellavault" class="btn btn-primary">Get Started</a>
+    <a href="https://github.com/Evanciel/stellavault#give-your-ai-agent-memory" class="btn btn-secondary">MCP Integration</a>
+  </div>
+  <div class="install-cmd" onclick="navigator.clipboard.writeText('npm install -g stellavault')">
+    $ npm install -g stellavault &nbsp; <span style="color:#556">click to copy</span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>What makes Stellavault different</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="icon">🧠</div>
+      <h3>AI Understands Your Notes</h3>
+      <p>Local vector embeddings turn every note into searchable meaning. Hybrid BM25 + cosine + RRF fusion finds what keyword search can't.</p>
+    </div>
+    <div class="card">
+      <div class="icon">📉</div>
+      <h3>Memory Decay Tracking</h3>
+      <p>FSRS algorithm tracks what you're forgetting. Get alerts before knowledge fades. Review sessions strengthen weak memories.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h3>3D Knowledge Graph</h3>
+      <p>See your entire vault as an interactive 3D neural network. Constellation view, timeline slider, cluster filters, and hand gesture control.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔌</div>
+      <h3>17+ MCP Tools</h3>
+      <p>Claude Code searches your vault, tracks decisions, finds related notes, and gives daily briefings — through the Model Context Protocol.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌌</div>
+      <h3>Federation Network</h3>
+      <p>Connect your vault to others via P2P. Search across the network without sharing raw text. Your knowledge stays yours.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h3>100% Local & Private</h3>
+      <p>No cloud required. No API keys. Embeddings run locally. Federation shares only encrypted vectors, never your notes.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Get started in 30 seconds</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Install</h3>
+        <p><code>npm install -g stellavault</code></p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Setup</h3>
+        <p><code>stellavault init</code> — interactive wizard guides you through vault selection, indexing, and first search.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>Explore</h3>
+        <p><code>stellavault graph</code> — opens your 3D knowledge graph in the browser. Or <code>stellavault serve</code> to connect AI agents.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Stella Network — P2P Knowledge Federation</h2>
+  <p style="text-align:center; color:#8888bb; margin-bottom:32px;">Each Stellavault is a universe. Connect them to build collective intelligence.</p>
+  <div class="federation-visual">
+    ○ DevOps (47 docs)<br>
+    &nbsp;&nbsp;╲<br>
+    ○ ML (123 docs) ━━━ ◉ My Universe (1,209 docs) ━━━ ○ Security (89 docs)<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;╱<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;○ Frontend (256 docs)
+  </div>
+  <div class="grid" style="max-width:700px; margin:0 auto;">
+    <div class="card">
+      <h3>Privacy First</h3>
+      <p>Only titles + similarity scores + masked snippets cross the network. Raw text never leaves your machine.</p>
+    </div>
+    <div class="card">
+      <h3>Trust System</h3>
+      <p>Reputation scoring based on consistency, consensus, and helpfulness. Block bad actors, vouch for trusted peers.</p>
+    </div>
+  </div>
+</div>
+
+<div class="cta-bottom">
+  <h2>Your knowledge deserves to be alive.</h2>
+  <p>Open source. MIT licensed. Made for knowledge workers who think in connections.</p>
+  <a href="https://github.com/Evanciel/stellavault" class="btn btn-primary">View on GitHub</a>
+</div>
+
+<footer>
+  <p>Stellavault &copy; 2026 · <a href="https://github.com/Evanciel/stellavault">GitHub</a> · MIT License</p>
+</footer>
+
+</body>
+</html>
