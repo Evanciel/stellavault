@@ -6,8 +6,9 @@ import chalk from 'chalk';
 import {
   loadConfig, createSqliteVecStore, createLocalEmbedder,
   FederationNode, FederatedSearch, getOrCreateIdentity,
-  getSharingSummary, addBlockedTag, removeBlockedTag, addBlockedFolder, loadSharingConfig, saveSharingConfig,
+  getSharingSummary, setTagLevel, setFolderLevel, setNodeLevel, getPendingRequests, approveRequest, denyRequest,
 } from '@stellavault/core';
+import type { SharingLevel } from '@stellavault/core';
 
 export async function federateJoinCommand(options: { name?: string }) {
   const config = loadConfig();
@@ -137,40 +138,57 @@ export async function federateJoinCommand(options: { name?: string }) {
         break;
       }
 
-      case 'block-tag': {
+      case 'set-tag': {
         const tag = parts[1];
-        if (!tag) { console.log(chalk.yellow('  Usage: block-tag <tag>')); break; }
-        addBlockedTag(tag);
-        console.log(chalk.green(`  Blocked tag: #${tag}`));
+        const lvl = parseInt(parts[2], 10) as SharingLevel;
+        if (!tag || isNaN(lvl) || lvl < 0 || lvl > 4) { console.log(chalk.yellow('  Usage: set-tag <tag> <0-4>')); break; }
+        setTagLevel(tag, lvl);
+        console.log(chalk.green(`  #${tag} → Level ${lvl}`));
         break;
       }
 
-      case 'unblock-tag': {
-        const tag = parts[1];
-        if (!tag) { console.log(chalk.yellow('  Usage: unblock-tag <tag>')); break; }
-        removeBlockedTag(tag);
-        console.log(chalk.green(`  Unblocked tag: #${tag}`));
-        break;
-      }
-
-      case 'block-folder': {
+      case 'set-folder': {
         const folder = parts[1];
-        if (!folder) { console.log(chalk.yellow('  Usage: block-folder <folder>')); break; }
-        addBlockedFolder(folder);
-        console.log(chalk.green(`  Blocked folder: ${folder}`));
+        const lvl = parseInt(parts[2], 10) as SharingLevel;
+        if (!folder || isNaN(lvl) || lvl < 0 || lvl > 4) { console.log(chalk.yellow('  Usage: set-folder <folder> <0-4>')); break; }
+        setFolderLevel(folder, lvl);
+        console.log(chalk.green(`  ${folder} → Level ${lvl}`));
         break;
       }
 
-      case 'mode': {
-        const mode = parts[1];
-        if (mode !== 'whitelist' && mode !== 'blacklist') {
-          console.log(chalk.yellow('  Usage: mode whitelist|blacklist'));
-          break;
+      case 'set-level': {
+        const lvl = parseInt(parts[1], 10) as SharingLevel;
+        if (isNaN(lvl) || lvl < 0 || lvl > 4) { console.log(chalk.yellow('  Usage: set-level <0-4> (your node sharing level)')); break; }
+        setNodeLevel(lvl);
+        console.log(chalk.green(`  My node level → ${lvl}`));
+        break;
+      }
+
+      case 'requests': {
+        const pending = getPendingRequests();
+        if (pending.length === 0) { console.log(chalk.dim('  No pending requests')); break; }
+        console.log(`\n  ${pending.length} pending full-text requests:`);
+        for (const r of pending) {
+          console.log(`  ${r.requestId.slice(0, 8)} — "${r.documentTitle}" from ${r.fromName} (${r.requestedAt.slice(0, 10)})`);
         }
-        const cfg = loadSharingConfig();
-        cfg.mode = mode;
-        saveSharingConfig(cfg);
-        console.log(chalk.green(`  Sharing mode: ${mode}`));
+        break;
+      }
+
+      case 'approve': {
+        const reqId = parts[1];
+        if (!reqId) { console.log(chalk.yellow('  Usage: approve <request-id>')); break; }
+        const match = getPendingRequests().find(r => r.requestId.startsWith(reqId));
+        if (match && approveRequest(match.requestId)) console.log(chalk.green(`  Approved: ${match.documentTitle}`));
+        else console.log(chalk.red('  Request not found'));
+        break;
+      }
+
+      case 'deny': {
+        const reqId = parts[1];
+        if (!reqId) { console.log(chalk.yellow('  Usage: deny <request-id>')); break; }
+        const match = getPendingRequests().find(r => r.requestId.startsWith(reqId));
+        if (match && denyRequest(match.requestId)) console.log(chalk.green(`  Denied: ${match.documentTitle}`));
+        else console.log(chalk.red('  Request not found'));
         break;
       }
 
@@ -192,11 +210,13 @@ export async function federateJoinCommand(options: { name?: string }) {
         console.log(`    ${chalk.cyan('peers')}             List connected peers`);
         console.log(`    ${chalk.cyan('status')}            Show node info`);
         console.log(`    ${chalk.cyan('connect <ip:port>')} Connect to peer directly`);
-        console.log(`    ${chalk.cyan('sharing')}           Show sharing settings`);
-        console.log(`    ${chalk.cyan('block-tag <tag>')}   Block a tag from sharing`);
-        console.log(`    ${chalk.cyan('unblock-tag <tag>')} Unblock a tag`);
-        console.log(`    ${chalk.cyan('block-folder <f>')}  Block a folder from sharing`);
-        console.log(`    ${chalk.cyan('mode <wl|bl>')}      Set whitelist or blacklist mode`);
+        console.log(`    ${chalk.cyan('sharing')}              Show sharing settings`);
+        console.log(`    ${chalk.cyan('set-tag <t> <0-4>')}   Set tag sharing level`);
+        console.log(`    ${chalk.cyan('set-folder <f> <0-4>')} Set folder sharing level`);
+        console.log(`    ${chalk.cyan('set-level <0-4>')}     Set your node level`);
+        console.log(`    ${chalk.cyan('requests')}            Show pending full-text requests`);
+        console.log(`    ${chalk.cyan('approve <id>')}        Approve a request`);
+        console.log(`    ${chalk.cyan('deny <id>')}           Deny a request`);
         console.log(`    ${chalk.cyan('leave')}             Disconnect and exit`);
         break;
       }
