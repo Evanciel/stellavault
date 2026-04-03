@@ -12,7 +12,6 @@ memory/
 
 # Node modules in workspaces
 packages/*/node_modules/
-packages/core/dist/
 
 # Test screenshots and images
 *.png
@@ -34,3 +33,26 @@ packages/graph/test-*.mjs
 tsconfig.json
 tsconfig.base.json
 vitest.config.*
+
+# Temp files
+*.b64.txt
+api_payload.json
+cp_*.json
+pr_body.json
+
+# Source maps (not needed for npm)
+*.d.ts.map
+*.js.map
+
+# Graph package (browser only, not for npm CLI)
+packages/graph/
+
+# Source TypeScript (dist is enough)
+packages/*/src/
+
+# Tests
+packages/*/tests/
+tests/
+
+# Sync package (separate concern)
+packages/sync/

@@ -33,10 +33,14 @@ Manual install for now (community plugin review pending):
 
 Also available as a CLI tool: `npx stellavault` — works with MCP for Claude integration.
 
+## Also included
+
+- **3D Knowledge Graph** — Visualize your vault as a neural network in 3D space. Clusters form constellations. Zoom to explore.
+- Works as a **Claude Code MCP server** too — `npx stellavault serve` lets AI agents search your knowledge.
+
 ## What's next
 
 - Federated knowledge sharing (opt-in P2P, embedding-only, no raw text)
-- 3D knowledge graph visualization
 - Knowledge packs (share curated knowledge bundles)
 
 Would love feedback. What features would make this useful for your workflow?
