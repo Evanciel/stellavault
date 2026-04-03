@@ -40,6 +40,12 @@ Thumbs.db
 .bkit/
 .claude/
 
+# Auto-memory (per-user)
+memory/
+
+# Test screenshots
+packages/graph/*.png
+
 # MCP / Playwright logs
 .mcp.json
 .playwright-mcp/
