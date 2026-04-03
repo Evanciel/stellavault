@@ -1,0 +1,21 @@
+# Docs (too large for npm)
+docs/
+images/
+.claude/
+.bkit/
+.playwright-mcp/
+scripts/
+*.db
+*.db-journal
+
+# Node modules in workspaces
+packages/*/node_modules/
+packages/core/dist/
+
+# Dev files
+.env
+.ekh.json
+.stellavault.json
+.mcp.json
+tsconfig.json
+vitest.config.*
