@@ -7,6 +7,7 @@ import type { VectorStore } from '../store/types.js';
 import type { Embedder } from '../indexer/embedder.js';
 import type { FederatedSearchResult } from './types.js';
 import { maskSnippet } from './privacy.js';
+import { isDocumentShareable, sanitizeSnippet } from './sharing.js';
 
 export interface FederatedSearchOptions {
   limit?: number;
@@ -106,10 +107,15 @@ export class FederatedSearch {
           if (!chunk) continue;
           // 청크의 documentId에서 문서 제목 가져오기
           const doc = await this.store.getDocument(chunk.documentId);
+          if (!doc) continue;
+
+          // Sharing filter: 비공개 문서는 검색 결과에서 제외
+          if (!isDocumentShareable({ tags: doc.tags, filePath: doc.filePath, id: doc.id, content: doc.content })) continue;
+
           safe.push({
-            title: doc?.title ?? chunk.heading ?? 'Untitled',
+            title: doc.title ?? chunk.heading ?? 'Untitled',
             similarity: Math.round(s.score * 1000) / 1000,
-            snippet: maskSnippet(chunk.content.slice(0, 50), 0.2), // MED: DP 마스킹 적용
+            snippet: sanitizeSnippet(maskSnippet(chunk.content.slice(0, 50), 0.2)),
           });
         }
 

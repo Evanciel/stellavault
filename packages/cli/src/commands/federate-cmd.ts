@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import {
   loadConfig, createSqliteVecStore, createLocalEmbedder,
   FederationNode, FederatedSearch, getOrCreateIdentity,
+  getSharingSummary, addBlockedTag, removeBlockedTag, addBlockedFolder, loadSharingConfig, saveSharingConfig,
 } from '@stellavault/core';
 
 export async function federateJoinCommand(options: { name?: string }) {
@@ -129,6 +130,50 @@ export async function federateJoinCommand(options: { name?: string }) {
         break;
       }
 
+      case 'sharing': {
+        console.log('\n' + chalk.bold('  Sharing Settings'));
+        console.log('  ' + getSharingSummary().split('\n').join('\n  '));
+        console.log('');
+        break;
+      }
+
+      case 'block-tag': {
+        const tag = parts[1];
+        if (!tag) { console.log(chalk.yellow('  Usage: block-tag <tag>')); break; }
+        addBlockedTag(tag);
+        console.log(chalk.green(`  Blocked tag: #${tag}`));
+        break;
+      }
+
+      case 'unblock-tag': {
+        const tag = parts[1];
+        if (!tag) { console.log(chalk.yellow('  Usage: unblock-tag <tag>')); break; }
+        removeBlockedTag(tag);
+        console.log(chalk.green(`  Unblocked tag: #${tag}`));
+        break;
+      }
+
+      case 'block-folder': {
+        const folder = parts[1];
+        if (!folder) { console.log(chalk.yellow('  Usage: block-folder <folder>')); break; }
+        addBlockedFolder(folder);
+        console.log(chalk.green(`  Blocked folder: ${folder}`));
+        break;
+      }
+
+      case 'mode': {
+        const mode = parts[1];
+        if (mode !== 'whitelist' && mode !== 'blacklist') {
+          console.log(chalk.yellow('  Usage: mode whitelist|blacklist'));
+          break;
+        }
+        const cfg = loadSharingConfig();
+        cfg.mode = mode;
+        saveSharingConfig(cfg);
+        console.log(chalk.green(`  Sharing mode: ${mode}`));
+        break;
+      }
+
       case 'leave':
       case 'quit':
       case 'exit': {
@@ -147,6 +192,11 @@ export async function federateJoinCommand(options: { name?: string }) {
         console.log(`    ${chalk.cyan('peers')}             List connected peers`);
         console.log(`    ${chalk.cyan('status')}            Show node info`);
         console.log(`    ${chalk.cyan('connect <ip:port>')} Connect to peer directly`);
+        console.log(`    ${chalk.cyan('sharing')}           Show sharing settings`);
+        console.log(`    ${chalk.cyan('block-tag <tag>')}   Block a tag from sharing`);
+        console.log(`    ${chalk.cyan('unblock-tag <tag>')} Unblock a tag`);
+        console.log(`    ${chalk.cyan('block-folder <f>')}  Block a folder from sharing`);
+        console.log(`    ${chalk.cyan('mode <wl|bl>')}      Set whitelist or blacklist mode`);
         console.log(`    ${chalk.cyan('leave')}             Disconnect and exit`);
         break;
       }
