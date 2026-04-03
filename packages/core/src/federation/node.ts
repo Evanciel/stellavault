@@ -115,13 +115,26 @@ export class FederationNode extends EventEmitter {
     });
 
     let buffer = '';
+    const MAX_BUFFER = 1024 * 1024; // HIGH-04: 1MB 버퍼 제한 (OOM 방지)
+    const MAX_MESSAGE = 64 * 1024;  // 개별 메시지 64KB 제한
+
     conn.on('data', (data: Buffer) => {
       buffer += data.toString();
+
+      // 버퍼 크기 초과 시 연결 종료
+      if (buffer.length > MAX_BUFFER) {
+        console.error('Federation: buffer overflow from peer, disconnecting');
+        buffer = '';
+        conn.end();
+        return;
+      }
+
       const lines = buffer.split('\n');
-      buffer = lines.pop() ?? ''; // 마지막 불완전한 줄 보존
+      buffer = lines.pop() ?? '';
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        if (line.length > MAX_MESSAGE) continue; // 초대형 메시지 무시
         try {
           const msg: FederationMessage = JSON.parse(line);
           this.handleMessage(conn, msg);

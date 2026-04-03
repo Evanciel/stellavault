@@ -1,9 +1,23 @@
 // Voice Knowledge Capture (P3-F25)
 // 음성 파일 → 텍스트 → 자동 분류 → vault 저장 → 인덱싱
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
+
+// CRIT-03: 화이트리스트 검증
+const ALLOWED_MODELS = ['tiny', 'base', 'small', 'medium', 'large'];
+const ALLOWED_LANGUAGES = ['auto', 'en', 'ko', 'ja', 'zh', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ar', 'hi'];
+
+function validateModel(model: string): string {
+  if (!ALLOWED_MODELS.includes(model)) throw new Error(`Invalid model: ${model}. Allowed: ${ALLOWED_MODELS.join(', ')}`);
+  return model;
+}
+
+function validateLanguage(lang: string): string {
+  if (!ALLOWED_LANGUAGES.includes(lang)) throw new Error(`Invalid language: ${lang}. Allowed: ${ALLOWED_LANGUAGES.join(', ')}`);
+  return lang;
+}
 
 export interface CaptureResult {
   title: string;
@@ -42,14 +56,15 @@ export async function transcribeAudio(audioPath: string, options: { model?: stri
     throw new Error(`Audio file not found: ${audioPath}`);
   }
 
-  // Whisper CLI 사용
+  // CRIT-03 fix: execFileSync + 화이트리스트 검증 (command injection 방지)
   if (isWhisperAvailable()) {
-    const langFlag = language ? `--language ${language}` : '';
-    const cmd = `whisper "${audioPath}" --model ${model} ${langFlag} --output_format txt --output_dir /tmp/sv-whisper`;
+    const safeModel = validateModel(model);
+    const args = [audioPath, '--model', safeModel, '--output_format', 'txt', '--output_dir', '/tmp/sv-whisper'];
+    if (language) args.push('--language', validateLanguage(language));
     mkdirSync('/tmp/sv-whisper', { recursive: true });
 
     try {
-      execSync(cmd, { stdio: 'pipe', timeout: 300000 }); // 5분 타임아웃
+      execFileSync('whisper', args, { stdio: 'pipe', timeout: 300000 });
       const outputName = basename(audioPath).replace(/\.[^.]+$/, '.txt');
       const { readFileSync } = await import('node:fs');
       return readFileSync(join('/tmp/sv-whisper', outputName), 'utf-8').trim();

@@ -81,6 +81,8 @@ function getDashboardHTML(): string {
 
   <script>
     const API = '/api';
+    // HIGH-06: XSS 방지 — HTML 이스케이프
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
     async function loadStats() {
       try {
@@ -103,7 +105,7 @@ function getDashboardHTML(): string {
             decayEl.innerHTML = health.decay.topDecaying.slice(0, 8).map(d => {
               const r = Math.round((d.retrievability ?? 0) * 100);
               const color = r > 50 ? '#10b981' : r > 30 ? '#f59e0b' : '#ef4444';
-              return '<div class="result"><div class="title">' + d.title + '</div><div class="bar"><div class="bar-fill" style="width:' + r + '%;background:' + color + '"></div></div><div class="meta">' + r + '% retrievability</div></div>';
+              return '<div class="result"><div class="title">' + esc(d.title) + '</div><div class="bar"><div class="bar-fill" style="width:' + r + '%;background:' + color + '"></div></div><div class="meta">' + r + '% retrievability</div></div>';
             }).join('');
           } else {
             decayEl.innerHTML = '<div style="color:#556;font-size:12px">All knowledge healthy!</div>';
@@ -122,8 +124,8 @@ function getDashboardHTML(): string {
         try {
           const res = await fetch(API + '/search?q=' + encodeURIComponent(q) + '&limit=10').then(r => r.json());
           el.innerHTML = (res.results || []).map(r =>
-            '<div class="result"><div class="title">' + r.title + ' <span style="color:#556;font-size:11px">(' + Math.round(r.score * 100) + '%)</span></div>' +
-            '<div class="meta">' + (r.highlights?.[0] || '').slice(0, 100) + '</div></div>'
+            '<div class="result"><div class="title">' + esc(r.title) + ' <span style="color:#556;font-size:11px">(' + Math.round(r.score * 100) + '%)</span></div>' +
+            '<div class="meta">' + esc((r.highlights?.[0] || '').slice(0, 100)) + '</div></div>'
           ).join('') || '<div style="color:#556;font-size:12px">No results</div>';
         } catch { el.innerHTML = '<div style="color:#ef4444;font-size:12px">Search error</div>'; }
       }, 300);

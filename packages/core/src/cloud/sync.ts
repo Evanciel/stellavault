@@ -3,7 +3,7 @@
 // Design Ref: PRD §7.1 Tier 2
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -58,7 +58,8 @@ export function getOrCreateEncryptionKey(userKey?: string): Buffer {
   }
 
   const key = randomBytes(32);
-  writeFileSync(KEY_FILE, key.toString('hex'), 'utf-8');
+  writeFileSync(KEY_FILE, key.toString('hex'), { encoding: 'utf-8', mode: 0o600 });
+  try { chmodSync(KEY_FILE, 0o600); } catch { /* Windows may not support */ }
   return key;
 }
 

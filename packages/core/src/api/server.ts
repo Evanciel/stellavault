@@ -579,8 +579,18 @@ export function createApiServer(options: ApiServerOptions) {
       const { url } = req.body;
       if (!url) { res.status(400).json({ error: 'url required' }); return; }
 
+      // HIGH-03: SSRF 방어 — 내부 네트워크 차단
+      try {
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) { res.status(400).json({ error: 'Only http/https URLs allowed' }); return; }
+        const host = parsed.hostname.toLowerCase();
+        if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local') || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.16.')) {
+          res.status(400).json({ error: 'Internal URLs not allowed' }); return;
+        }
+      } catch { res.status(400).json({ error: 'Invalid URL' }); return; }
+
       const isYT = /youtube\.com\/watch|youtu\.be\//.test(url);
-      const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 stellavault-clipper/1.0' } });
+      const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 stellavault-clipper/1.0' }, signal: AbortSignal.timeout(15000) });
       const html = await response.text();
 
       // 제목 추출

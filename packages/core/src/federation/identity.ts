@@ -1,7 +1,9 @@
-// Federation: Node Identity (Ed25519 keypair)
+// Federation: Node Identity (HMAC-SHA256 signing)
+// CRIT-01 fix: 실제 서명 검증 구현 (placeholder 제거)
+// CRIT-04 fix: 키 파일 권한 0o600
 
-import { randomBytes, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -28,7 +30,6 @@ export function getOrCreateIdentity(displayName?: string): NodeIdentity {
     };
   }
 
-  // Generate new Ed25519-like keypair (using crypto for simplicity)
   const secretKey = randomBytes(32);
   const publicKey = createHash('sha256').update(secretKey).digest();
   const peerId = createHash('sha256').update(publicKey).digest('hex').slice(0, 16);
@@ -42,27 +43,48 @@ export function getOrCreateIdentity(displayName?: string): NodeIdentity {
   };
 
   mkdirSync(IDENTITY_DIR, { recursive: true });
-  writeFileSync(IDENTITY_FILE, JSON.stringify({
+  const content = JSON.stringify({
     peerId: identity.peerId,
     publicKey: publicKey.toString('hex'),
     secretKey: secretKey.toString('hex'),
     displayName: identity.displayName,
     createdAt: identity.createdAt,
-  }, null, 2), 'utf-8');
+  }, null, 2);
+
+  writeFileSync(IDENTITY_FILE, content, { encoding: 'utf-8', mode: 0o600 });
+  try { chmodSync(IDENTITY_FILE, 0o600); } catch { /* Windows may not support */ }
 
   return identity;
 }
 
+// CRIT-01 fix: 실제 HMAC-SHA256 서명
 export function signMessage(secretKey: Buffer, message: Buffer): Buffer {
-  const hmac = createHash('sha256').update(Buffer.concat([secretKey, message])).digest();
-  return hmac;
+  return createHmac('sha256', secretKey).update(message).digest();
 }
 
-export function verifySignature(publicKey: Buffer, message: Buffer, signature: Buffer): boolean {
-  // Simplified verification (in production, use actual Ed25519)
-  const expected = createHash('sha256')
-    .update(Buffer.concat([createHash('sha256').update(publicKey).digest(), message]))
-    .digest();
-  // Note: this is a placeholder — real implementation needs ed25519
-  return signature.length === 32;
+// CRIT-01 fix: 실제 HMAC-SHA256 검증
+export function verifySignature(publicKey: Buffer, secretKey: Buffer, message: Buffer, signature: Buffer): boolean {
+  const expected = createHmac('sha256', secretKey).update(message).digest();
+  if (expected.length !== signature.length) return false;
+  // Timing-safe comparison
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected[i] ^ signature[i];
+  }
+  return diff === 0;
+}
+
+// Challenge-response 인증용 nonce 생성
+export function createChallenge(): Buffer {
+  return randomBytes(32);
+}
+
+// Challenge에 대한 응답 생성
+export function respondToChallenge(secretKey: Buffer, challenge: Buffer): Buffer {
+  return signMessage(secretKey, challenge);
+}
+
+// Challenge 응답 검증
+export function verifyChallenge(secretKey: Buffer, challenge: Buffer, response: Buffer): boolean {
+  return verifySignature(Buffer.alloc(0), secretKey, challenge, response);
 }

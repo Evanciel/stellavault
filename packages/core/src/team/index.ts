@@ -105,10 +105,10 @@ export function createAuthMiddleware() {
   return (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      // 인증 없으면 로컬 접근 (localhost만 허용)
+      // HIGH-01: localhost는 editor 권한만 (admin은 토큰 필수)
       const ip = req.ip || req.connection?.remoteAddress;
       if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') {
-        req.teamMember = { displayName: 'local', role: 'admin' } as TeamMember;
+        req.teamMember = { displayName: 'local', role: 'editor' } as TeamMember;
         return next();
       }
       return res.status(401).json({ error: 'Bearer token required' });
