@@ -13,11 +13,18 @@ export interface FederatedSearchOptions {
 }
 
 export class FederatedSearch {
+  private additionalStores: VectorStore[] = [];
+
   constructor(
     private node: FederationNode,
     private store: VectorStore,
     private embedder: Embedder,
   ) {}
+
+  // Multi-vault: 추가 store 등록 (Federation 검색 응답 시 전체 vault 검색)
+  addStore(store: VectorStore): void {
+    this.additionalStores.push(store);
+  }
 
   // Design Ref: §5 — search() 요청 측
   async search(query: string, options: FederatedSearchOptions = {}): Promise<FederatedSearchResult[]> {
@@ -84,8 +91,12 @@ export class FederatedSearch {
       if (!req.respondTo) return;
 
       try {
-        // 받은 임베딩으로 로컬 벡터 DB 검색
-        const scored = await this.store.searchSemantic(req.embedding, req.limit);
+        // 받은 임베딩으로 모든 로컬 vault DB 검색 (multi-vault)
+        const allStores = [this.store, ...this.additionalStores];
+        const allScored = await Promise.all(
+          allStores.map(s => s.searchSemantic(req.embedding, req.limit).catch(() => []))
+        );
+        const scored = allScored.flat().sort((a, b) => b.score - a.score).slice(0, req.limit);
 
         // Plan SC: SC3 — 원문 비노출. 제목+유사도+50자만.
         const safe: Array<{ title: string; similarity: number; snippet: string }> = [];
