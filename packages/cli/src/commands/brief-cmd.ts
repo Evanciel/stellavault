@@ -82,6 +82,6 @@ export async function briefCommand() {
     }
   } catch {}
 
-  console.log(chalk.dim('\n═'.repeat(50)));
+  console.log('\n' + chalk.dim('─'.repeat(50)));
   console.log(chalk.dim('💡 stellavault review | stellavault gaps | stellavault graph'));
 }
