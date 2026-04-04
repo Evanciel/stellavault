@@ -257,9 +257,29 @@ export function MultiverseView() {
           Stella Network
         </div>
         <div style={{ color: isDark ? '#556' : '#999' }}>
-          {peers.length} peer{peers.length !== 1 ? 's' : ''} connected
+          {peers.length > 0
+            ? `${peers.length} peer${peers.length !== 1 ? 's' : ''} connected`
+            : 'Solo mode — no peers connected'}
         </div>
       </div>
+
+      {peers.length === 0 && (
+        <div style={{
+          position: 'absolute', bottom: '60px', left: '50%', transform: 'translateX(-50%)',
+          color: isDark ? '#667' : '#999', fontSize: '12px', textAlign: 'center',
+          background: isDark ? 'rgba(10,10,30,0.8)' : 'rgba(255,255,255,0.9)',
+          padding: '12px 20px', borderRadius: '8px',
+          border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
+          maxWidth: '320px',
+        }}>
+          <div style={{ marginBottom: '6px', color: isDark ? '#aab' : '#555' }}>
+            Your universe floats alone — for now.
+          </div>
+          <div style={{ fontSize: '11px' }}>
+            Run <code style={{ background: isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: '3px' }}>stellavault federate join</code> to connect to the P2P network.
+          </div>
+        </div>
+      )}
 
       <div style={{
         position: 'absolute', bottom: '16px', left: '50%', transform: 'translateX(-50%)',

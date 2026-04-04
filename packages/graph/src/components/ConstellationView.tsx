@@ -25,7 +25,7 @@ export function ConstellationView() {
   const isLight = theme === 'light';
   const showConstellation = useGraphStore((s) => s.showConstellation);
 
-  if (!showConstellation) return null;
+  // ALL hooks before conditional return
   const groupRef = useRef<THREE.Group>(null);
   const { constellationOpacity } = useConstellationLOD();
   const opacityRef = useRef(0);
@@ -87,10 +87,10 @@ export function ConstellationView() {
     });
   });
 
-  if (data.lines.length === 0) return null;
-
   // 클러스터 컬러 맵
   const colorMap = new Map(clusters.map(c => [c.id, c.color]));
+
+  if (!showConstellation || data.lines.length === 0) return null;
 
   return (
     <group ref={groupRef}>

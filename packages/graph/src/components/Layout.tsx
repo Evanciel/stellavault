@@ -16,15 +16,9 @@ import { ToolsPanel } from './ToolsPanel.js';
 import { MultiverseView } from './MultiverseView.js';
 
 export function Layout() {
+  // ALL hooks must be called before any conditional return
   const viewMode = useGraphStore((s) => s.viewMode);
   const setViewMode = useGraphStore((s) => s.setViewMode);
-
-  // 멀티버스 모드면 멀티버스 뷰 렌더링
-  if (viewMode === 'multiverse') {
-    return <MultiverseView />;
-  }
-
-  // 기존 universe 모드
   const error = useGraphStore((s) => s.error);
   const loading = useGraphStore((s) => s.loading);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
@@ -42,7 +36,6 @@ export function Layout() {
 
   // 모션 제어
   const controlsRef = useRef<any>(null);
-  // controlsRef는 Graph3D 안의 OrbitControls — window로 전달
   const getControls = () => (window as any).__sv_controls ?? controlsRef;
   const motion = useMotion(getControls());
   const [motionActive, setMotionActive] = useState(false);
@@ -66,6 +59,11 @@ export function Layout() {
       setMotionLoading(false);
     }
   };
+
+  // 멀티버스 모드면 멀티버스 뷰 렌더링
+  if (viewMode === 'multiverse') {
+    return <MultiverseView />;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: isDark ? '#050510' : '#f0f2f8' }}>
