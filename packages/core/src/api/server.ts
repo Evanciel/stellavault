@@ -274,6 +274,38 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // GET /api/evolution — Design Ref: F02 — 시맨틱 진화 데이터
+  app.get('/api/evolution', async (req, res) => {
+    try {
+      const topic = req.query.topic as string | undefined;
+      const limit = parseInt(String(req.query.limit ?? '20'), 10);
+      const docs = await store.getAllDocuments();
+
+      let filtered = docs;
+      if (topic) {
+        const t = topic.toLowerCase();
+        filtered = docs.filter(
+          (d) => d.tags.some((tag) => tag.toLowerCase().includes(t)) || d.title.toLowerCase().includes(t)
+        );
+      }
+
+      const evolved = filtered
+        .filter((d) => d.lastModified)
+        .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime())
+        .slice(0, limit)
+        .map((d) => ({
+          id: d.id,
+          title: d.title,
+          lastModified: d.lastModified,
+          tags: d.tags.slice(0, 5),
+        }));
+
+      res.json({ topic: topic ?? 'all', total: filtered.length, recentlyEvolved: evolved });
+    } catch (err) {
+      console.error(err); res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/duplicates — 중복 노트 탐지
   app.get('/api/duplicates', async (req, res) => {
     try {
