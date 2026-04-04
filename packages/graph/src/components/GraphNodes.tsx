@@ -5,6 +5,7 @@ import { useRef, useMemo, useEffect, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
+import { useHeatmap } from '../hooks/useHeatmap.js';
 
 // 원형 포인트 텍스처 생성
 function createCircleTexture(): THREE.Texture {
@@ -68,6 +69,10 @@ export function GraphNodes() {
   const lodLevel = useGraphStore((s) => s.lodLevel);
   const showDecayOverlay = useGraphStore((s) => s.showDecayOverlay);
   const decayData = useGraphStore((s) => s.decayData);
+  const showHeatmap = useGraphStore((s) => s.showHeatmap);
+  const showGaps = useGraphStore((s) => s.showGaps);
+  const gapData = useGraphStore((s) => s.gapData);
+  const { heatmapColors, heatmapSizes } = useHeatmap();
 
   // LOD nodeScale 적용 — Design Ref: §8
   const lodScale = lodLevel === 'universe' ? 0.6 : lodLevel === 'note' ? 1.2 : 1.0;
@@ -171,6 +176,21 @@ export function GraphNodes() {
       let sz = 4 + node.size * 3;
       let gsz = 12 + node.size * 8;
 
+      // Design Ref: §2.3 — F06 히트맵 오버레이 (decay와 상호 배타)
+      if (showHeatmap && heatmapColors && !hasPulse && !hasActive) {
+        r = heatmapColors[i * 3];
+        g = heatmapColors[i * 3 + 1];
+        b = heatmapColors[i * 3 + 2];
+        const sizeMultiplier = heatmapSizes ? heatmapSizes[i] : 1;
+        sz *= sizeMultiplier;
+        gsz *= sizeMultiplier;
+        colAttr.setXYZ(i, r, g, b);
+        sizeAttr.setX(i, sz);
+        if (glowColAttr) glowColAttr.setXYZ(i, r, g, b);
+        if (glowSizeAttr) glowSizeAttr.setX(i, gsz);
+        continue;
+      }
+
       // 감쇠 오버레이 — Design Ref: §5.1
       if (showDecayOverlay && !hasPulse && !hasActive) {
         const rVal = decayData[node.id] ?? 1.0; // R값 (없으면 1.0 = 건강)
@@ -189,6 +209,13 @@ export function GraphNodes() {
         if (glowColAttr) glowColAttr.setXYZ(i, r, g, b);
         if (glowSizeAttr) glowSizeAttr.setX(i, gsz);
         continue;
+      }
+
+      // Design Ref: §3.3 — F01 갭 고립 노드 강조
+      if (showGaps && gapData?.isolatedNodeIds.has(node.id) && !hasPulse && !hasActive) {
+        r = 1.0; g = 0.2; b = 0.2; // 빨간색
+        sz *= 1.3;
+        gsz *= 1.5;
       }
 
       // 타임라인 범위 필터
@@ -311,7 +338,7 @@ export function GraphNodes() {
     sizeAttr.needsUpdate = true;
     if (glowColAttr) glowColAttr.needsUpdate = true;
     if (glowSizeAttr) glowSizeAttr.needsUpdate = true;
-  }, [nodes, hoveredNodeId, selectedNodeId, connectedIds, highlightedNodeIds, hiddenClusters, hiddenTypes, timelineRange, showDecayOverlay, decayData]);
+  }, [nodes, hoveredNodeId, selectedNodeId, connectedIds, highlightedNodeIds, hiddenClusters, hiddenTypes, timelineRange, showDecayOverlay, decayData, showHeatmap, heatmapColors, heatmapSizes, showGaps, gapData]);
 
   // Raycaster로 호버/클릭 처리
   const handlePointerMove = useCallback((e: any) => {

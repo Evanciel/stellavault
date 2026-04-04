@@ -17,6 +17,7 @@ import { exportToolDef, handleExport } from './tools/export.js';
 import { getDecayStatusToolDef, handleGetDecayStatus } from './tools/decay.js';
 import { getMorningBriefToolDef, handleGetMorningBrief } from './tools/brief.js';
 import { createLearningPathTool } from './tools/learning-path.js';
+import { createDetectGapsTool } from './tools/detect-gaps.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 
 export interface McpServerOptions {
@@ -30,6 +31,7 @@ export function createMcpServer(options: McpServerOptions) {
   const { store, searchEngine, vaultPath = '', decayEngine } = options;
 
   const learningPathTool = createLearningPathTool(store);
+  const detectGapsTool = createDetectGapsTool(store);
 
   const server = new Server(
     { name: 'stellavault', version: '0.2.0' },
@@ -44,6 +46,7 @@ export function createMcpServer(options: McpServerOptions) {
       logDecisionToolDef, findDecisionsToolDef, exportToolDef,
       ...(decayEngine ? [getDecayStatusToolDef, getMorningBriefToolDef] : []),
       { name: learningPathTool.name, description: learningPathTool.description, inputSchema: learningPathTool.inputSchema },
+      { name: detectGapsTool.name, description: detectGapsTool.description, inputSchema: detectGapsTool.inputSchema },
     ],
   }));
 
@@ -105,6 +108,9 @@ export function createMcpServer(options: McpServerOptions) {
           break;
         case 'get-learning-path':
           result = await learningPathTool.handler(args as any);
+          return result as any;
+        case 'detect-gaps':
+          result = await detectGapsTool.handler(args as any);
           return result as any;
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

@@ -8,6 +8,8 @@ import { searchSemantic } from './semantic.js';
 import { rrfFusion } from './rrf.js';
 
 export { rrfFusion } from './rrf.js';
+export { createAdaptiveSearch } from './adaptive.js';
+export type { SearchContext, AdaptiveSearchEngine } from './adaptive.js';
 
 export interface SearchEngine {
   search(options: SearchOptions): Promise<SearchResult[]>;

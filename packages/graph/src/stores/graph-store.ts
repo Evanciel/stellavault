@@ -49,6 +49,14 @@ interface GraphState {
   lodLevel: 'universe' | 'constellation' | 'note';
   showDecayOverlay: boolean;
   decayData: Record<string, number>;
+  // Design Ref: §1.1 — F06 Heatmap + F01 Gap UI
+  showHeatmap: boolean;
+  heatmapData: Record<string, number>; // nodeId → activityScore (0~1)
+  showGaps: boolean;
+  gapData: {
+    gaps: Array<{ clusterIdA: number; clusterIdB: number; bridgeCount: number; severity: 'high' | 'medium' | 'low' }>;
+    isolatedNodeIds: Set<string>;
+  } | null;
   showConstellation: boolean;
   hiddenTypes: Set<string>;
   showTimeline: boolean;
@@ -76,6 +84,10 @@ interface GraphState {
   setLodLevel: (level: 'universe' | 'constellation' | 'note') => void;
   toggleDecayOverlay: () => void;
   setDecayData: (data: Record<string, number>) => void;
+  toggleHeatmap: () => void;
+  setHeatmapData: (data: Record<string, number>) => void;
+  toggleGaps: () => void;
+  setGapData: (data: GraphState['gapData']) => void;
   toggleConstellation: () => void;
   toggleHiddenType: (type: string) => void;
   toggleTimeline: () => void;
@@ -103,6 +115,10 @@ export const useGraphStore = create<GraphState>((set) => ({
   lodLevel: 'constellation' as const,
   showDecayOverlay: false,
   decayData: {},
+  showHeatmap: false,
+  heatmapData: {},
+  showGaps: false,
+  gapData: null,
   showConstellation: true,
   hiddenTypes: new Set(),
   showTimeline: false,
@@ -127,8 +143,12 @@ export const useGraphStore = create<GraphState>((set) => ({
   setExporting: (v) => set({ isExporting: v }),
   setRecording: (v) => set({ isRecording: v }),
   setLodLevel: (level) => set({ lodLevel: level }),
-  toggleDecayOverlay: () => set((s) => ({ showDecayOverlay: !s.showDecayOverlay })),
+  toggleDecayOverlay: () => set((s) => ({ showDecayOverlay: !s.showDecayOverlay, showHeatmap: false })),
   setDecayData: (data) => set({ decayData: data }),
+  toggleHeatmap: () => set((s) => ({ showHeatmap: !s.showHeatmap, showDecayOverlay: false })),
+  setHeatmapData: (data) => set({ heatmapData: data }),
+  toggleGaps: () => set((s) => ({ showGaps: !s.showGaps })),
+  setGapData: (data) => set({ gapData: data }),
   toggleConstellation: () => set((s) => ({ showConstellation: !s.showConstellation })),
   toggleHiddenCluster: (id) => set((s) => {
     const next = new Set(s.hiddenClusters);

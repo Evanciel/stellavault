@@ -10,6 +10,10 @@ export function StatusBar() {
   const lodLevel = useGraphStore((s) => s.lodLevel);
   const theme = useGraphStore((s) => s.theme);
   const isDark = theme === 'dark';
+  const showHeatmap = useGraphStore((s) => s.showHeatmap);
+  const toggleHeatmap = useGraphStore((s) => s.toggleHeatmap);
+  const showGaps = useGraphStore((s) => s.showGaps);
+  const toggleGaps = useGraphStore((s) => s.toggleGaps);
 
   return (
     <div style={{
@@ -41,6 +45,36 @@ export function StatusBar() {
             {clusters.map(c => c.label).join(' · ')}
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              onClick={toggleHeatmap}
+              title="Knowledge Heatmap"
+              style={{
+                background: showHeatmap ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
+                border: `1px solid ${showHeatmap ? 'rgba(239, 68, 68, 0.4)' : 'rgba(100,120,255,0.15)'}`,
+                color: showHeatmap ? '#ef4444' : (isDark ? '#667' : '#556'),
+                borderRadius: '4px',
+                padding: '2px 6px',
+                cursor: 'pointer',
+                fontSize: '10px',
+              }}
+            >
+              Heatmap
+            </button>
+            <button
+              onClick={toggleGaps}
+              title="Knowledge Gaps"
+              style={{
+                background: showGaps ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
+                border: `1px solid ${showGaps ? 'rgba(239, 68, 68, 0.4)' : 'rgba(100,120,255,0.15)'}`,
+                color: showGaps ? '#ef4444' : (isDark ? '#667' : '#556'),
+                borderRadius: '4px',
+                padding: '2px 6px',
+                cursor: 'pointer',
+                fontSize: '10px',
+              }}
+            >
+              Gaps
+            </button>
             <ExportPanel />
             <span style={{ color: '#334', fontSize: '10px' }}>
               ESC=reset · /=search

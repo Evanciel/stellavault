@@ -229,6 +229,51 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // GET /api/heatmap — Design Ref: §2.2 — 지식 히트맵 활동 점수
+  app.get('/api/heatmap', async (_req, res) => {
+    try {
+      const docs = await store.getAllDocuments();
+      const now = Date.now();
+      const scores: Record<string, number> = {};
+      let hotCount = 0;
+      let coldCount = 0;
+
+      // Pre-fetch decay data if available
+      let decayMap: Record<string, number> = {};
+      if (decayEngine) {
+        try {
+          const report = await decayEngine.computeAll();
+          // topDecaying has R values for worst-performing docs
+          for (const item of report.topDecaying) {
+            decayMap[item.documentId] = item.retrievability;
+          }
+        } catch { /* ignore */ }
+      }
+
+      for (const doc of docs) {
+        // 최근 수정 기반 점수 (0~0.4)
+        const modified = doc.lastModified ? new Date(doc.lastModified).getTime() : now - 86400000 * 60;
+        const daysSinceModified = (now - modified) / 86400000;
+        const recencyScore = Math.max(0, 1 - daysSinceModified / 90) * 0.4;
+
+        // 감쇠 R값 기반 (0~0.3)
+        const decayScore = (decayMap[doc.id] ?? 0.5) * 0.3;
+
+        // 태그 수 기반 연결도 (0~0.3)
+        const tagScore = Math.min((doc.tags?.length ?? 0) / 10, 1) * 0.3;
+
+        const score = Math.min(1, recencyScore + decayScore + tagScore);
+        scores[doc.id] = score;
+        if (score > 0.6) hotCount++;
+        if (score < 0.2) coldCount++;
+      }
+
+      res.json({ scores, stats: { total: docs.length, hotCount, coldCount } });
+    } catch (err) {
+      console.error(err); res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/duplicates — 중복 노트 탐지
   app.get('/api/duplicates', async (req, res) => {
     try {
