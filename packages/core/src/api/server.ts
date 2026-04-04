@@ -77,7 +77,10 @@ export function createApiServer(options: ApiServerOptions) {
         results: results.map(r => ({
           documentId: r.document.id,
           title: r.document.title,
+          filePath: r.document.filePath,
           score: Math.round(r.score * 1000) / 1000,
+          snippet: r.chunk?.content?.substring(0, 200) ?? '',
+          tags: r.document.tags ?? [],
           highlights: r.highlights,
         })),
         query,
