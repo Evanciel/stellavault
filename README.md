@@ -28,6 +28,27 @@ claude mcp add stellavault -- stellavault serve
 
 Now Claude Code can search your notes, track your decisions, tell you what's fading, and give you a daily knowledge briefing — using 17+ MCP tools.
 
+## Screenshots
+
+<p align="center">
+  <img src="images/screenshots/graph-dark-full.png" alt="3D Knowledge Graph — Dark Mode" width="800" />
+  <br><em>Your vault as a neural network. Clusters form constellations.</em>
+</p>
+
+<p align="center">
+  <img src="images/screenshots/graph-search-highlight.png" alt="Semantic Search Highlight" width="800" />
+  <br><em>Search by meaning. Matching nodes pulse and glow.</em>
+</p>
+
+<details>
+<summary>More screenshots</summary>
+
+| Light Mode | Timeline Slider | Heatmap |
+|:---:|:---:|:---:|
+| <img src="images/screenshots/graph-light-mode.png" width="260" /> | <img src="images/screenshots/graph-timeline.png" width="260" /> | <img src="images/screenshots/graph-heatmap.png" width="260" /> |
+
+</details>
+
 ## What It Does
 
 **Understands** — Vectorizes every note locally (no API keys needed). Hybrid search combines BM25 + cosine similarity + RRF fusion.
@@ -170,6 +191,60 @@ stellavault/
   "mcp": { "mode": "stdio", "port": 3333 }
 }
 ```
+
+## Obsidian Plugin
+
+Manual install (community plugin review pending):
+
+1. Download `main.js`, `manifest.json`, `styles.css` from [GitHub Releases](https://github.com/Evanciel/stellavault-obsidian/releases/tag/0.1.0)
+2. Copy to `.obsidian/plugins/stellavault/`
+3. Enable in Settings > Community plugins
+4. **Important**: Run `npx stellavault graph` in your vault folder first — the plugin connects to the API server
+
+Features: semantic search modal, memory decay sidebar, learning path suggestions, auto-indexing.
+
+## Troubleshooting
+
+<details>
+<summary>"Stellavault API server not found"</summary>
+
+The Obsidian plugin and 3D graph require the API server running. Open a terminal in your vault folder:
+
+```bash
+npx stellavault graph
+```
+
+Default port is 3333. Change in Obsidian Settings > Stellavault > API server port.
+</details>
+
+<details>
+<summary>"No documents indexed"</summary>
+
+Run the indexer first:
+
+```bash
+stellavault index /path/to/your/vault
+```
+
+For large vaults (1000+ notes), first indexing takes 2-5 minutes.
+</details>
+
+<details>
+<summary>Port 3333 already in use</summary>
+
+Another process is using port 3333. Either stop it, or use a different port:
+
+```bash
+# Edit .stellavault.json in your vault
+{ "mcp": { "port": 3334 } }
+```
+</details>
+
+<details>
+<summary>Node.js version error</summary>
+
+Stellavault requires Node.js 20+. Check with `node --version`.
+</details>
 
 ## License
 
