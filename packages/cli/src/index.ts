@@ -27,7 +27,7 @@ const program = new Command();
 program
   .name('stellavault')
   .description('Stellavault — Turn your Obsidian vault into a 3D neural knowledge graph')
-  .version('0.1.0')
+  .version('0.3.0')
   .option('--json', 'Output in JSON format (for scripting)')
   .option('--quiet', 'Suppress non-essential output');
 

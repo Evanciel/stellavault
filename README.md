@@ -10,15 +10,19 @@ Your Obsidian vault is more than files. It's a living network — connections em
 # Install globally
 npm install -g stellavault
 
-# Interactive setup wizard
+# Interactive setup wizard (recommended)
 stellavault init
+#   Step 1/3: Vault path → your Obsidian folder
+#   Step 2/3: Database location (default: ~/.stellavault/)
+#   Step 3/3: Auto-indexes your vault + verifies search works
 
-# Or manually: index your vault + launch 3D graph
-stellavault index /path/to/obsidian/vault
+# Launch 3D graph (also starts API server on port 3333)
 stellavault graph
 ```
 
 That's it. Open `http://localhost:5173` to see your knowledge come alive in 3D.
+
+> **Prerequisites**: Node.js 20+ (`node --version` to check)
 
 ## Give Your AI Agent Memory
 
