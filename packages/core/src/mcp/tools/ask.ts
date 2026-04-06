@@ -6,7 +6,7 @@ import { askVault } from '../../intelligence/ask-engine.js';
 export function createAskTool(searchEngine: SearchEngine, vaultPath: string) {
   return {
     name: 'ask',
-    description: 'Ask a question about your knowledge base. Searches vault, composes a structured answer with sources, and optionally saves the answer as a new note in your vault.',
+    description: 'Ask a question about your knowledge base. Searches vault using hybrid AI search (BM25 + vector + RRF), returns structured results with sources. Use the results to compose your own AI-powered answer. Optionally saves as a new note.',
     inputSchema: {
       type: 'object' as const,
       properties: {

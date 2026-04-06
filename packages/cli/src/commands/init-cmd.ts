@@ -67,7 +67,7 @@ export async function initCommand() {
     console.log(chalk.cyan('  Step 2/3') + ' — Indexing your vault');
     console.log(chalk.dim('  Vectorizing notes with local AI (no data leaves your machine).\n'));
 
-    const spinner = ora({ text: '  Loading embedding model...', indent: 2 }).start();
+    const spinner = ora({ text: '  Loading embedding model (first run downloads ~30MB, please wait)...', indent: 2 }).start();
 
     const store = createSqliteVecStore(dbPath);
     await store.initialize();
@@ -135,6 +135,45 @@ export async function initCommand() {
     console.log(`  ${chalk.cyan('stellavault decay')}     See what knowledge is fading`);
     console.log(`  ${chalk.cyan('stellavault brief')}     Get your daily knowledge briefing`);
     console.log(`  ${chalk.cyan('stellavault serve')}     Connect AI agents via MCP`);
+    console.log('');
+
+    // Day 2 Experience — 습관화 제안
+    console.log(chalk.cyan('  ─── Build a habit ───\n'));
+    const setupCron = await ask(rl, '  Auto-run daily briefing? (adds cron job) [Y/n]', 'Y');
+    if (setupCron.toLowerCase() !== 'n') {
+      const cronLine = `0 9 * * * cd "${vaultPath}" && stellavault brief >> ~/.stellavault/daily.log 2>&1`;
+      const platform = process.platform;
+
+      if (platform === 'win32') {
+        console.log(chalk.dim('\n  Windows: Add this to Task Scheduler:'));
+        console.log(chalk.dim(`  Action: stellavault brief`));
+        console.log(chalk.dim(`  Trigger: Daily at 9:00 AM`));
+        console.log(chalk.dim(`  Start in: ${vaultPath}\n`));
+      } else {
+        console.log(chalk.dim('\n  Add this to your crontab (crontab -e):'));
+        console.log(chalk.dim(`  ${cronLine}\n`));
+
+        const autoAdd = await ask(rl, '  Add to crontab now? [Y/n]', 'Y');
+        if (autoAdd.toLowerCase() !== 'n') {
+          try {
+            const { execSync } = await import('node:child_process');
+            const existing = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
+            if (!existing.includes('stellavault brief')) {
+              execSync(`(crontab -l 2>/dev/null; echo "${cronLine}") | crontab -`, { encoding: 'utf-8' });
+              console.log(chalk.green('  ✓ Daily briefing scheduled at 9:00 AM\n'));
+            } else {
+              console.log(chalk.dim('  Already scheduled.\n'));
+            }
+          } catch {
+            console.log(chalk.yellow('  Could not auto-add. Please add manually.\n'));
+          }
+        }
+      }
+    }
+
+    console.log(chalk.dim('  Tomorrow morning, run:'));
+    console.log(`  ${chalk.cyan('stellavault brief')}     See what changed overnight`);
+    console.log(`  ${chalk.cyan('stellavault decay')}     Review fading knowledge`);
     console.log('');
     console.log(chalk.dim('  Your knowledge is now alive. ✦'));
     console.log('');

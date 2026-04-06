@@ -33,7 +33,17 @@ export async function graphCommand() {
     port,
     vaultName,
   });
-  await api.start();
+  try {
+    await api.start();
+  } catch (err: any) {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(chalk.red(`Port ${port} is already in use.`));
+      console.error(chalk.dim(`Stop the other process or use a different port:`));
+      console.error(chalk.dim(`  Edit .stellavault.json: { "mcp": { "port": ${port + 1} } }`));
+      process.exit(1);
+    }
+    throw err;
+  }
 
   console.error(chalk.green('🧠 Stellavault — Neural Knowledge Graph'));
   console.error(`   📚 ${stats.documentCount} documents | ${stats.chunkCount} chunks`);

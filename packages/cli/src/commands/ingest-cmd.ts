@@ -48,7 +48,9 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
         .trim()
         .slice(0, 5000);
       content += text;
-    } catch { /* URL만 저장 */ }
+    } catch (err) {
+      console.error(chalk.yellow(`Web fetch failed: saving URL only. (${err instanceof Error ? err.message : 'network error'})`));
+    }
 
     ingestInput = {
       type: isYouTube ? 'youtube' : 'url',

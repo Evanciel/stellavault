@@ -21,23 +21,27 @@ import { createDetectGapsTool } from './tools/detect-gaps.js';
 import { createGetEvolutionTool } from './tools/get-evolution.js';
 import { createLinkCodeTool } from './tools/link-code.js';
 import { createAskTool } from './tools/ask.js';
+import { createAgenticGraphTools } from './tools/agentic-graph.js';
+import type { Embedder } from '../indexer/embedder.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 
 export interface McpServerOptions {
   store: VectorStore;
   searchEngine: SearchEngine;
+  embedder?: Embedder;
   vaultPath?: string;
   decayEngine?: DecayEngine;
 }
 
 export function createMcpServer(options: McpServerOptions) {
-  const { store, searchEngine, vaultPath = '', decayEngine } = options;
+  const { store, searchEngine, embedder, vaultPath = '', decayEngine } = options;
 
   const learningPathTool = createLearningPathTool(store);
   const detectGapsTool = createDetectGapsTool(store);
   const getEvolutionTool = createGetEvolutionTool(store);
   const linkCodeTool = createLinkCodeTool(searchEngine);
   const askTool = createAskTool(searchEngine, vaultPath);
+  const agenticTools = embedder ? createAgenticGraphTools(store, embedder, vaultPath) : [];
 
   const server = new Server(
     { name: 'stellavault', version: '0.2.0' },
@@ -56,6 +60,7 @@ export function createMcpServer(options: McpServerOptions) {
       { name: getEvolutionTool.name, description: getEvolutionTool.description, inputSchema: getEvolutionTool.inputSchema },
       { name: linkCodeTool.name, description: linkCodeTool.description, inputSchema: linkCodeTool.inputSchema },
       { name: askTool.name, description: askTool.description, inputSchema: askTool.inputSchema },
+      ...agenticTools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
     ],
   }));
 
@@ -130,7 +135,14 @@ export function createMcpServer(options: McpServerOptions) {
         case 'ask':
           result = await askTool.handler(args as any);
           return result as any;
-        default:
+        default: {
+          // Agentic graph tools (create-knowledge-node, create-knowledge-link)
+          const agenticTool = agenticTools.find(t => t.name === name);
+          if (agenticTool) {
+            result = await agenticTool.handler(args as any);
+            return result as any;
+          }
+        }
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
