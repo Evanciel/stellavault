@@ -38,7 +38,8 @@ export async function extractYouTubeContent(url: string): Promise<YouTubeContent
     ?? extractBetween(html, '"author":"', '"')
     ?? 'Unknown Channel'
   );
-  const description = cleanHtml(extractMeta(html, 'og:description') ?? '');
+  // 전체 설명 가져오기 (og:description은 ~150자로 잘림)
+  const description = cleanHtml(extractFullDescription(html));
   const duration = extractBetween(html, '"lengthSeconds":"', '"') ?? '';
   const publishDate = extractBetween(html, '"publishDate":"', '"') ?? '';
   const viewCount = extractBetween(html, '"viewCount":"', '"') ?? '';
@@ -83,7 +84,7 @@ export function formatYouTubeNote(content: YouTubeContent): string {
   }
 
   if (content.description.length > 30) {
-    lines.push(`## ${nt('description')}`, '', content.description.slice(0, 800), '');
+    lines.push(`## ${nt('description')}`, '', content.description.slice(0, 3000), '');
   }
 
   if (content.transcript.length > 0) {
@@ -109,13 +110,15 @@ async function extractTimedTranscript(html: string): Promise<TimedSegment[]> {
   let captionUrl = '';
 
   // 한국어 > 영어 > 아무거나
-  for (const lang of ['ko', 'en', '']) {
-    const pattern = lang
-      ? new RegExp(`"baseUrl":"(.*?)"[^}]*"languageCode":"${lang}"`)
-      : /"baseUrl":"(.*?)"/;
-    const match = tracks.match(pattern);
-    if (match) { captionUrl = match[1]; break; }
+  // captionTracks JSON이 복잡하므로 baseUrl을 먼저 추출
+  const allUrls = [...tracks.matchAll(/"baseUrl":"(.*?)"/g)].map(m => m[1]);
+  const allLangs = [...tracks.matchAll(/"languageCode":"(.*?)"/g)].map(m => m[1]);
+
+  for (const targetLang of ['ko', 'en']) {
+    const idx = allLangs.indexOf(targetLang);
+    if (idx >= 0 && allUrls[idx]) { captionUrl = allUrls[idx]; break; }
   }
+  if (!captionUrl && allUrls.length > 0) captionUrl = allUrls[0];
   if (!captionUrl) return [];
 
   const cleanUrl = captionUrl.replace(/\\u0026/g, '&').replace(/\\u003d/g, '=').replace(/\\\//g, '/');
@@ -225,6 +228,27 @@ function generateSmartSummary(title: string, transcript: string, description: st
 }
 
 // ─── 유틸 ───
+
+function extractFullDescription(html: string): string {
+  // 방법 1: JSON에서 shortDescription 추출 (이스케이프된 JSON 문자열)
+  const shortDescMatch = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+  if (shortDescMatch) {
+    try {
+      return JSON.parse(`"${shortDescMatch[1]}"`);
+    } catch { /* fallback */ }
+  }
+
+  // 방법 2: description.simpleText
+  const simpleMatch = html.match(/"description":\{"simpleText":"((?:[^"\\]|\\.)*)"/);
+  if (simpleMatch) {
+    try {
+      return JSON.parse(`"${simpleMatch[1]}"`);
+    } catch { /* fallback */ }
+  }
+
+  // 방법 3: og:description (짧지만 최후 수단)
+  return extractMeta(html, 'og:description') ?? '';
+}
 
 async function fetchPage(url: string): Promise<string> {
   const resp = await fetch(url, {
