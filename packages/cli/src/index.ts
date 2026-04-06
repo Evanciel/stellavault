@@ -24,6 +24,7 @@ import { captureCommand } from './commands/capture-cmd.js';
 import { askCommand } from './commands/ask-cmd.js';
 import { compileCommand } from './commands/compile-cmd.js';
 import { lintCommand } from './commands/lint-cmd.js';
+import { fleetingCommand } from './commands/fleeting-cmd.js';
 
 const program = new Command();
 
@@ -166,6 +167,12 @@ program
   .command('lint')
   .description('Knowledge health check — find gaps, duplicates, contradictions, stale notes')
   .action(() => lintCommand());
+
+program
+  .command('fleeting <text>')
+  .description('Capture a fleeting idea instantly to raw/ folder')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .action((text: string, opts) => fleetingCommand(text, opts));
 
 const vault = program.command('vault').description('Multi-Vault — manage and search across vaults');
 vault.command('add <id> <path>').description('Register a vault').option('-n, --name <name>', 'Display name').option('-s, --shared', 'Allow federation sharing').action(vaultAddCommand);

@@ -58,6 +58,11 @@ export { generateLearningPath } from './intelligence/learning-path.js';
 export { askVault } from './intelligence/ask-engine.js';
 export { compileWiki, scanRawDirectory, extractConcepts } from './intelligence/wiki-compiler.js';
 export { lintKnowledge } from './intelligence/knowledge-lint.js';
+export {
+  scanFrontmatter, generateNextIndexCode, assignIndexCodes,
+  getInboxItems, archiveFile, checkAtomicity, detectOrphansAndBrokenLinks,
+} from './intelligence/zettelkasten.js';
+export type { FrontmatterEntry } from './intelligence/zettelkasten.js';
 export type { LintResult, LintIssue } from './intelligence/knowledge-lint.js';
 export type { AskResult } from './intelligence/ask-engine.js';
 export type { LearningPath, LearningItem, LearningPathInput } from './intelligence/learning-path.js';
