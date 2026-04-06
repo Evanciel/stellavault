@@ -7,6 +7,7 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, resolve, extname, basename } from 'node:path';
 import { scanFrontmatter, assignIndexCodes, archiveFile, type FrontmatterEntry } from './zettelkasten.js';
+import { compileWiki } from './wiki-compiler.js';
 
 /** YAML 값에서 위험한 문자를 이스케이프 */
 function sanitizeYaml(val: string): string {
@@ -99,6 +100,15 @@ export function ingest(
   });
 
   writeFileSync(fullPath, md, 'utf-8');
+
+  // 자동 compile: raw/ → _wiki/ (rule-based, <100ms)
+  try {
+    const rawDir = resolve(vaultPath, 'raw');
+    const wikiDir = resolve(vaultPath, '_wiki');
+    if (existsSync(rawDir)) {
+      compileWiki(rawDir, wikiDir);
+    }
+  } catch { /* compile 실패해도 ingest 성공 */ }
 
   return {
     savedTo: filePath,

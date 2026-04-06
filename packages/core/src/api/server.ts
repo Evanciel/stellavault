@@ -493,6 +493,121 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // POST /api/ingest/file — 웹 UI에서 파일 드래그앤드롭 인제스트
+  app.post('/api/ingest/file', async (req, res) => {
+    try {
+      const multer = (await import('multer')).default;
+      const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+      upload.single('file')(req, res, async (uploadErr: any) => {
+        if (uploadErr) {
+          res.status(400).json({ error: uploadErr.message || 'Upload failed' });
+          return;
+        }
+        const file = (req as any).file;
+        if (!file) {
+          res.status(400).json({ error: 'No file provided' });
+          return;
+        }
+
+        // MIME 화이트리스트
+        const allowedMimes = new Set([
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/plain', 'text/markdown', 'text/csv',
+        ]);
+        if (!allowedMimes.has(file.mimetype)) {
+          res.status(400).json({ error: `Unsupported file type: ${file.mimetype}` });
+          return;
+        }
+
+        try {
+          const { writeFileSync, unlinkSync } = await import('node:fs');
+          const { join } = await import('node:path');
+          const { tmpdir } = await import('node:os');
+          const tmpPath = join(tmpdir(), `sv-upload-${Date.now()}-${file.originalname}`);
+
+          // 임시 파일 저장 → 파서가 파일 경로 필요
+          writeFileSync(tmpPath, file.buffer);
+
+          const { extractFileContent, isBinaryFormat } = await import('../intelligence/file-extractors.js');
+          const ext = file.originalname.split('.').pop()?.toLowerCase() ?? '';
+          const binaryExts = new Set(['pdf', 'docx', 'pptx', 'xlsx', 'xls']);
+
+          let content: string;
+          let extractedTitle: string | undefined;
+          let formatTag: string = ext;
+
+          if (binaryExts.has(ext)) {
+            const extracted = await extractFileContent(tmpPath);
+            content = extracted.text;
+            extractedTitle = extracted.metadata.title;
+            formatTag = extracted.sourceFormat;
+          } else {
+            content = file.buffer.toString('utf-8');
+          }
+
+          // 임시 파일 삭제
+          try { unlinkSync(tmpPath); } catch { /* ok */ }
+
+          // locale 설정
+          const locale = req.body?.locale;
+          if (locale) {
+            const { setNoteLocale } = await import('../i18n/note-strings.js');
+            setNoteLocale(locale);
+          }
+
+          const tags = req.body?.tags ? (Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',').map((t: string) => t.trim())) : [];
+          const { ingest } = await import('../intelligence/ingest-pipeline.js');
+          const result = ingest(vaultPath, {
+            type: formatTag as any,
+            content,
+            tags: [...tags, formatTag],
+            title: req.body?.title ?? extractedTitle,
+            stage: 'fleeting',
+            source: file.originalname,
+          });
+
+          // 자동 인덱싱
+          try {
+            const doc = {
+              id: require('node:crypto').createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
+              filePath: result.savedTo,
+              title: result.title,
+              content,
+              frontmatter: {},
+              tags: result.tags,
+              lastModified: new Date().toISOString(),
+              contentHash: '',
+              source: 'upload',
+              type: result.stage,
+            };
+            await store.upsertDocument(doc);
+          } catch (indexErr) {
+            console.error('[ingest/file] Auto-index failed:', indexErr instanceof Error ? indexErr.message : indexErr);
+          }
+
+          res.json({
+            success: true,
+            savedTo: result.savedTo,
+            stage: result.stage,
+            title: result.title,
+            indexCode: result.indexCode,
+            tags: result.tags,
+            wordCount: result.wordCount,
+          });
+        } catch (err) {
+          res.status(500).json({ error: err instanceof Error ? err.message : 'Processing failed' });
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'File upload initialization failed' });
+    }
+  });
+
   // GET /api/recent — 최근 저장된 노트 목록
   app.get('/api/recent', async (_req, res) => {
     try {

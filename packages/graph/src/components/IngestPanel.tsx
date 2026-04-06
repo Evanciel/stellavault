@@ -1,8 +1,11 @@
-// 웹 UI 인제스트 패널 — URL/텍스트/아이디어를 바로 입력
-import { useState, useCallback } from 'react';
+// 웹 UI 인제스트 패널 — URL/텍스트/파일 드래그앤드롭 → 자동 파이프라인
+import { useState, useCallback, useRef } from 'react';
 import { useGraphStore } from '../stores/graph-store.js';
 import { getTheme } from '../lib/theme.js';
 import { t } from '../lib/i18n.js';
+
+const ACCEPT_EXTS = '.pdf,.docx,.pptx,.xlsx,.xls,.md,.txt,.csv';
+const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
 export function IngestPanel() {
   const themeMode = useGraphStore((s) => s.theme);
@@ -15,11 +18,58 @@ export function IngestPanel() {
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [result, setResult] = useState('');
   const [recentItems, setRecentItems] = useState<any[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const refreshGraph = useCallback(async () => {
+    try {
+      const graphResp = await fetch('/api/graph?mode=semantic');
+      const graphData = await graphResp.json();
+      if (graphData.nodes) {
+        const store = useGraphStore.getState();
+        store.setGraphData(graphData.nodes, graphData.edges, graphData.clusters);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const onIngestSuccess = useCallback((data: any) => {
+    setStatus('success');
+    setResult(`${data.title} (${data.wordCount} words)`);
+    setInput('');
+    setTags('');
+    setRecentItems(prev => [{ title: data.title, savedTo: data.savedTo, stage: data.stage, tags: data.tags }, ...prev].slice(0, 5));
+    refreshGraph();
+    setTimeout(() => { setStatus('idle'); setResult(''); }, 4000);
+  }, [refreshGraph]);
+
+  // 파일 업로드 핸들러
+  const handleFileUpload = useCallback(async (file: File) => {
+    setStatus('sending');
+    setResult(`Uploading ${file.name}...`);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (tags) formData.append('tags', tags);
+      formData.append('locale', useGraphStore.getState().locale ?? 'en');
+
+      const resp = await fetch('/api/ingest/file', { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (data.success) {
+        onIngestSuccess(data);
+      } else {
+        setStatus('error');
+        setResult(data.error || 'Upload failed');
+      }
+    } catch {
+      setStatus('error');
+      setResult('Server not responding');
+    }
+  }, [tags, onIngestSuccess]);
+
+  // 텍스트/URL 인제스트 핸들러
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
     setStatus('sending');
-
     try {
       const resp = await fetch('/api/ingest', {
         method: 'POST',
@@ -31,24 +81,9 @@ export function IngestPanel() {
           locale: useGraphStore.getState().locale,
         }),
       });
-
       const data = await resp.json();
       if (data.success) {
-        setStatus('success');
-        setResult(`${data.title}`);
-        setInput('');
-        setTags('');
-        setRecentItems(prev => [{ title: data.title, savedTo: data.savedTo, stage: data.stage, tags: data.tags }, ...prev].slice(0, 5));
-        // 그래프 자동 새로고침 — 새 노드 반영
-        try {
-          const graphResp = await fetch('/api/graph?mode=semantic');
-          const graphData = await graphResp.json();
-          if (graphData.nodes) {
-            const store = useGraphStore.getState();
-            store.setGraphData(graphData.nodes, graphData.edges, graphData.clusters);
-          }
-        } catch { /* 그래프 새로고침 실패해도 무시 */ }
-        setTimeout(() => { setStatus('idle'); setResult(''); }, 4000);
+        onIngestSuccess(data);
       } else {
         setStatus('error');
         setResult(data.error || 'Failed');
@@ -57,19 +92,33 @@ export function IngestPanel() {
       setStatus('error');
       setResult('Server not responding');
     }
-  }, [input, tags, stage]);
+  }, [input, tags, stage, onIngestSuccess]);
+
+  // 드래그앤드롭 핸들러
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  }, [handleFileUpload]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+    e.target.value = '';
+  }, [handleFileUpload]);
 
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
-        title="Add knowledge (URL, text, idea)"
+        title="Add knowledge (URL, text, file)"
         style={{
           position: 'fixed',
-          bottom: '60px',
+          bottom: isMobile ? '16px' : '60px',
           right: '16px',
-          width: '48px',
-          height: '48px',
+          width: isMobile ? '56px' : '48px',
+          height: isMobile ? '56px' : '48px',
           borderRadius: '50%',
           border: `2px solid ${th.borderActive}`,
           background: th.bgSolid,
@@ -94,12 +143,14 @@ export function IngestPanel() {
   return (
     <div style={{
       position: 'fixed',
-      bottom: '60px',
-      right: '16px',
-      width: '360px',
+      bottom: isMobile ? 0 : '60px',
+      right: isMobile ? 0 : '16px',
+      width: isMobile ? '100vw' : '360px',
+      maxHeight: isMobile ? '85vh' : 'none',
+      overflowY: 'auto',
       background: th.bgSolid,
       border: `1px solid ${th.border}`,
-      borderRadius: '12px',
+      borderRadius: isMobile ? '16px 16px 0 0' : '12px',
       padding: '16px',
       zIndex: 100,
       boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
@@ -118,7 +169,44 @@ export function IngestPanel() {
         </button>
       </div>
 
-      {/* Input */}
+      {/* File Drop Zone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        style={{
+          border: `2px dashed ${dragOver ? th.textAccent : th.buttonBorder}`,
+          borderRadius: '8px',
+          padding: isMobile ? '16px 12px' : '12px',
+          textAlign: 'center',
+          cursor: 'pointer',
+          marginBottom: '10px',
+          background: dragOver ? `${th.accent}88` : 'transparent',
+          transition: 'all 0.15s ease',
+          minHeight: isMobile ? '60px' : '44px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPT_EXTS}
+          onChange={handleFileSelect}
+          style={{ display: 'none' }}
+        />
+        <span style={{ fontSize: '12px', color: th.textMuted }}>
+          {isMobile ? 'Tap to select file' : 'Drop files here or click to browse'}
+        </span>
+        <span style={{ fontSize: '10px', color: th.textDim, marginTop: '4px' }}>
+          PDF, DOCX, PPTX, XLSX, TXT
+        </span>
+      </div>
+
+      {/* Text/URL Input */}
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}

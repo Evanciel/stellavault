@@ -100,7 +100,7 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
           type: extracted.sourceFormat as IngestInput['type'],
           content: extracted.text,
           tags: [...tags, extracted.sourceFormat],
-          stage: stage === 'fleeting' ? 'literature' : stage,
+          stage,  // 제텔카스텐: 모든 인풋은 fleeting에서 시작
           title: options.title ?? extracted.metadata.title,
           source: input,
         };
@@ -146,9 +146,8 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
   console.log(chalk.dim(`  Words: ${result.wordCount}`));
   if (result.indexCode) console.log(chalk.dim(`  Index: ${result.indexCode}`));
   if (result.tags.length > 0) console.log(chalk.dim(`  Tags: ${result.tags.join(', ')}`));
+  console.log(chalk.dim('  Wiki: auto-compiled'));
   console.log('');
-  console.log(chalk.dim('Run `stellavault compile` to process into wiki.'));
-  console.log(chalk.dim('Run `stellavault autopilot` for full pipeline.'));
 }
 
 export async function promoteCommand(filePath: string, options: { to: string }) {
