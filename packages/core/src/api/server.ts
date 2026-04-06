@@ -260,12 +260,38 @@ export function createApiServer(options: ApiServerOptions) {
         return;
       }
 
+      // URL인 경우 제목+내용 가져오기
+      let content = input;
+      let autoTitle = title;
+      if (input.startsWith('http')) {
+        try {
+          const resp = await fetch(input, { signal: AbortSignal.timeout(8000) });
+          const html = await resp.text();
+          // HTML에서 title 추출
+          const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (titleMatch && !autoTitle) autoTitle = titleMatch[1].trim();
+          // HTML → 텍스트
+          const text = html
+            .replace(/<script[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[\s\S]*?<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 5000);
+          content = input + '\n\n' + text;
+        } catch { /* URL만 저장 */ }
+      }
+
       const { ingest } = await import('../intelligence/ingest-pipeline.js');
       const result = ingest(vaultPath, {
         type: type ?? (input.startsWith('http') ? 'url' : 'text'),
-        content: input,
+        content,
         tags: tags ?? [],
-        title,
+        title: autoTitle,
         stage: stage ?? 'fleeting',
         source: input.startsWith('http') ? input : undefined,
       });
@@ -282,6 +308,28 @@ export function createApiServer(options: ApiServerOptions) {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Ingest failed' });
+    }
+  });
+
+  // GET /api/recent — 최근 저장된 노트 목록
+  app.get('/api/recent', async (_req, res) => {
+    try {
+      const docs = await store.getAllDocuments();
+      const recent = docs
+        .filter(d => d.lastModified)
+        .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime())
+        .slice(0, 20)
+        .map(d => ({
+          id: d.id,
+          title: d.title,
+          filePath: d.filePath,
+          lastModified: d.lastModified,
+          tags: d.tags.slice(0, 5),
+          type: d.type ?? 'note',
+        }));
+      res.json({ recent });
+    } catch (err) {
+      console.error(err); res.status(500).json({ error: 'Failed' });
     }
   });
 

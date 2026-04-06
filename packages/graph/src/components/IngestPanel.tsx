@@ -14,6 +14,7 @@ export function IngestPanel() {
   const [stage, setStage] = useState<'fleeting' | 'literature'>('fleeting');
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [result, setResult] = useState('');
+  const [recentItems, setRecentItems] = useState<any[]>([]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
@@ -33,9 +34,10 @@ export function IngestPanel() {
       const data = await resp.json();
       if (data.success) {
         setStatus('success');
-        setResult(`Saved: ${data.title} → ${data.savedTo}`);
+        setResult(`${data.title}`);
         setInput('');
         setTags('');
+        setRecentItems(prev => [{ title: data.title, savedTo: data.savedTo, stage: data.stage, tags: data.tags }, ...prev].slice(0, 5));
         setTimeout(() => { setStatus('idle'); setResult(''); }, 4000);
       } else {
         setStatus('error');
@@ -198,8 +200,24 @@ export function IngestPanel() {
         </div>
       )}
 
+      {/* Recent saves */}
+      {recentItems.length > 0 && (
+        <div style={{ marginTop: '10px', borderTop: `1px solid ${th.border}`, paddingTop: '8px' }}>
+          <div style={{ fontSize: '10px', color: th.textDim, marginBottom: '4px' }}>최근 저장</div>
+          {recentItems.map((item, i) => (
+            <div key={i} style={{
+              fontSize: '11px', color: th.textMuted, padding: '3px 0',
+              borderBottom: `1px solid ${th.border}`,
+            }}>
+              <span style={{ color: th.text }}>{item.title}</span>
+              <span style={{ color: th.textDim, marginLeft: '6px' }}>({item.stage})</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Hints */}
-      <div style={{ marginTop: '10px', fontSize: '10px', color: th.textDim, lineHeight: 1.5 }}>
+      <div style={{ marginTop: '8px', fontSize: '10px', color: th.textDim, lineHeight: 1.5 }}>
         {t('ingest.hint')}
       </div>
     </div>
