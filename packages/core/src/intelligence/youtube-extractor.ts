@@ -1,108 +1,231 @@
-// YouTube 콘텐츠 추출기 — 자막 + 메타데이터 → 구조화된 노트
+// YouTube 콘텐츠 추출기 v2 — 자막(타임스탬프 보존) + 메타데이터 → 구조화 노트
+// PM 분석 반영: HTML 엔티티, 채널명, 이중 frontmatter, 태그 품질, 요약 품질
 
 export interface YouTubeContent {
   title: string;
   channelName: string;
   description: string;
-  transcript: string;
+  transcript: TimedSegment[];
+  rawTranscript: string;
   duration: string;
   publishDate: string;
   tags: string[];
   url: string;
-  summary: string; // 자동 생성 요약
+  videoId: string;
+  viewCount: string;
+  thumbnail: string;
+  summary: string;
+}
+
+export interface TimedSegment {
+  startTime: number; // 초
+  text: string;
 }
 
 /**
- * YouTube URL에서 메타데이터 + 자막을 추출.
- * 자막은 페이지 HTML에 내장된 timedtext 데이터에서 가져옴.
+ * YouTube URL에서 모든 콘텐츠 추출.
+ * 반환값은 데이터만 — 노트 포맷팅은 별도.
  */
 export async function extractYouTubeContent(url: string): Promise<YouTubeContent> {
   const html = await fetchPage(url);
 
-  const title = extractMeta(html, 'og:title') ?? extractBetween(html, '<title>', '</title>') ?? 'Untitled';
-  const channelName = extractMeta(html, 'og:site_name') ?? extractBetween(html, '"ownerChannelName":"', '"') ?? '';
-  const description = extractMeta(html, 'og:description') ?? '';
+  // 메타데이터 (cleanHtml 먼저 적용)
+  const title = cleanHtml(extractMeta(html, 'og:title') ?? extractBetween(html, '<title>', '</title>') ?? 'Untitled');
+  const channelName = cleanHtml(
+    extractBetween(html, '"ownerChannelName":"', '"')
+    ?? extractBetween(html, '"author":"', '"')
+    ?? 'Unknown Channel'
+  );
+  const description = cleanHtml(extractMeta(html, 'og:description') ?? '');
   const duration = extractBetween(html, '"lengthSeconds":"', '"') ?? '';
   const publishDate = extractBetween(html, '"publishDate":"', '"') ?? '';
-  const videoUrl = extractMeta(html, 'og:url') ?? url;
+  const viewCount = extractBetween(html, '"viewCount":"', '"') ?? '';
+  const thumbnail = extractMeta(html, 'og:image') ?? '';
+  const videoId = extractVideoId(url);
 
-  // 자막 추출 시도
-  let transcript = '';
+  // 자막 (타임스탬프 보존)
+  let transcript: TimedSegment[] = [];
+  let rawTranscript = '';
   try {
-    transcript = await extractTranscript(html, url);
-  } catch {
-    // 자막 없으면 description만 사용
-  }
+    transcript = await extractTimedTranscript(html);
+    rawTranscript = transcript.map(s => s.text).join(' ');
+  } catch { /* 자막 없음 */ }
 
-  // 자동 태그 추출 (제목 + 설명에서 키워드)
-  const tags = extractKeywords(title, description);
+  // 태그 (cleanHtml 적용된 데이터에서 추출)
+  const tags = extractSmartTags(title, description);
 
-  // 자동 요약 (자막 기반)
-  const summary = generateSummary(title, description, transcript);
+  // 요약 (문장 중요도 기반)
+  const summary = generateSmartSummary(title, rawTranscript, description);
 
   return {
-    title: cleanHtml(title),
-    channelName: cleanHtml(channelName),
-    description: cleanHtml(description),
-    transcript,
-    duration: formatDuration(duration),
-    publishDate,
-    tags,
-    url: videoUrl,
-    summary,
+    title, channelName, description, transcript, rawTranscript,
+    duration: formatDuration(duration), publishDate, tags, url,
+    videoId, viewCount, thumbnail, summary,
   };
 }
 
 /**
- * 추출된 콘텐츠를 Stellavault 노트 포맷으로 변환.
+ * 추출된 콘텐츠 → Stellavault .md 노트 (frontmatter 포함하지 않음 — pipeline이 처리).
  */
 export function formatYouTubeNote(content: YouTubeContent): string {
-  const lines = [
-    '---',
-    `title: "${content.title.replace(/"/g, "'")}"`,
-    'type: literature',
-    `source: ${content.url}`,
-    'input_type: youtube',
-    `channel: "${content.channelName}"`,
-    `duration: "${content.duration}"`,
-    content.publishDate ? `published: ${content.publishDate}` : null,
-    `tags: [${['youtube', ...content.tags].map(t => `"${t}"`).join(', ')}]`,
-    `created: ${new Date().toISOString()}`,
-    `summary: "${content.summary.slice(0, 150).replace(/"/g, "'").replace(/\n/g, ' ')}"`,
-    '---',
-    '',
-    `# ${content.title}`,
-    '',
-    `> Channel: **${content.channelName}** | Duration: ${content.duration}`,
-    `> Source: ${content.url}`,
-    '',
-  ];
+  const lines: string[] = [];
+
+  // 헤더
+  lines.push(`# ${content.title}`, '');
+  lines.push(`> **${content.channelName}** | ${content.duration} | ${content.publishDate?.split('T')[0] ?? ''}`);
+  if (content.viewCount) lines.push(`> 조회수: ${Number(content.viewCount).toLocaleString()}`);
+  lines.push(`> ${content.url}`, '');
 
   // 요약
   if (content.summary) {
-    lines.push('## 요약', '', content.summary, '');
+    lines.push('## 핵심 요약', '', content.summary, '');
   }
 
   // 설명
-  if (content.description && content.description.length > 20) {
-    lines.push('## 설명', '', content.description.slice(0, 1000), '');
+  if (content.description.length > 30) {
+    lines.push('## 영상 설명', '', content.description.slice(0, 800), '');
   }
 
-  // 자막 (섹션별로 나누기)
-  if (content.transcript) {
-    lines.push('## 주요 내용', '');
-    const sections = splitTranscriptIntoSections(content.transcript);
-    for (const section of sections) {
-      lines.push(`### ${section.heading}`, '', section.text, '');
+  // 자막 (타임스탬프 링크 포함)
+  if (content.transcript.length > 0) {
+    lines.push('## 내용 (타임스탬프별)', '');
+    const segments = groupIntoSegments(content.transcript);
+    for (const seg of segments) {
+      const ts = formatSeconds(seg.startTime);
+      const ytLink = `https://youtu.be/${content.videoId}?t=${Math.floor(seg.startTime)}`;
+      lines.push(`### [${ts}](${ytLink})`, '', seg.text, '');
     }
   }
 
-  lines.push('---', `*Extracted from YouTube by Stellavault at ${new Date().toISOString()}*`);
-
-  return lines.filter(l => l !== null).join('\n');
+  return lines.join('\n');
 }
 
-// ─── 내부 함수들 ───
+// ─── 자막 추출 (타임스탬프 보존) ───
+
+async function extractTimedTranscript(html: string): Promise<TimedSegment[]> {
+  const captionMatch = html.match(/"captionTracks":\[(.*?)\]/);
+  if (!captionMatch) return [];
+
+  const tracks = captionMatch[1];
+  let captionUrl = '';
+
+  // 한국어 > 영어 > 아무거나
+  for (const lang of ['ko', 'en', '']) {
+    const pattern = lang
+      ? new RegExp(`"baseUrl":"(.*?)"[^}]*"languageCode":"${lang}"`)
+      : /"baseUrl":"(.*?)"/;
+    const match = tracks.match(pattern);
+    if (match) { captionUrl = match[1]; break; }
+  }
+  if (!captionUrl) return [];
+
+  const cleanUrl = captionUrl.replace(/\\u0026/g, '&').replace(/\\u003d/g, '=').replace(/\\\//g, '/');
+  const resp = await fetch(cleanUrl, { signal: AbortSignal.timeout(10000) });
+  const xml = await resp.text();
+
+  const segments: TimedSegment[] = [];
+  const matches = xml.matchAll(/<text start="([^"]+)"[^>]*>(.*?)<\/text>/g);
+  for (const m of matches) {
+    const text = cleanHtml(m[2]).trim();
+    if (text) segments.push({ startTime: parseFloat(m[1]), text });
+  }
+  return segments;
+}
+
+function groupIntoSegments(timedTexts: TimedSegment[], gapThreshold = 30): Array<{ startTime: number; text: string }> {
+  const segments: Array<{ startTime: number; texts: string[] }> = [];
+  let current: { startTime: number; texts: string[] } | null = null;
+  let lastStart = 0;
+
+  for (const item of timedTexts) {
+    if (!current || (item.startTime - lastStart > gapThreshold)) {
+      if (current) segments.push(current);
+      current = { startTime: item.startTime, texts: [] };
+    }
+    current!.texts.push(item.text);
+    lastStart = item.startTime;
+  }
+  if (current) segments.push(current);
+
+  return segments.map(s => ({ startTime: s.startTime, text: s.texts.join(' ') }));
+}
+
+// ─── 태그 추출 (한국어 조사 처리) ───
+
+function extractSmartTags(title: string, description: string): string[] {
+  const text = `${title} ${title} ${description}`; // 제목 가중치 2배
+  const koSuffixes = ['에서는', '에서', '에게', '까지', '부터', '으로', '에는', '와', '과', '을', '를', '이', '가', '은', '는', '의', '에', '로', '도', '만'];
+  const stopwords = new Set([
+    'this', 'that', 'with', 'from', 'have', 'been', 'will', 'about',
+    'your', 'more', 'what', 'http', 'https', 'www', 'youtube', 'com',
+    '이번', '영상', '에서', '있는', '하는', '것을', '합니다', '있습니다',
+    '안녕하세요', '바이브랩스입니다', '됩니다', '그리고', '하지만', '이렇게',
+  ]);
+
+  const tokens = text.split(/[\s,.\-_#|?!'"()\[\]{}:;]+/).filter(Boolean);
+  const freq = new Map<string, number>();
+
+  for (let token of tokens) {
+    // 한국어 조사 제거
+    if (token.length > 2) {
+      for (const suffix of koSuffixes) {
+        if (token.endsWith(suffix) && token.length - suffix.length >= 2) {
+          token = token.slice(0, -suffix.length);
+          break;
+        }
+      }
+    }
+    if (token.length < 2 || /^\d+$/.test(token) || stopwords.has(token.toLowerCase())) continue;
+    if (/&[a-z]+;|&#\d+;/.test(token)) continue;
+    freq.set(token, (freq.get(token) ?? 0) + 1);
+  }
+
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([w]) => w);
+}
+
+// ─── 요약 (문장 중요도 기반) ───
+
+function generateSmartSummary(title: string, transcript: string, description: string): string {
+  const source = transcript.length > 100 ? transcript : description;
+  if (source.length < 50) return `${title} — YouTube 영상`;
+
+  const sentences = source
+    .split(/[.。!?]\s+|(?<=다)\s+|(?<=요)\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 15 && s.length < 300);
+
+  if (sentences.length <= 3) return sentences.join(' ');
+
+  const titleWords = new Set(
+    title.split(/[\s,.\-_]+/).filter(w => w.length > 2).map(w => w.toLowerCase())
+  );
+
+  const scored = sentences.map((sentence, idx) => {
+    let score = 0;
+    const words = sentence.toLowerCase().split(/\s+/);
+    for (const w of words) { if (titleWords.has(w)) score += 3; }
+
+    const pos = idx / sentences.length;
+    if (pos > 0.15 && pos < 0.4) score += 2;
+    if (pos > 0.6 && pos < 0.85) score += 1;
+    if (pos < 0.05) score -= 3; // 인트로 인사 강력 패널티
+
+    if (/\d+/.test(sentence)) score += 1;
+    return { sentence, score, idx };
+  });
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .sort((a, b) => a.idx - b.idx)
+    .map(s => s.sentence)
+    .join(' ');
+}
+
+// ─── 유틸 ───
 
 async function fetchPage(url: string): Promise<string> {
   const resp = await fetch(url, {
@@ -115,55 +238,6 @@ async function fetchPage(url: string): Promise<string> {
   return resp.text();
 }
 
-async function extractTranscript(html: string, videoUrl: string): Promise<string> {
-  // 방법 1: YouTube 페이지 내 captionTracks에서 자막 URL 추출
-  const captionMatch = html.match(/"captionTracks":\[(.*?)\]/);
-  if (!captionMatch) return '';
-
-  // 한국어 > 영어 > 자동 생성 순서로 찾기
-  const tracks = captionMatch[1];
-  let captionUrl = '';
-
-  // 한국어 자막
-  const koMatch = tracks.match(/"baseUrl":"(.*?)".*?"languageCode":"ko"/);
-  if (koMatch) captionUrl = koMatch[1];
-
-  // 영어 자막
-  if (!captionUrl) {
-    const enMatch = tracks.match(/"baseUrl":"(.*?)".*?"languageCode":"en"/);
-    if (enMatch) captionUrl = enMatch[1];
-  }
-
-  // 아무 자막
-  if (!captionUrl) {
-    const anyMatch = tracks.match(/"baseUrl":"(.*?)"/);
-    if (anyMatch) captionUrl = anyMatch[1];
-  }
-
-  if (!captionUrl) return '';
-
-  // 자막 XML 가져오기
-  const cleanUrl = captionUrl.replace(/\\u0026/g, '&');
-  const captionResp = await fetch(cleanUrl, { signal: AbortSignal.timeout(10000) });
-  const xml = await captionResp.text();
-
-  // XML에서 텍스트 추출
-  const textParts: string[] = [];
-  const matches = xml.matchAll(/<text[^>]*>(.*?)<\/text>/g);
-  for (const m of matches) {
-    const text = m[1]
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&#39;/g, "'")
-      .replace(/&quot;/g, '"')
-      .trim();
-    if (text) textParts.push(text);
-  }
-
-  return textParts.join(' ');
-}
-
 function extractMeta(html: string, property: string): string | undefined {
   const match = html.match(new RegExp(`<meta[^>]*property="${property}"[^>]*content="([^"]*)"`, 'i'))
     ?? html.match(new RegExp(`<meta[^>]*name="${property}"[^>]*content="([^"]*)"`, 'i'));
@@ -173,20 +247,17 @@ function extractMeta(html: string, property: string): string | undefined {
 function extractBetween(html: string, start: string, end: string): string | undefined {
   const idx = html.indexOf(start);
   if (idx < 0) return undefined;
-  const startIdx = idx + start.length;
-  const endIdx = html.indexOf(end, startIdx);
-  if (endIdx < 0) return undefined;
-  return html.substring(startIdx, endIdx);
+  const s = idx + start.length;
+  const e = html.indexOf(end, s);
+  if (e < 0) return undefined;
+  return html.substring(s, e);
 }
 
 function cleanHtml(text: string): string {
   return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\n/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
+    .replace(/&nbsp;/g, ' ').replace(/\\n/g, ' ').replace(/\n/g, ' ')
     .trim();
 }
 
@@ -196,71 +267,18 @@ function formatDuration(seconds: string): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-  return `${m}:${String(sec).padStart(2, '0')}`;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-function extractKeywords(title: string, description: string): string[] {
-  const text = `${title} ${description}`.toLowerCase();
-  const words = text.split(/[\s,.\-_#|]+/).filter(w => w.length > 3);
-
-  // 빈도 기반 키워드 추출
-  const freq = new Map<string, number>();
-  const stopwords = new Set(['this', 'that', 'with', 'from', 'have', 'been', 'will', 'about', 'your', 'more', 'what', 'http', 'https', 'www']);
-  for (const w of words) {
-    if (stopwords.has(w) || /^\d+$/.test(w)) continue;
-    freq.set(w, (freq.get(w) ?? 0) + 1);
-  }
-
-  return [...freq.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([w]) => w);
+function formatSeconds(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function generateSummary(title: string, description: string, transcript: string): string {
-  if (transcript.length > 100) {
-    // 자막 첫 500자 + 마지막 200자를 요약으로
-    const intro = transcript.slice(0, 500).trim();
-    const outro = transcript.length > 700 ? transcript.slice(-200).trim() : '';
-
-    return [
-      `**${title}**`,
-      '',
-      intro + (transcript.length > 500 ? '...' : ''),
-      '',
-      outro ? `(결론) ${outro}` : '',
-    ].filter(Boolean).join('\n');
-  }
-
-  // 자막 없으면 설명 사용
-  if (description.length > 50) {
-    return description.slice(0, 500);
-  }
-
-  return `${title} — YouTube 영상`;
-}
-
-function splitTranscriptIntoSections(transcript: string, sectionSize = 500): Array<{ heading: string; text: string }> {
-  const words = transcript.split(' ');
-  const sections: Array<{ heading: string; text: string }> = [];
-  let currentWords: string[] = [];
-  let sectionNum = 1;
-
-  for (const word of words) {
-    currentWords.push(word);
-    if (currentWords.length >= sectionSize / 5) { // ~100 words per section
-      const text = currentWords.join(' ');
-      const heading = text.slice(0, 40).replace(/[^\w가-힣\s]/g, '').trim() + '...';
-      sections.push({ heading: `파트 ${sectionNum}`, text });
-      currentWords = [];
-      sectionNum++;
-    }
-  }
-
-  if (currentWords.length > 0) {
-    sections.push({ heading: `파트 ${sectionNum}`, text: currentWords.join(' ') });
-  }
-
-  return sections;
+function extractVideoId(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get('v') ?? u.pathname.split('/').pop() ?? '';
+  } catch { return ''; }
 }

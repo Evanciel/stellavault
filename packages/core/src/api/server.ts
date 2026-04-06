@@ -404,8 +404,9 @@ export function createApiServer(options: ApiServerOptions) {
           const { extractYouTubeContent, formatYouTubeNote } = await import('../intelligence/youtube-extractor.js');
           const ytContent = await extractYouTubeContent(input);
           autoTitle = ytContent.title;
-          autoTags = [...new Set([...autoTags, ...ytContent.tags])];
-          autoStage = 'literature'; // YouTube는 자동으로 literature
+          autoTags = [...new Set(['youtube', ...ytContent.tags, ...(tags ?? [])])];
+          autoStage = 'literature';
+          // formatYouTubeNote는 frontmatter 없이 본문만 생성 → pipeline이 frontmatter 담당
           content = formatYouTubeNote(ytContent);
         } catch (ytErr) {
           console.error('[ingest] YouTube extraction failed, falling back to basic:', ytErr instanceof Error ? ytErr.message : ytErr);
