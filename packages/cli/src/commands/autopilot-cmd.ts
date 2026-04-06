@@ -77,6 +77,7 @@ export async function autopilotCommand(options: { once?: boolean }) {
   }
 
   console.log(chalk.dim('\n─'.repeat(40)));
+  console.log(chalk.dim('\n  Next: run `stellavault index` to update search vectors.'));
   console.log(chalk.green('  Autopilot complete.\n'));
 
   await hub.store.close?.();

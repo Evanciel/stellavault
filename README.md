@@ -2,27 +2,37 @@
 
 > **Notes die in folders. Stellavault keeps your knowledge alive.**
 
-Your Obsidian vault is more than files. It's a living network — connections emerge, memories fade, gaps appear. Stellavault turns it into a knowledge system that **discovers hidden connections**, **detects fading memories**, **finds blind spots**, and **gives AI agents direct access to everything you know**.
+Your Obsidian vault is more than files — it's a living network. Stellavault turns it into a self-compiling knowledge system that **discovers hidden connections**, **tracks fading memories**, **finds blind spots**, and **gives AI agents direct access to everything you know**.
 
-## 30-Second Setup
+<p align="center">
+  <img src="images/screenshots/graph-dark-full.png" alt="3D Knowledge Graph" width="800" />
+  <br><em>Your vault as a neural network. Clusters form constellations.</em>
+</p>
+
+## Why Stellavault?
+
+| Problem | Stellavault Solution |
+|---------|---------------------|
+| Notes pile up but never become knowledge | **Self-compiling wiki** — raw notes auto-organized into linked concepts |
+| You forget what you wrote | **FSRS decay tracking** — see what's fading, get review suggestions |
+| Search finds words, not meaning | **Hybrid AI search** — BM25 + vector + RRF fusion, locally |
+| AI agents can't access your knowledge | **17 MCP tools** — Claude remembers everything you know |
+| No way to see the big picture | **3D neural graph** — constellations, heatmaps, timeline |
+
+## 5-Minute Setup
 
 ```bash
-# Install globally
+# Install
 npm install -g stellavault
 
-# Interactive setup wizard (recommended)
+# Interactive setup (indexes your vault + verifies search)
 stellavault init
-#   Step 1/3: Vault path → your Obsidian folder
-#   Step 2/3: Database location (default: ~/.stellavault/)
-#   Step 3/3: Auto-indexes your vault + verifies search works
 
-# Launch 3D graph (also starts API server on port 3333)
+# Launch 3D graph + API server
 stellavault graph
 ```
 
-That's it. Open `http://localhost:5173` to see your knowledge come alive in 3D.
-
-> **Prerequisites**: Node.js 20+ (`node --version` to check)
+> **Prerequisites**: Node.js 20+ (`node --version`)
 
 ## Give Your AI Agent Memory
 
@@ -30,17 +40,12 @@ That's it. Open `http://localhost:5173` to see your knowledge come alive in 3D.
 claude mcp add stellavault -- stellavault serve
 ```
 
-Now Claude Code can search your notes, track your decisions, tell you what's fading, and give you a daily knowledge briefing — using 17+ MCP tools.
+Now Claude Code can search your notes, track decisions, detect knowledge gaps, and generate daily briefings — using 17 MCP tools.
 
 ## Screenshots
 
 <p align="center">
-  <img src="images/screenshots/graph-dark-full.png" alt="3D Knowledge Graph — Dark Mode" width="800" />
-  <br><em>Your vault as a neural network. Clusters form constellations.</em>
-</p>
-
-<p align="center">
-  <img src="images/screenshots/graph-search-highlight.png" alt="Semantic Search Highlight" width="800" />
+  <img src="images/screenshots/graph-search-highlight.png" alt="Semantic Search" width="800" />
   <br><em>Search by meaning. Matching nodes pulse and glow.</em>
 </p>
 
@@ -53,75 +58,63 @@ Now Claude Code can search your notes, track your decisions, tell you what's fad
 
 </details>
 
-## What It Does
+## Core Workflow
 
-**Understands** — Vectorizes every note locally (no API keys needed). Hybrid search combines BM25 + cosine similarity + RRF fusion.
+```
+Capture → Compile → Connect → Review
 
-**Remembers** — FSRS spaced repetition tracks what you're forgetting. `stellavault decay` shows what's fading. `stellavault review` runs a review session.
-
-**Discovers** — Gap detector finds missing connections. Duplicate finder catches redundancy. Contradiction detector spots conflicting statements. Learning path tells you what to study next.
-
-**Visualizes** — Interactive 3D neural graph with constellation view, timeline slider, type filters, health dashboard, and keyboard navigation.
-
-**Connects** — Federation protocol links your vault to other Stellavault nodes via P2P. Search across the network without sharing your raw text. Multiverse UI shows your universe alongside connected peers.
-
-## Key Features
-
-| Category | Features |
-|----------|----------|
-| **Search** | Hybrid BM25+Vector+RRF, semantic search, search history |
-| **Intelligence** | FSRS decay, gap detection, duplicates, contradictions, predictive gaps, learning paths |
-| **Visualization** | 3D graph, constellation view, timeline, type filter, health dashboard, embed widget |
-| **AI Integration** | 17+ MCP tools, custom MCP tool builder (YAML), agentic graph construction |
-| **Federation** | P2P search, multiverse UI, reputation system, trust scoring, differential privacy |
-| **Security** | E2E cloud sync (AES-256-GCM), team auth (RBAC), sharing controls, SSRF/XSS protection |
-| **Platform** | Web dashboard, PWA, voice capture (Whisper), Notion sync, multi-vault, i18n (en/ko/ja/zh) |
-| **Extensibility** | Plugin SDK, webhook system, Knowledge Pack marketplace |
-
-## CLI (28+ commands)
-
-```bash
-# Core
-stellavault init                  # Interactive setup wizard
-stellavault index <vault-path>    # Vectorize your vault
-stellavault search <query>        # Semantic search
-stellavault graph                 # Launch 3D graph
-stellavault serve                 # MCP server for AI agents
-stellavault status                # Index stats
-
-# Intelligence
-stellavault decay                 # What's fading?
-stellavault learn                 # AI learning path
-stellavault brief                 # Daily knowledge briefing
-stellavault digest                # Weekly report
-stellavault review                # FSRS review session
-stellavault gaps                  # Knowledge gap detection
-stellavault duplicates            # Duplicate detection
-stellavault contradictions        # Contradiction detection
-
-# Federation
-stellavault federate join         # Join P2P network
-stellavault federate status       # Node identity
-
-# Multi-Vault
-stellavault vault add <id> <path> # Register a vault
-stellavault vault search-all <q>  # Search across all vaults
-
-# Cloud
-stellavault cloud sync            # E2E encrypted backup
-stellavault cloud restore         # Restore from cloud
-
-# More
-stellavault clip <url>            # Web/YouTube clipper
-stellavault sync                  # Notion → Obsidian
-stellavault capture <audio>       # Voice → knowledge (Whisper)
-stellavault card                  # SVG profile card
-stellavault pack <cmd>            # Knowledge Pack management
+stellavault fleeting "idea"     # Instant capture
+stellavault ingest <url>        # Clip any URL/file
+stellavault compile             # Raw → structured wiki
+stellavault autopilot           # Full flywheel: inbox → compile → lint
+stellavault ask "question"      # Q&A with auto-filing (--save)
+stellavault lint                # Knowledge health check (score 0-100)
 ```
 
-Use short alias `sv` for all commands: `sv graph`, `sv decay`, `sv learn`
+## Daily Commands
 
-## MCP Tools (17+)
+```bash
+stellavault brief               # Morning knowledge briefing
+stellavault decay               # What's fading from memory?
+stellavault learn               # AI-generated learning path
+stellavault digest --visual     # Weekly report with Mermaid charts
+stellavault review              # FSRS spaced repetition session
+stellavault gaps                # Knowledge gap detection
+```
+
+## Intelligence Features
+
+| Feature | Command | What it does |
+|---------|---------|-------------|
+| **FSRS Decay** | `sv decay` | Track memory strength with spaced repetition |
+| **Gap Detection** | `sv gaps` | Find missing connections between topics |
+| **Contradiction Detection** | `sv contradictions` | Spot conflicting statements |
+| **Duplicate Detection** | `sv duplicates` | Find redundant notes |
+| **Knowledge Lint** | `sv lint` | Health score + issues + suggestions |
+| **Learning Path** | `sv learn` | AI-recommended review order |
+| **Semantic Evolution** | MCP `get-evolution` | Track how ideas change over time |
+| **Code Linker** | MCP `link-code` | Connect code files to knowledge notes |
+| **Adaptive Search** | MCP `search` | Context-aware result reranking |
+
+## Zettelkasten Automation
+
+Inspired by Luhmann + Karpathy's "Self-Compiling Zettelkasten":
+
+```bash
+stellavault fleeting "raw idea"          # Capture → raw/
+stellavault ingest https://article.com   # Any URL → auto-classified
+stellavault compile                      # Raw → wiki with concepts + backlinks
+stellavault promote file.md --to permanent  # Upgrade note stage
+stellavault autopilot                    # Full cycle: inbox → compile → lint → archive
+```
+
+- **Frontmatter-first scanning** — 10x token reduction
+- **Luhmann index codes** — auto-assigned hierarchical numbering (1A → 1A1)
+- **Inbox Zero** — processed notes auto-archived
+- **Atomicity check** — detects notes with too many topics
+- **3-stage classification** — fleeting → literature → permanent
+
+## MCP Tools (17)
 
 | Tool | What it does |
 |------|-------------|
@@ -132,32 +125,38 @@ Use short alias `sv` for all commands: `sv graph`, `sv decay`, `sv learn`
 | `get-decay-status` | Memory decay report |
 | `get-morning-brief` | Daily knowledge briefing |
 | `get-learning-path` | AI learning recommendations |
-| `federated-search` | Search across P2P network |
-| `create-knowledge-node` | AI creates notes during conversation |
-| `create-knowledge-link` | AI creates links between notes |
-| `log-decision` / `find-decisions` | Technical decision journal |
+| `detect-gaps` | Knowledge gap analysis |
+| `get-evolution` | Semantic drift tracking |
+| `link-code` | Code-knowledge connections |
+| `ask` | Q&A with optional vault filing |
+| `create-knowledge-node` | AI creates wiki-quality notes |
+| `create-knowledge-link` | AI connects existing notes |
+| `log-decision` / `find-decisions` | Decision journal |
 | `create-snapshot` / `load-snapshot` | Context snapshots |
 | `generate-claude-md` | Auto-generate CLAUDE.md |
 | `export` | JSON/CSV export |
 
-## Federation — P2P Knowledge Network
+## 3D Visualization
 
-Each Stellavault is a node. Connect to discover knowledge across the network — without sharing your raw text.
+- **Neural graph** — force-directed layout with cluster coloring
+- **Constellation view** — MST-based star patterns with LOD zoom
+- **Heatmap overlay** — activity score (cold → fire gradient)
+- **Timeline slider** — filter by creation/modification date
+- **Multiverse view** — see connected Federation peers
+- **Decay overlay** — visualize fading knowledge
+- **Dark/Light theme** — monochrome light mode with color-on-interaction
+- **Export** — PNG screenshots + WebM recording
 
-```bash
-stellavault federate join --name "my-node"
-# Interactive mode:
-federation> search kubernetes deployment
-#  87% "K8s Rolling Update Guide" [peer-alice]
-#     Kubernetes에서 무중단 배포를 위해...
-federation> peers
-#  alice (1,209 docs) [trust: 88]
-#  bob (47 docs) [trust: 72]
-```
+## Obsidian Plugin
 
-**Privacy**: Only titles + similarity scores + 50-char masked snippets cross the network. Never raw text. Differential privacy noise on embeddings. Sharing controls per tag/folder.
+Manual install (community plugin review pending):
 
-**Trust**: Web of Trust + automatic reputation scoring (consistency, consensus, helpfulness).
+1. Download `main.js`, `manifest.json`, `styles.css` from [GitHub Releases](https://github.com/Evanciel/stellavault-obsidian/releases/tag/0.1.0)
+2. Copy to `.obsidian/plugins/stellavault/`
+3. Enable in Settings > Community plugins
+4. **Run `stellavault graph` first** — the plugin connects to the API server
+
+Features: semantic search modal, memory decay sidebar, learning path suggestions.
 
 ## Architecture
 
@@ -165,8 +164,8 @@ federation> peers
 stellavault/
 ├── packages/
 │   ├── core/       Search, MCP, API, Intelligence, Federation, Cloud, Team, i18n
-│   ├── cli/        28+ commands
-│   ├── graph/      3D visualization + Multiverse UI (React Three Fiber)
+│   ├── cli/        36+ commands
+│   ├── graph/      3D visualization (React Three Fiber)
 │   └── sync/       Notion ↔ Obsidian sync
 ```
 
@@ -178,76 +177,43 @@ stellavault/
 | Vector Store | SQLite-vec (local, no server) |
 | Embedding | all-MiniLM-L6-v2 (local, no API key) |
 | Search | BM25 + Cosine + RRF Fusion |
-| 3D | React Three Fiber + Three.js + Zustand |
 | Memory | FSRS (Free Spaced Repetition Scheduler) |
+| 3D | React Three Fiber + Three.js + Zustand |
 | P2P | Hyperswarm (NAT traversal + DHT) |
 | AI | MCP (Model Context Protocol) |
 | Security | AES-256-GCM, HMAC-SHA256, Differential Privacy |
-
-## Configuration
-
-```json
-{
-  "vaultPath": "/path/to/obsidian/vault",
-  "dbPath": "~/.stellavault/index.db",
-  "embedding": { "model": "local", "localModel": "all-MiniLM-L6-v2" },
-  "search": { "defaultLimit": 10, "rrfK": 60 },
-  "mcp": { "mode": "stdio", "port": 3333 }
-}
-```
-
-## Obsidian Plugin
-
-Manual install (community plugin review pending):
-
-1. Download `main.js`, `manifest.json`, `styles.css` from [GitHub Releases](https://github.com/Evanciel/stellavault-obsidian/releases/tag/0.1.0)
-2. Copy to `.obsidian/plugins/stellavault/`
-3. Enable in Settings > Community plugins
-4. **Important**: Run `npx stellavault graph` in your vault folder first — the plugin connects to the API server
-
-Features: semantic search modal, memory decay sidebar, learning path suggestions, auto-indexing.
 
 ## Troubleshooting
 
 <details>
 <summary>"Stellavault API server not found"</summary>
 
-The Obsidian plugin and 3D graph require the API server running. Open a terminal in your vault folder:
+The Obsidian plugin and 3D graph require the API server. Open a terminal in your vault:
 
 ```bash
-npx stellavault graph
+stellavault graph
 ```
 
-Default port is 3333. Change in Obsidian Settings > Stellavault > API server port.
+Default port: 3333. Change in `.stellavault.json`: `{ "mcp": { "port": 3334 } }`
 </details>
 
 <details>
 <summary>"No documents indexed"</summary>
 
-Run the indexer first:
-
 ```bash
 stellavault index /path/to/your/vault
 ```
 
-For large vaults (1000+ notes), first indexing takes 2-5 minutes.
+First indexing takes 2-5 minutes for large vaults (1000+ notes).
 </details>
 
 <details>
-<summary>Port 3333 already in use</summary>
-
-Another process is using port 3333. Either stop it, or use a different port:
+<summary>Port conflict</summary>
 
 ```bash
-# Edit .stellavault.json in your vault
-{ "mcp": { "port": 3334 } }
+# Use a different port
+stellavault graph --port 3334
 ```
-</details>
-
-<details>
-<summary>Node.js version error</summary>
-
-Stellavault requires Node.js 20+. Check with `node --version`.
 </details>
 
 ## License
@@ -256,6 +222,6 @@ MIT
 
 ## Links
 
+- [Obsidian Plugin](https://github.com/Evanciel/stellavault-obsidian)
 - [Wiki: Vault Structure Guide](docs/wiki/vault-structure.md)
-- [Wiki: Notion Setup](docs/wiki/notion-setup.md)
 - [Wiki: Federation Guide](docs/wiki/federation-guide.md)
