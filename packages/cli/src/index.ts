@@ -25,6 +25,8 @@ import { askCommand } from './commands/ask-cmd.js';
 import { compileCommand } from './commands/compile-cmd.js';
 import { lintCommand } from './commands/lint-cmd.js';
 import { fleetingCommand } from './commands/fleeting-cmd.js';
+import { ingestCommand, promoteCommand } from './commands/ingest-cmd.js';
+import { autopilotCommand } from './commands/autopilot-cmd.js';
 
 const program = new Command();
 
@@ -173,6 +175,26 @@ program
   .description('Capture a fleeting idea instantly to raw/ folder')
   .option('-t, --tags <tags>', 'Comma-separated tags')
   .action((text: string, opts) => fleetingCommand(text, opts));
+
+program
+  .command('ingest <input>')
+  .description('Ingest any input (URL, file, text) into your knowledge base')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .option('-s, --stage <stage>', 'Note stage: fleeting, literature, permanent', 'fleeting')
+  .option('--title <title>', 'Override title')
+  .action((input: string, opts) => ingestCommand(input, opts));
+
+program
+  .command('promote <file>')
+  .description('Promote a note: fleeting → literature → permanent')
+  .requiredOption('--to <stage>', 'Target stage: literature or permanent')
+  .action((file: string, opts) => promoteCommand(file, opts));
+
+program
+  .command('autopilot')
+  .description('Run the full knowledge flywheel: inbox → compile → lint')
+  .option('--once', 'Run once (default)')
+  .action((opts) => autopilotCommand(opts));
 
 const vault = program.command('vault').description('Multi-Vault — manage and search across vaults');
 vault.command('add <id> <path>').description('Register a vault').option('-n, --name <name>', 'Display name').option('-s, --shared', 'Allow federation sharing').action(vaultAddCommand);
