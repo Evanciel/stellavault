@@ -32,6 +32,7 @@ export async function graphCommand() {
     searchEngine: hub.searchEngine,
     port,
     vaultName,
+    vaultPath: config.vaultPath,
   });
   try {
     await api.start();

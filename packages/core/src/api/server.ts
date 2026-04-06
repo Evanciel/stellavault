@@ -67,7 +67,7 @@ export function createApiServer(options: ApiServerOptions) {
     try {
       const indexer = await import('../indexer/index.js');
 
-      const embedder = indexer.createLocalEmbedder();
+      const embedder = indexer.createLocalEmbedder('all-MiniLM-L6-v2');
       await embedder.initialize();
 
       const result = await indexer.indexVault(vaultPath, {
@@ -87,9 +87,9 @@ export function createApiServer(options: ApiServerOptions) {
         skipped: result.skipped,
         chunks: result.totalChunks,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[reindex]', err);
-      res.status(500).json({ error: 'Reindex failed' });
+      res.status(500).json({ error: `Reindex failed: ${err?.message ?? String(err)}` });
     } finally {
       isReindexing = false;
     }
