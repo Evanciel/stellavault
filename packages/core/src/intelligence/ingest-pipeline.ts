@@ -8,6 +8,11 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, resolve, extname, basename } from 'node:path';
 import { scanFrontmatter, assignIndexCodes, archiveFile, type FrontmatterEntry } from './zettelkasten.js';
 
+/** YAML 값에서 위험한 문자를 이스케이프 */
+function sanitizeYaml(val: string): string {
+  return val.replace(/["\\]/g, '\\$&').replace(/\n/g, ' ').slice(0, 200);
+}
+
 export type NoteStage = 'fleeting' | 'literature' | 'permanent';
 
 export interface IngestInput {
@@ -70,15 +75,16 @@ export function ingest(
     throw new Error('Invalid path');
   }
 
-  // 인덱스 코드 생성 시도
+  // 인덱스 코드 생성 (lazy — 전체 스캔 건너뛸 수 있음)
   let indexCode: string | undefined;
   try {
-    const existing = scanFrontmatter(vaultPath);
-    const assignments = assignIndexCodes([...existing, {
+    // 성능: raw/ 폴더만 스캔 (전체 vault 스캔 대신)
+    const rawEntries = scanFrontmatter(resolve(vaultPath, folder));
+    const assignments = assignIndexCodes([...rawEntries, {
       filePath, title, tags, connections: [], wordCount,
     }]);
     indexCode = assignments.get(filePath);
-  } catch { /* skip */ }
+  } catch { /* index code is optional */ }
 
   // Stellavault 표준 포맷으로 저장
   const md = buildStandardNote({
@@ -227,14 +233,14 @@ function buildStandardNote(params: {
 }): string {
   const lines = [
     '---',
-    `title: "${params.title.replace(/"/g, "'")}"`,
+    `title: "${sanitizeYaml(params.title)}"`,
     `type: ${params.stage}`,
     `source: ${params.source}`,
     `input_type: ${params.inputType}`,
     params.indexCode ? `zettel_id: "${params.indexCode}"` : null,
     `tags: [${params.tags.map(t => `"${t}"`).join(', ')}]`,
     `created: ${params.created}`,
-    `summary: "${params.body.slice(0, 100).replace(/"/g, "'").replace(/\n/g, ' ')}"`,
+    `summary: "${sanitizeYaml(params.body.slice(0, 100))}"`,
     '---',
     '',
     `# ${params.title}`,

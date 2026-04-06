@@ -24,6 +24,16 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
     const isYouTube = /youtube\.com\/watch|youtu\.be\//.test(input);
     let content = input + '\n';
 
+    // SSRF 방지: private IP 차단
+    try {
+      const url = new URL(input);
+      const host = url.hostname;
+      if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|localhost|::1)/i.test(host)) {
+        console.error(chalk.yellow('Private/local URLs are not allowed for security.'));
+        process.exit(1);
+      }
+    } catch { /* invalid URL, will fail at fetch */ }
+
     // 웹 페이지 내용 가져오기 시도
     try {
       const resp = await fetch(input);

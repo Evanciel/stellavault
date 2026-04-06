@@ -186,16 +186,21 @@ export function getInboxItems(vaultPath: string, rawDir = 'raw'): FrontmatterEnt
 /**
  * 파일에 archive: true 플래그 추가.
  */
-export function archiveFile(fullPath: string): void {
-  const content = readFileSync(fullPath, 'utf-8');
+export function archiveFile(fullPath: string, vaultPath?: string): void {
+  // Path traversal 방지
+  const resolved = resolve(fullPath);
+  if (vaultPath && !resolved.startsWith(resolve(vaultPath))) {
+    throw new Error('Path traversal detected: file outside vault');
+  }
+  if (!existsSync(resolved)) throw new Error(`File not found: ${fullPath}`);
+
+  const content = readFileSync(resolved, 'utf-8');
 
   if (content.startsWith('---\n')) {
-    // 기존 프론트메터에 추가
     const updated = content.replace('---\n', '---\narchived: true\n');
-    writeFileSync(fullPath, updated, 'utf-8');
+    writeFileSync(resolved, updated, 'utf-8');
   } else {
-    // 프론트메터 생성
-    writeFileSync(fullPath, `---\narchived: true\n---\n\n${content}`, 'utf-8');
+    writeFileSync(resolved, `---\narchived: true\n---\n\n${content}`, 'utf-8');
   }
 }
 

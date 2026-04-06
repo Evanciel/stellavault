@@ -67,7 +67,7 @@ export async function lintKnowledge(
         suggestion: 'Add links to related topics or tags to integrate this note.',
       });
     }
-  } catch { /* gap detection failed, skip */ }
+  } catch (err) { console.error('[lint] Gap detection failed:', err instanceof Error ? err.message : err); }
 
   // 2. 중복 탐지
   let dupCount = 0;
@@ -83,7 +83,7 @@ export async function lintKnowledge(
         suggestion: 'Consider merging these notes.',
       });
     }
-  } catch { /* skip */ }
+  } catch (err) { console.error('[lint] Detection failed:', err instanceof Error ? err.message : err); }
 
   // 3. 모순 탐지
   let contradictionCount = 0;
@@ -99,7 +99,7 @@ export async function lintKnowledge(
         suggestion: 'Review these documents for conflicting information.',
       });
     }
-  } catch { /* skip */ }
+  } catch (err) { console.error('[lint] Detection failed:', err instanceof Error ? err.message : err); }
 
   // 4. 빈 문서 / 매우 짧은 문서
   for (const doc of docs) {
