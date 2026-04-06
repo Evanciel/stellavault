@@ -232,6 +232,25 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // GET /api/ask — 웹 UI Q&A
+  app.get('/api/ask', async (req, res) => {
+    try {
+      const question = String(req.query.q || '');
+      if (!question) { res.json({ question: '', answer: '', sources: [] }); return; }
+
+      const { askVault } = await import('../intelligence/ask-engine.js');
+      const result = await askVault(searchEngine, question, {
+        limit: 10,
+        save: req.query.save === 'true',
+        vaultPath,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Ask failed' });
+    }
+  });
+
   // POST /api/ingest — 웹 UI에서 URL/텍스트 인제스트
   app.post('/api/ingest', async (req, res) => {
     try {

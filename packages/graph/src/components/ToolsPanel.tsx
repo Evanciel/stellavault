@@ -20,12 +20,16 @@ interface DecayNote {
   stability: number; daysSinceAccess: number;
 }
 
-type Tab = 'gaps' | 'duplicates' | 'decay' | 'clip' | 'sync' | 'health';
+type Tab = 'ask' | 'gaps' | 'duplicates' | 'decay' | 'clip' | 'sync' | 'health';
 
 export function ToolsPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('gaps');
+  const [tab, setTab] = useState<Tab>('ask');
   const [loading, setLoading] = useState(false);
+
+  // Ask state
+  const [askQuery, setAskQuery] = useState('');
+  const [askResult, setAskResult] = useState<any>(null);
 
   // Data states
   const [gaps, setGaps] = useState<GapData[]>([]);
@@ -141,6 +145,7 @@ export function ToolsPanel() {
         display: 'flex', gap: '2px', padding: '6px 10px',
         borderBottom: `1px solid ${border}`,
       }}>
+        <button onClick={() => setTab('ask')} style={tabStyle('ask')}>Ask</button>
         <button onClick={() => handleTabClick('gaps')} style={tabStyle('gaps')}>Gaps</button>
         <button onClick={() => handleTabClick('duplicates')} style={tabStyle('duplicates')}>Duplicates</button>
         <button onClick={() => handleTabClick('decay')} style={tabStyle('decay')}>Decay</button>
@@ -154,6 +159,75 @@ export function ToolsPanel() {
         {loading && <div style={{ color: textSecondary, fontSize: '11px' }}>Loading...</div>}
 
         {/* Gaps Tab */}
+        {tab === 'ask' && (
+          <div>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+              <input
+                value={askQuery}
+                onChange={(e) => setAskQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && askQuery.trim()) {
+                    setLoading(true);
+                    fetch(`/api/ask?q=${encodeURIComponent(askQuery)}&limit=5`)
+                      .then(r => r.json())
+                      .then(d => { setAskResult(d); setLoading(false); })
+                      .catch(() => setLoading(false));
+                  }
+                }}
+                placeholder="Ask your vault..."
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '12px',
+                  background: isDark ? 'rgba(100,120,255,0.08)' : 'rgba(0,0,0,0.04)',
+                  border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
+                  borderRadius: '6px', color: isDark ? '#dde' : '#333', outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!askQuery.trim()) return;
+                  setLoading(true);
+                  fetch(`/api/ask?q=${encodeURIComponent(askQuery)}&limit=5`)
+                    .then(r => r.json())
+                    .then(d => { setAskResult(d); setLoading(false); })
+                    .catch(() => setLoading(false));
+                }}
+                style={{
+                  padding: '6px 12px', fontSize: '11px', cursor: 'pointer',
+                  background: isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.06)',
+                  border: `1px solid ${isDark ? 'rgba(100,120,255,0.2)' : 'rgba(0,0,0,0.1)'}`,
+                  borderRadius: '6px', color: isDark ? '#aab' : '#555',
+                }}
+              >
+                Ask
+              </button>
+            </div>
+            {loading && <div style={{ fontSize: '11px', color: textSecondary }}>Searching...</div>}
+            {askResult && !loading && (
+              <div style={{ fontSize: '11px', lineHeight: 1.6 }}>
+                {askResult.sources?.slice(0, 5).map((s: any, i: number) => (
+                  <div key={i} style={{
+                    padding: '6px 8px', marginBottom: '4px',
+                    background: isDark ? 'rgba(100,120,255,0.06)' : 'rgba(0,0,0,0.02)',
+                    borderRadius: '6px', cursor: 'pointer',
+                  }}>
+                    <div style={{ fontWeight: 600, color: isDark ? '#c0d0ff' : '#333' }}>
+                      {s.title} <span style={{ fontWeight: 400, color: textSecondary }}>({Math.round(s.score * 100)}%)</span>
+                    </div>
+                    {s.snippet && (
+                      <div style={{ color: textSecondary, fontSize: '10px', marginTop: '2px' }}>
+                        {s.snippet.slice(0, 120)}...
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {askResult.sources?.length === 0 && (
+                  <div style={{ color: textSecondary }}>No results found.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'gaps' && !loading && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
@@ -393,7 +467,7 @@ export function ToolsPanel() {
 
   async function autoCreateBridges() {
     const highGaps = gaps.filter(g => g.severity === 'high');
-    if (highGaps.length === 0) { alert('High 심각도 갭이 없습니다'); return; }
+    if (highGaps.length === 0) { setClipStatus('High 심각도 갭이 없습니다'); return; }
     if (!confirm(`${highGaps.length}개 High 갭에 대해 브릿지 노트를 자동 생성합니다. 계속?`)) return;
 
     setLoading(true);
@@ -409,7 +483,7 @@ export function ToolsPanel() {
         if (data.success) created++;
       } catch {}
     }
-    alert(`${created}/${highGaps.length}개 브릿지 노트 생성 완료`);
+    setClipStatus(`${created}/${highGaps.length}개 브릿지 노트 생성 완료`);
     setLoading(false);
     loadGaps(); // 새로고침
   }

@@ -15,6 +15,7 @@ import { useGraphStore } from '../stores/graph-store.js';
 import { ToolsPanel } from './ToolsPanel.js';
 import { MultiverseView } from './MultiverseView.js';
 import { IngestPanel } from './IngestPanel.js';
+import { OnboardingGuide } from './OnboardingGuide.js';
 
 export function Layout() {
   // ALL hooks must be called before any conditional return
@@ -209,6 +210,7 @@ export function Layout() {
       <ToolsPanel />
       <StatusBar />
       <IngestPanel />
+      <OnboardingGuide />
     </div>
   );
 }
