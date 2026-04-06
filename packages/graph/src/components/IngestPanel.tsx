@@ -236,7 +236,7 @@ export function IngestPanel() {
                   store.setHighlightedNodes([node.id]);
                   setOpen(false);
                 } else {
-                  setResult(`"${item.title.slice(0, 30)}..." — 그래프에 나타나려면 인덱싱이 필요해요. 터미널에서 stellavault index를 실행해주세요.`);
+                  setResult(`"${item.title.slice(0, 30)}..." — 아직 인덱싱 전이에요. 아래 "인덱싱" 버튼을 눌러주세요.`);
                   setStatus('error');
                   setTimeout(() => { setStatus('idle'); setResult(''); }, 5000);
                 }
@@ -247,6 +247,52 @@ export function IngestPanel() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Reindex button */}
+      {recentItems.length > 0 && (
+        <button
+          onClick={async () => {
+            setStatus('sending');
+            setResult('인덱싱 중... (시간이 걸릴 수 있어요)');
+            try {
+              const resp = await fetch('/api/reindex', { method: 'POST' });
+              const data = await resp.json();
+              if (data.success) {
+                setResult(`인덱싱 완료! ${data.indexed}개 문서, ${data.chunks}개 청크`);
+                setStatus('success');
+                // 그래프 새로고침
+                const graphResp = await fetch('/api/graph/refresh?mode=semantic');
+                const graphData = await graphResp.json();
+                if (graphData.data?.nodes) {
+                  useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
+                }
+              } else {
+                setResult(data.error || '인덱싱 실패');
+                setStatus('error');
+              }
+            } catch {
+              setResult('서버 연결 실패');
+              setStatus('error');
+            }
+            setTimeout(() => { setStatus('idle'); setResult(''); }, 5000);
+          }}
+          disabled={status === 'sending'}
+          style={{
+            width: '100%',
+            marginTop: '8px',
+            padding: '6px',
+            background: 'transparent',
+            border: `1px solid ${th.buttonBorder}`,
+            borderRadius: '6px',
+            color: th.textMuted,
+            fontSize: '11px',
+            cursor: status === 'sending' ? 'wait' : 'pointer',
+            transition: 'all 0.15s',
+          }}
+        >
+          {status === 'sending' ? '인덱싱 중...' : '새 노트 인덱싱 (그래프에 반영)'}
+        </button>
       )}
 
       {/* Hints */}

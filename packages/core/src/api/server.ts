@@ -56,6 +56,45 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // POST /api/reindex — 웹에서 인덱싱 트리거
+  let isReindexing = false;
+  app.post('/api/reindex', async (_req, res) => {
+    if (isReindexing) {
+      res.json({ success: false, error: '인덱싱이 이미 진행 중입니다' });
+      return;
+    }
+    isReindexing = true;
+    try {
+      const indexer = await import('../indexer/index.js');
+
+      const embedder = indexer.createLocalEmbedder();
+      await embedder.initialize();
+
+      const result = await indexer.indexVault(vaultPath, {
+        store,
+        embedder,
+        onProgress: (current: number, total: number) => {
+          if (current % 50 === 0) console.error(`[reindex] ${current}/${total}`);
+        },
+      });
+
+      // 그래프 캐시 리셋
+      graphCaches.clear();
+
+      res.json({
+        success: true,
+        indexed: result.indexed,
+        skipped: result.skipped,
+        chunks: result.totalChunks,
+      });
+    } catch (err) {
+      console.error('[reindex]', err);
+      res.status(500).json({ error: 'Reindex failed' });
+    } finally {
+      isReindexing = false;
+    }
+  });
+
   // GET /api/search?q=&limit=
   app.get('/api/search', async (req, res) => {
     try {
