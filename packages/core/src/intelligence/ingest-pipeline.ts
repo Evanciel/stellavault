@@ -16,7 +16,7 @@ function sanitizeYaml(val: string): string {
 export type NoteStage = 'fleeting' | 'literature' | 'permanent';
 
 export interface IngestInput {
-  type: 'url' | 'text' | 'file' | 'youtube' | 'pdf-text';
+  type: 'url' | 'text' | 'file' | 'youtube' | 'pdf-text' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'xls';
   content: string;       // URL, 텍스트, 또는 파일 내용
   title?: string;
   tags?: string[];
@@ -189,7 +189,10 @@ function extractAutoTags(content: string, type: string): string[] {
   // 입력 타입 태그
   if (type === 'url') tags.add('web-clip');
   if (type === 'youtube') tags.add('youtube');
-  if (type === 'pdf-text') tags.add('pdf');
+  if (type === 'pdf-text' || type === 'pdf') tags.add('pdf');
+  if (type === 'docx') tags.add('document');
+  if (type === 'pptx') tags.add('presentation');
+  if (type === 'xlsx' || type === 'xls') tags.add('spreadsheet');
 
   // 인라인 #태그 추출
   const inline = content.match(/#([a-zA-Z가-힣][a-zA-Z0-9가-힣_-]{2,})/g) ?? [];

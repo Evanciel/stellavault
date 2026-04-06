@@ -3,7 +3,7 @@
 import chalk from 'chalk';
 import { loadConfig, ingest, promoteNote } from '@stellavault/core';
 import { readFileSync, existsSync } from 'node:fs';
-import { extname } from 'node:path';
+import { extname, resolve } from 'node:path';
 import type { IngestInput } from '@stellavault/core';
 
 export async function ingestCommand(input: string, options: { tags?: string; stage?: string; title?: string }) {
@@ -88,15 +88,45 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
   } else if (existsSync(input)) {
     // 파일
     const ext = extname(input).toLowerCase();
-    const fileContent = readFileSync(input, 'utf-8');
-    ingestInput = {
-      type: ext === '.pdf' ? 'pdf-text' : 'file',
-      content: fileContent,
-      tags,
-      stage,
-      title: options.title,
-      source: input,
-    };
+    const binaryExts = new Set(['.pdf', '.docx', '.pptx', '.xlsx', '.xls']);
+
+    if (binaryExts.has(ext)) {
+      // 바이너리 파일: 전용 파서로 텍스트 추출
+      try {
+        const { extractFileContent } = await import('@stellavault/core/intelligence/file-extractors');
+        const extracted = await extractFileContent(resolve(input));
+        console.log(chalk.dim(`  Extracted ${extracted.metadata.wordCount} words from ${ext} file`));
+        ingestInput = {
+          type: extracted.sourceFormat as IngestInput['type'],
+          content: extracted.text,
+          tags: [...tags, extracted.sourceFormat],
+          stage: stage === 'fleeting' ? 'literature' : stage,
+          title: options.title ?? extracted.metadata.title,
+          source: input,
+        };
+      } catch (err) {
+        console.error(chalk.yellow(`Binary file extraction failed, saving as-is. (${err instanceof Error ? err.message : 'error'})`));
+        ingestInput = {
+          type: 'file',
+          content: readFileSync(input, 'utf-8'),
+          tags,
+          stage,
+          title: options.title,
+          source: input,
+        };
+      }
+    } else {
+      // 텍스트 파일: 기존 동작
+      const fileContent = readFileSync(input, 'utf-8');
+      ingestInput = {
+        type: 'file',
+        content: fileContent,
+        tags,
+        stage,
+        title: options.title,
+        source: input,
+      };
+    }
   } else {
     // 플레인 텍스트
     ingestInput = {

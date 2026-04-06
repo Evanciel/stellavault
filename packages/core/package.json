@@ -13,6 +13,10 @@
     "./intelligence/youtube-extractor": {
       "import": "./dist/intelligence/youtube-extractor.js",
       "types": "./dist/intelligence/youtube-extractor.d.ts"
+    },
+    "./intelligence/file-extractors": {
+      "import": "./dist/intelligence/file-extractors.js",
+      "types": "./dist/intelligence/file-extractors.d.ts"
     }
   },
   "scripts": {
@@ -39,6 +43,10 @@
     "express": "^5.2.1",
     "gray-matter": "^4.0.3",
     "hyperswarm": "^4.17.0",
-    "sqlite-vec": "^0.1.7"
+    "mammoth": "^1.12.0",
+    "officeparser": "^6.0.7",
+    "sqlite-vec": "^0.1.7",
+    "unpdf": "^1.4.0",
+    "xlsx": "^0.18.5"
   }
 }
