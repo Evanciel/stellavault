@@ -2,13 +2,14 @@
 import { useState, useEffect } from 'react';
 import { useGraphStore } from '../stores/graph-store.js';
 import { getTheme } from '../lib/theme.js';
+import { t } from '../lib/i18n.js';
 
 const ONBOARDING_KEY = 'sv_onboarding_done';
 
 export function OnboardingGuide() {
   const themeMode = useGraphStore((s) => s.theme);
   const nodes = useGraphStore((s) => s.nodes);
-  const t = getTheme(themeMode);
+  const th = getTheme(themeMode);
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
 
@@ -28,23 +29,14 @@ export function OnboardingGuide() {
 
   const steps = [
     {
-      title: 'Welcome to Stellavault',
+      title: t('onboard.welcome'),
       body: nodes.length > 0
-        ? `Your vault has ${nodes.length} documents visualized as a neural network. Drag to rotate, scroll to zoom.`
-        : 'Your vault is empty. Run `stellavault index /path/to/vault` in terminal first.',
+        ? `${nodes.length} ${t('status.docs')} — ${t('onboard.welcome.body')}`
+        : t('onboard.welcome.empty'),
     },
-    {
-      title: 'Search by Meaning',
-      body: 'Use the search bar (or press /) to find notes by meaning, not just keywords. Matching nodes will pulse.',
-    },
-    {
-      title: 'Add Knowledge',
-      body: 'Click the + button (bottom-right) to paste URLs, text, or ideas. They\'re auto-saved to your vault.',
-    },
-    {
-      title: 'Explore Features',
-      body: 'Try: Heatmap (activity), Gaps (missing links), Timeline (history), Decay (fading memory). Click Intelligence for health dashboard.',
-    },
+    { title: t('onboard.search'), body: t('onboard.search.body') },
+    { title: t('onboard.add'), body: t('onboard.add.body') },
+    { title: t('onboard.explore'), body: t('onboard.explore.body') },
   ];
 
   const current = steps[step];
@@ -60,21 +52,21 @@ export function OnboardingGuide() {
       justifyContent: 'center',
     }}>
       <div style={{
-        background: t.bgSolid,
-        border: `1px solid ${t.borderActive}`,
+        background: th.bgSolid,
+        border: `1px solid ${th.borderActive}`,
         borderRadius: '16px',
         padding: '28px 32px',
         maxWidth: '420px',
         width: '90%',
         boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
       }}>
-        <div style={{ fontSize: '10px', color: t.textDim, marginBottom: '4px' }}>
+        <div style={{ fontSize: '10px', color: th.textDim, marginBottom: '4px' }}>
           {step + 1} / {steps.length}
         </div>
-        <h3 style={{ color: t.text, margin: '0 0 12px', fontSize: '18px', fontWeight: 700 }}>
+        <h3 style={{ color: th.text, margin: '0 0 12px', fontSize: '18px', fontWeight: 700 }}>
           {current.title}
         </h3>
-        <p style={{ color: t.textMuted, fontSize: '13px', lineHeight: 1.6, margin: '0 0 20px' }}>
+        <p style={{ color: th.textMuted, fontSize: '13px', lineHeight: 1.6, margin: '0 0 20px' }}>
           {current.body}
         </p>
 
@@ -84,29 +76,29 @@ export function OnboardingGuide() {
             style={{
               padding: '8px 16px',
               background: 'transparent',
-              border: `1px solid ${t.buttonBorder}`,
+              border: `1px solid ${th.buttonBorder}`,
               borderRadius: '8px',
-              color: t.textMuted,
+              color: th.textMuted,
               cursor: 'pointer',
               fontSize: '12px',
             }}
           >
-            Skip
+            {t('onboard.skip')}
           </button>
           <button
             onClick={() => step < steps.length - 1 ? setStep(step + 1) : dismiss()}
             style={{
               padding: '8px 20px',
-              background: t.buttonActive,
-              border: `1px solid ${t.borderActive}`,
+              background: th.buttonActive,
+              border: `1px solid ${th.borderActive}`,
               borderRadius: '8px',
-              color: t.text,
+              color: th.text,
               cursor: 'pointer',
               fontSize: '12px',
               fontWeight: 600,
             }}
           >
-            {step < steps.length - 1 ? 'Next' : 'Get Started'}
+            {step < steps.length - 1 ? t('onboard.next') : t('onboard.start')}
           </button>
         </div>
       </div>

@@ -63,6 +63,8 @@ interface GraphState {
   timelineRange: [number, number] | null; // [startMs, endMs] or null = show all
   searchHistory: string[];
   maxVisibleNodes: number; // performance cap for large vaults
+  locale: 'en' | 'ko' | 'ja' | 'zh';
+  setLocale: (locale: 'en' | 'ko' | 'ja' | 'zh') => void;
   viewMode: 'universe' | 'multiverse';
   federationPeers: Array<{ peerId: string; displayName: string; documentCount: number; topTopics: string[] }>;
   setViewMode: (mode: 'universe' | 'multiverse') => void;
@@ -125,6 +127,8 @@ export const useGraphStore = create<GraphState>((set) => ({
   timelineRange: null,
   searchHistory: JSON.parse(localStorage.getItem('sv_search_history') ?? '[]') as string[],
   maxVisibleNodes: 5000,
+  locale: (typeof localStorage !== 'undefined' ? localStorage.getItem('sv_locale') as any : null) ?? 'en',
+  setLocale: (locale) => { localStorage.setItem('sv_locale', locale); set({ locale }); },
   viewMode: 'universe' as const,
   federationPeers: [],
   setViewMode: (mode) => set({ viewMode: mode }),
