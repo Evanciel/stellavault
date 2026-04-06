@@ -28,6 +28,7 @@ export function IngestPanel() {
           input: input.trim(),
           tags: tags ? tags.split(',').map(t => t.trim()) : [],
           stage,
+          locale: useGraphStore.getState().locale,
         }),
       });
 

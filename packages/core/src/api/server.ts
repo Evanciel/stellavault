@@ -385,7 +385,13 @@ export function createApiServer(options: ApiServerOptions) {
   // POST /api/ingest — 웹 UI에서 URL/텍스트 인제스트
   app.post('/api/ingest', async (req, res) => {
     try {
-      const { input, type, tags, title, stage } = req.body;
+      const { input, type, tags, title, stage, locale } = req.body;
+
+      // 노트 언어 설정
+      if (locale) {
+        const { setNoteLocale } = await import('../i18n/note-strings.js');
+        setNoteLocale(locale);
+      }
       if (!input || typeof input !== 'string') {
         res.status(400).json({ error: 'input is required' });
         return;

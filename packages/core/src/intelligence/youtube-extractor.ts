@@ -1,6 +1,8 @@
 // YouTube 콘텐츠 추출기 v2 — 자막(타임스탬프 보존) + 메타데이터 → 구조화 노트
 // PM 분석 반영: HTML 엔티티, 채널명, 이중 frontmatter, 태그 품질, 요약 품질
 
+import { nt } from '../i18n/note-strings.js';
+
 export interface YouTubeContent {
   title: string;
   channelName: string;
@@ -73,22 +75,19 @@ export function formatYouTubeNote(content: YouTubeContent): string {
   // Header
   lines.push(`# ${content.title}`, '');
   lines.push(`> **${content.channelName}** | ${content.duration} | ${content.publishDate?.split('T')[0] ?? ''}`);
-  if (content.viewCount) lines.push(`> Views: ${Number(content.viewCount).toLocaleString()}`);
+  if (content.viewCount) lines.push(`> ${nt('views')}: ${Number(content.viewCount).toLocaleString()}`);
   lines.push(`> ${content.url}`, '');
 
-  // Summary
   if (content.summary) {
-    lines.push('## Summary', '', content.summary, '');
+    lines.push(`## ${nt('summary')}`, '', content.summary, '');
   }
 
-  // Description
   if (content.description.length > 30) {
-    lines.push('## Description', '', content.description.slice(0, 800), '');
+    lines.push(`## ${nt('description')}`, '', content.description.slice(0, 800), '');
   }
 
-  // Transcript (with timestamp links)
   if (content.transcript.length > 0) {
-    lines.push('## Transcript', '');
+    lines.push(`## ${nt('transcript')}`, '');
     const segments = groupIntoSegments(content.transcript);
     for (const seg of segments) {
       const ts = formatSeconds(seg.startTime);
@@ -190,7 +189,7 @@ function extractSmartTags(title: string, description: string): string[] {
 
 function generateSmartSummary(title: string, transcript: string, description: string): string {
   const source = transcript.length > 100 ? transcript : description;
-  if (source.length < 50) return `${title} — YouTube video`;
+  if (source.length < 50) return `${title} — ${nt('youtubeVideo')}`;
 
   const sentences = source
     .split(/[.。!?]\s+|(?<=다)\s+|(?<=요)\s+/)
