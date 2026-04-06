@@ -16,6 +16,7 @@ import { ToolsPanel } from './ToolsPanel.js';
 import { MultiverseView } from './MultiverseView.js';
 import { IngestPanel } from './IngestPanel.js';
 import { OnboardingGuide } from './OnboardingGuide.js';
+import { t } from '../lib/i18n.js';
 
 export function Layout() {
   // ALL hooks must be called before any conditional return
@@ -90,13 +91,13 @@ export function Layout() {
             color: isDark ? '#88aaff' : '#4466aa', marginRight: '8px',
           }}
         >
-          Multiverse
+          {t('btn.multiverse')}
         </button>
         <span style={{ fontSize: '14px', fontWeight: 600, color: isDark ? '#c0c0f0' : '#2a2a4a', letterSpacing: '0.5px' }}>
-          Stellavault
+          {t('title')}
         </span>
         <span style={{ color: isDark ? 'rgba(100, 120, 255, 0.5)' : 'rgba(60, 60, 120, 0.5)', fontSize: '12px', marginRight: '12px' }}>
-          Neural Knowledge Graph
+          {t('subtitle')}
         </span>
         <SearchBar />
         <div style={{
@@ -125,7 +126,7 @@ export function Layout() {
                     fontWeight: active ? 600 : 400,
                   }}
                 >
-                  {m === 'semantic' ? 'AI Semantic' : 'Obsidian Folders'}
+                  {m === 'semantic' ? t('btn.semantic') : t('btn.folders')}
                 </button>
               );
             })}
@@ -140,7 +141,7 @@ export function Layout() {
               color: showConstellation ? (isDark ? '#66ccff' : '#0066aa') : (isDark ? '#aab' : '#555'),
             }}
           >
-            Stars
+            {t('btn.stars')}
           </button>
           <ClusterFilter />
           <TypeFilter />
@@ -154,7 +155,7 @@ export function Layout() {
               color: showTimeline ? (isDark ? '#66aaff' : '#0066aa') : (isDark ? '#aab' : '#555'),
             }}
           >
-            Timeline
+            {t('btn.timeline')}
           </button>
           <button
             onClick={toggleDecay}
@@ -166,7 +167,7 @@ export function Layout() {
               color: showDecay ? (isDark ? '#ffaa44' : '#aa6600') : (isDark ? '#aab' : '#555'),
             }}
           >
-            Decay
+            {t('btn.decay')}
           </button>
           <button
             onClick={toggleTheme}
@@ -178,7 +179,7 @@ export function Layout() {
               color: isDark ? '#aab' : '#555',
             }}
           >
-            {isDark ? 'Light' : 'Dark'}
+            {isDark ? t('btn.light') : t('btn.dark')}
           </button>
         </div>
         {loading && (

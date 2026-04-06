@@ -2,10 +2,11 @@
 import { useState, useCallback } from 'react';
 import { useGraphStore } from '../stores/graph-store.js';
 import { getTheme } from '../lib/theme.js';
+import { t } from '../lib/i18n.js';
 
 export function IngestPanel() {
   const themeMode = useGraphStore((s) => s.theme);
-  const t = getTheme(themeMode);
+  const th = getTheme(themeMode);
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -58,9 +59,9 @@ export function IngestPanel() {
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          border: `2px solid ${t.borderActive}`,
-          background: t.bgSolid,
-          color: t.textAccent,
+          border: `2px solid ${th.borderActive}`,
+          background: th.bgSolid,
+          color: th.textAccent,
           fontSize: '22px',
           cursor: 'pointer',
           zIndex: 100,
@@ -84,8 +85,8 @@ export function IngestPanel() {
       bottom: '60px',
       right: '16px',
       width: '360px',
-      background: t.bgSolid,
-      border: `1px solid ${t.border}`,
+      background: th.bgSolid,
+      border: `1px solid ${th.border}`,
       borderRadius: '12px',
       padding: '16px',
       zIndex: 100,
@@ -94,12 +95,12 @@ export function IngestPanel() {
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <span style={{ color: t.text, fontWeight: 600, fontSize: '13px' }}>
-          Add Knowledge
+        <span style={{ color: th.text, fontWeight: 600, fontSize: '13px' }}>
+          {t('ingest.title')}
         </span>
         <button
           onClick={() => setOpen(false)}
-          style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: '16px' }}
+          style={{ background: 'none', border: 'none', color: th.textMuted, cursor: 'pointer', fontSize: '16px' }}
         >
           x
         </button>
@@ -109,15 +110,15 @@ export function IngestPanel() {
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Paste URL, text, or type an idea..."
+        placeholder={t('ingest.placeholder')}
         style={{
           width: '100%',
           height: '80px',
-          background: t.accent,
-          border: `1px solid ${t.buttonBorder}`,
+          background: th.accent,
+          border: `1px solid ${th.buttonBorder}`,
           borderRadius: '8px',
           padding: '10px',
-          color: t.text,
+          color: th.text,
           fontSize: '13px',
           resize: 'vertical',
           outline: 'none',
@@ -130,14 +131,14 @@ export function IngestPanel() {
         <input
           value={tags}
           onChange={(e) => setTags(e.target.value)}
-          placeholder="tags (comma separated)"
+          placeholder={t('ingest.tags')}
           style={{
             flex: 1,
             padding: '6px 10px',
-            background: t.accent,
-            border: `1px solid ${t.buttonBorder}`,
+            background: th.accent,
+            border: `1px solid ${th.buttonBorder}`,
             borderRadius: '6px',
-            color: t.text,
+            color: th.text,
             fontSize: '11px',
             outline: 'none',
           }}
@@ -147,10 +148,10 @@ export function IngestPanel() {
           onChange={(e) => setStage(e.target.value as 'fleeting' | 'literature')}
           style={{
             padding: '6px 8px',
-            background: t.accent,
-            border: `1px solid ${t.buttonBorder}`,
+            background: th.accent,
+            border: `1px solid ${th.buttonBorder}`,
             borderRadius: '6px',
-            color: t.text,
+            color: th.text,
             fontSize: '11px',
             outline: 'none',
             cursor: 'pointer',
@@ -169,20 +170,20 @@ export function IngestPanel() {
           width: '100%',
           marginTop: '10px',
           padding: '8px',
-          background: status === 'success' ? t.success : t.buttonActive,
-          border: `1px solid ${t.borderActive}`,
+          background: status === 'success' ? th.success : th.buttonActive,
+          border: `1px solid ${th.borderActive}`,
           borderRadius: '8px',
-          color: t.text,
+          color: th.text,
           fontSize: '12px',
           fontWeight: 600,
           cursor: status === 'sending' ? 'wait' : 'pointer',
           transition: 'all 0.15s ease',
         }}
       >
-        {status === 'sending' ? 'Saving...' :
-         status === 'success' ? 'Saved!' :
-         status === 'error' ? 'Error — Retry' :
-         'Add to Vault'}
+        {status === 'sending' ? t('ingest.saving') :
+         status === 'success' ? t('ingest.saved') :
+         status === 'error' ? t('ingest.error') :
+         t('ingest.add')}
       </button>
 
       {/* Result */}
@@ -190,7 +191,7 @@ export function IngestPanel() {
         <div style={{
           marginTop: '8px',
           fontSize: '11px',
-          color: status === 'success' ? t.success : t.danger,
+          color: status === 'success' ? th.success : th.danger,
           wordBreak: 'break-all',
         }}>
           {result}
@@ -198,8 +199,8 @@ export function IngestPanel() {
       )}
 
       {/* Hints */}
-      <div style={{ marginTop: '10px', fontSize: '10px', color: t.textDim, lineHeight: 1.5 }}>
-        Supports: URLs, YouTube links, plain text, ideas
+      <div style={{ marginTop: '10px', fontSize: '10px', color: th.textDim, lineHeight: 1.5 }}>
+        {t('ingest.hint')}
       </div>
     </div>
   );

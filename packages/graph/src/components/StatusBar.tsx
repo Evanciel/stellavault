@@ -1,7 +1,7 @@
 import { useGraphStore } from '../stores/graph-store.js';
 import { ExportPanel } from './ExportPanel.js';
 import { getTheme } from '../lib/theme.js';
-import { setUiLocale, getAvailableLocales } from '../lib/i18n.js';
+import { t, setUiLocale } from '../lib/i18n.js';
 
 export function StatusBar() {
   const nodes = useGraphStore((s) => s.nodes);
@@ -18,12 +18,12 @@ export function StatusBar() {
   const locale = useGraphStore((s) => s.locale);
   const setLocale = useGraphStore((s) => s.setLocale);
 
-  const t = getTheme(themeMode);
+  const th = getTheme(themeMode);
 
   const toggleBtnStyle = (active: boolean): React.CSSProperties => ({
     background: active ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
-    border: `1px solid ${active ? 'rgba(239, 68, 68, 0.4)' : t.buttonBorder}`,
-    color: active ? t.danger : t.textMuted,
+    border: `1px solid ${active ? 'rgba(239, 68, 68, 0.4)' : th.buttonBorder}`,
+    color: active ? th.danger : th.textMuted,
     borderRadius: '4px',
     padding: '2px 6px',
     cursor: 'pointer',
@@ -34,10 +34,10 @@ export function StatusBar() {
   return (
     <div style={{
       padding: '6px 16px',
-      background: t.bg,
-      borderTop: `1px solid ${t.border}`,
+      background: th.bg,
+      borderTop: `1px solid ${th.border}`,
       fontSize: '11px',
-      color: t.textMuted,
+      color: th.textMuted,
       display: 'flex',
       gap: '20px',
       alignItems: 'center',
@@ -47,26 +47,26 @@ export function StatusBar() {
         <span>Loading...</span>
       ) : (
         <>
-          <span>{nodes.length} docs</span>
-          <span>{edges.length} edges</span>
-          <span>{clusters.length} clusters</span>
-          <span style={{ color: t.textDim }}>|</span>
-          <span style={{ color: mode === 'semantic' ? t.textAccent : t.success }}>
-            {mode === 'semantic' ? 'AI Semantic' : 'Obsidian Folders'}
+          <span>{nodes.length} {t('status.docs')}</span>
+          <span>{edges.length} {t('status.edges')}</span>
+          <span>{clusters.length} {t('status.clusters')}</span>
+          <span style={{ color: th.textDim }}>|</span>
+          <span style={{ color: mode === 'semantic' ? th.textAccent : th.success }}>
+            {mode === 'semantic' ? t('btn.semantic') : t('btn.folders')}
           </span>
-          <span style={{ color: t.textDim }}>|</span>
-          <span style={{ color: lodLevel === 'universe' ? '#c088ff' : lodLevel === 'note' ? '#88ffaa' : t.textAccent }}>
+          <span style={{ color: th.textDim }}>|</span>
+          <span style={{ color: lodLevel === 'universe' ? '#c088ff' : lodLevel === 'note' ? '#88ffaa' : th.textAccent }}>
             {lodLevel}
           </span>
-          <span style={{ color: t.textDim, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ color: th.textDim, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {clusters.map(c => c.label).join(' · ')}
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button onClick={toggleHeatmap} title="Knowledge Heatmap" style={toggleBtnStyle(showHeatmap)}>
-              Heatmap
+            <button onClick={toggleHeatmap} title={t('btn.heatmap')} style={toggleBtnStyle(showHeatmap)}>
+              {t('btn.heatmap')}
             </button>
-            <button onClick={toggleGaps} title="Knowledge Gaps" style={toggleBtnStyle(showGaps)}>
-              Gaps
+            <button onClick={toggleGaps} title={t('btn.gaps')} style={toggleBtnStyle(showGaps)}>
+              {t('btn.gaps')}
             </button>
             <ExportPanel />
             <select
@@ -79,14 +79,9 @@ export function StatusBar() {
               }}
               title="Language"
               style={{
-                padding: '2px 4px',
-                fontSize: '10px',
-                background: 'transparent',
-                border: `1px solid ${t.buttonBorder}`,
-                borderRadius: '4px',
-                color: t.textMuted,
-                cursor: 'pointer',
-                outline: 'none',
+                padding: '2px 4px', fontSize: '10px', background: 'transparent',
+                border: `1px solid ${th.buttonBorder}`, borderRadius: '4px',
+                color: th.textMuted, cursor: 'pointer', outline: 'none',
               }}
             >
               <option value="en">EN</option>
@@ -94,9 +89,6 @@ export function StatusBar() {
               <option value="ja">JA</option>
               <option value="zh">ZH</option>
             </select>
-            <span style={{ color: t.textDim, fontSize: '10px' }}>
-              ESC=reset · /=search
-            </span>
           </div>
         </>
       )}
