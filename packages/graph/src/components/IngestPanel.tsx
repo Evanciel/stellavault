@@ -38,6 +38,15 @@ export function IngestPanel() {
         setInput('');
         setTags('');
         setRecentItems(prev => [{ title: data.title, savedTo: data.savedTo, stage: data.stage, tags: data.tags }, ...prev].slice(0, 5));
+        // 그래프 자동 새로고침 — 새 노드 반영
+        try {
+          const graphResp = await fetch('/api/graph?mode=semantic');
+          const graphData = await graphResp.json();
+          if (graphData.nodes) {
+            const store = useGraphStore.getState();
+            store.setGraphData(graphData.nodes, graphData.edges, graphData.clusters);
+          }
+        } catch { /* 그래프 새로고침 실패해도 무시 */ }
         setTimeout(() => { setStatus('idle'); setResult(''); }, 4000);
       } else {
         setStatus('error');

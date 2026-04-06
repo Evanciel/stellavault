@@ -296,6 +296,27 @@ export function createApiServer(options: ApiServerOptions) {
         source: input.startsWith('http') ? input : undefined,
       });
 
+      // 저장 후 자동 인덱싱 (그래프에 바로 반영)
+      try {
+        const fullPath = require('node:path').resolve(vaultPath, result.savedTo);
+        const { chunkDocument } = await import('../indexer/index.js');
+        const doc = {
+          id: require('node:crypto').createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
+          filePath: result.savedTo,
+          title: result.title,
+          content: content,
+          frontmatter: {},
+          tags: result.tags,
+          lastModified: new Date().toISOString(),
+          contentHash: '',
+          source: 'ingest',
+          type: result.stage,
+        };
+        await store.upsertDocument(doc);
+      } catch (indexErr) {
+        console.error('[ingest] Auto-index failed:', indexErr instanceof Error ? indexErr.message : indexErr);
+      }
+
       res.json({
         success: true,
         savedTo: result.savedTo,
