@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import Markdown from 'react-markdown';
 import { fetchDocument } from '../api/client.js';
 import { useGraphStore } from '../stores/graph-store.js';
+import { t } from '../lib/i18n.js';
 
 interface DocData {
   id: string;
@@ -154,11 +155,11 @@ export function NodeDetail() {
                 color: btnColor, fontSize: '11px', cursor: 'pointer',
               }}
             >
-              {editing ? '편집 취소' : '편집'}
+              {editing ? t('node.editCancel') : t('node.edit')}
             </button>
             <button
               onClick={async () => {
-                if (!confirm(`"${doc.title}" 노트를 삭제하시겠습니까?\nObsidian vault에서도 삭제됩니다.`)) return;
+                if (!confirm(`"${doc.title}"\n${t('node.deleteConfirm')}`)) return;
                 try {
                   const resp = await fetch(`/api/document/${doc.id}`, { method: 'DELETE' });
                   const data = await resp.json();
@@ -181,7 +182,7 @@ export function NodeDetail() {
                 fontSize: '11px', cursor: 'pointer',
               }}
             >
-              삭제
+              {t('node.delete')}
             </button>
           </div>
 
@@ -258,7 +259,7 @@ export function NodeDetail() {
                   fontSize: '12px', fontWeight: 600, cursor: 'pointer',
                 }}
               >
-                {saveStatus === 'saving' ? '저장 중...' : saveStatus === 'saved' ? '저장 완료!' : saveStatus === 'error' ? '오류 — 재시도' : '저장 (Obsidian에도 반영)'}
+                {saveStatus === 'saving' ? t('node.saving') : saveStatus === 'saved' ? t('node.saved') : saveStatus === 'error' ? t('node.saveError') : t('node.save')}
               </button>
             </div>
           ) : (

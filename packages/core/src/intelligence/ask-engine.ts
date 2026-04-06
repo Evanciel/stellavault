@@ -58,14 +58,14 @@ export async function askVault(
  */
 function composeAnswer(question: string, results: SearchResult[]): string {
   if (results.length === 0) {
-    return `"${question}"에 대한 관련 문서를 찾지 못했습니다. 다른 키워드로 검색하거나, 이 주제에 대한 노트를 작성해보세요.`;
+    return `No results found for "${question}". Try different keywords or create a note on this topic.`;
   }
 
   const lines: string[] = [];
   lines.push(`## ${question}\n`);
 
-  // 관련 문서 요약
-  lines.push(`### 관련 문서 ${results.length}건\n`);
+  // Related documents
+  lines.push(`### Related Documents (${results.length})\n`);
   for (const r of results.slice(0, 5)) {
     const score = Math.round(r.score * 100);
     lines.push(`- **${r.document.title}** (${score}% 관련)`);
@@ -79,21 +79,21 @@ function composeAnswer(question: string, results: SearchResult[]): string {
     lines.push('');
   }
 
-  // 관련 태그 클라우드
+  // Related tags
   const allTags = new Set<string>();
   for (const r of results) {
     r.document.tags.forEach((t) => allTags.add(t));
   }
   if (allTags.size > 0) {
-    lines.push(`### 관련 태그`);
+    lines.push(`### Related Tags`);
     lines.push([...allTags].map(t => `#${t}`).join(' '));
     lines.push('');
   }
 
-  // 추가 탐색 제안
-  lines.push(`### 추가 탐색`);
-  lines.push(`- 이 주제에 대해 더 깊이 알고 싶다면 \`stellavault ask "${question} 심화"\`를 실행해보세요.`);
-  lines.push(`- 관련 지식 갭을 확인하려면 \`stellavault gaps\`를 실행하세요.`);
+  // Explore further
+  lines.push(`### Explore Further`);
+  lines.push(`- Dig deeper: \`stellavault ask "${question} advanced"\``);
+  lines.push(`- Find knowledge gaps: \`stellavault gaps\``);
 
   return lines.join('\n');
 }

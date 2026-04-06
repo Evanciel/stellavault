@@ -122,7 +122,7 @@ export async function lintKnowledge(
     return age > 180;
   });
   if (staleDocs.length > totalDocs * 0.3) {
-    suggestions.push(`${staleDocs.length}개 문서가 6개월 이상 미수정입니다. \`stellavault decay\`로 확인하세요.`);
+    suggestions.push(`${staleDocs.length} documents haven't been modified in 6+ months. Run \`stellavault decay\` to review.`);
   }
 
   // 6. 건강도 점수 계산
@@ -133,16 +133,16 @@ export async function lintKnowledge(
 
   // 7. 종합 제안
   if (gapCount > 5) {
-    suggestions.push(`${gapCount}개 지식 갭이 발견되었습니다. 가장 심각한 갭부터 채워보세요.`);
+    suggestions.push(`${gapCount} knowledge gaps found. Start filling the most critical ones.`);
   }
   if (dupCount > 3) {
-    suggestions.push(`${dupCount}개 중복 문서가 있습니다. \`stellavault duplicates\`로 병합하세요.`);
+    suggestions.push(`${dupCount} duplicate documents detected. Run \`stellavault duplicates\` to merge.`);
   }
   if (isolatedCount > 10) {
-    suggestions.push(`${isolatedCount}개 고립 노트가 있습니다. 태그나 링크를 추가해 연결하세요.`);
+    suggestions.push(`${isolatedCount} isolated notes found. Add tags or links to connect them.`);
   }
   if (totalDocs > 0 && issues.length === 0) {
-    suggestions.push('지식 베이스가 건강합니다! 계속 유지하세요.');
+    suggestions.push('Your knowledge base is healthy! Keep it up.');
   }
 
   return {

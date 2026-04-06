@@ -212,7 +212,7 @@ export function IngestPanel() {
       {/* Recent saves */}
       {recentItems.length > 0 && (
         <div style={{ marginTop: '10px', borderTop: `1px solid ${th.border}`, paddingTop: '8px' }}>
-          <div style={{ fontSize: '10px', color: th.textDim, marginBottom: '4px' }}>최근 저장</div>
+          <div style={{ fontSize: '10px', color: th.textDim, marginBottom: '4px' }}>{t('ingest.recent')}</div>
           {recentItems.map((item, i) => (
             <div key={i} style={{
               fontSize: '11px', color: th.textMuted, padding: '5px 6px',
@@ -236,14 +236,14 @@ export function IngestPanel() {
                   store.setHighlightedNodes([node.id]);
                   setOpen(false);
                 } else {
-                  setResult(`"${item.title.slice(0, 30)}..." — 아직 인덱싱 전이에요. 아래 "인덱싱" 버튼을 눌러주세요.`);
+                  setResult(`"${item.title.slice(0, 30)}..." — ${t('ingest.notIndexed')}`);
                   setStatus('error');
                   setTimeout(() => { setStatus('idle'); setResult(''); }, 5000);
                 }
               }}
             >
               <span style={{ color: th.text }}>{item.title}</span>
-              <span style={{ color: th.textDim, marginLeft: '6px', fontSize: '10px' }}>→ 노드로 이동</span>
+              <span style={{ color: th.textDim, marginLeft: '6px', fontSize: '10px' }}>{t('ingest.goto')}</span>
             </div>
           ))}
         </div>
@@ -254,12 +254,12 @@ export function IngestPanel() {
         <button
           onClick={async () => {
             setStatus('sending');
-            setResult('인덱싱 중... (시간이 걸릴 수 있어요)');
+            setResult(t('ingest.reindexing'));
             try {
               const resp = await fetch('/api/reindex', { method: 'POST' });
               const data = await resp.json();
               if (data.success) {
-                setResult(`인덱싱 완료! ${data.indexed}개 문서, ${data.chunks}개 청크`);
+                setResult(`${t('ingest.reindexDone')} ${data.indexed} docs, ${data.chunks} chunks`);
                 setStatus('success');
                 // 그래프 새로고침
                 const graphResp = await fetch('/api/graph/refresh?mode=semantic');
@@ -268,7 +268,7 @@ export function IngestPanel() {
                   useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
                 }
               } else {
-                setResult(data.error || '인덱싱 실패');
+                setResult(data.error || t('ingest.reindexFail'));
                 setStatus('error');
               }
             } catch {
@@ -291,7 +291,7 @@ export function IngestPanel() {
             transition: 'all 0.15s',
           }}
         >
-          {status === 'sending' ? '인덱싱 중...' : '새 노트 인덱싱 (그래프에 반영)'}
+          {status === 'sending' ? t('ingest.reindexBtnActive') : t('ingest.reindexBtn')}
         </button>
       )}
 

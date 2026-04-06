@@ -70,25 +70,25 @@ export async function extractYouTubeContent(url: string): Promise<YouTubeContent
 export function formatYouTubeNote(content: YouTubeContent): string {
   const lines: string[] = [];
 
-  // 헤더
+  // Header
   lines.push(`# ${content.title}`, '');
   lines.push(`> **${content.channelName}** | ${content.duration} | ${content.publishDate?.split('T')[0] ?? ''}`);
-  if (content.viewCount) lines.push(`> 조회수: ${Number(content.viewCount).toLocaleString()}`);
+  if (content.viewCount) lines.push(`> Views: ${Number(content.viewCount).toLocaleString()}`);
   lines.push(`> ${content.url}`, '');
 
-  // 요약
+  // Summary
   if (content.summary) {
-    lines.push('## 핵심 요약', '', content.summary, '');
+    lines.push('## Summary', '', content.summary, '');
   }
 
-  // 설명
+  // Description
   if (content.description.length > 30) {
-    lines.push('## 영상 설명', '', content.description.slice(0, 800), '');
+    lines.push('## Description', '', content.description.slice(0, 800), '');
   }
 
-  // 자막 (타임스탬프 링크 포함)
+  // Transcript (with timestamp links)
   if (content.transcript.length > 0) {
-    lines.push('## 내용 (타임스탬프별)', '');
+    lines.push('## Transcript', '');
     const segments = groupIntoSegments(content.transcript);
     for (const seg of segments) {
       const ts = formatSeconds(seg.startTime);
@@ -190,7 +190,7 @@ function extractSmartTags(title: string, description: string): string[] {
 
 function generateSmartSummary(title: string, transcript: string, description: string): string {
   const source = transcript.length > 100 ? transcript : description;
-  if (source.length < 50) return `${title} — YouTube 영상`;
+  if (source.length < 50) return `${title} — YouTube video`;
 
   const sentences = source
     .split(/[.。!?]\s+|(?<=다)\s+|(?<=요)\s+/)
