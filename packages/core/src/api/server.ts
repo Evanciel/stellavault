@@ -271,6 +271,98 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // PUT /api/document/:id — 노트 편집 (vault 파일 직접 수정)
+  app.put('/api/document/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, content, tags } = req.body;
+
+      const doc = await store.getDocument(id);
+      if (!doc) { res.status(404).json({ error: 'Document not found' }); return; }
+
+      const { resolve, join } = await import('node:path');
+      const { writeFileSync, readFileSync } = await import('node:fs');
+      const fullPath = resolve(vaultPath, doc.filePath);
+
+      // path traversal 방지
+      if (!fullPath.startsWith(resolve(vaultPath))) {
+        res.status(403).json({ error: 'Access denied' }); return;
+      }
+
+      // 기존 파일 읽기
+      const existing = readFileSync(fullPath, 'utf-8');
+
+      // frontmatter 업데이트
+      let updated = existing;
+      if (title && title !== doc.title) {
+        updated = updated.replace(/^title:\s*.+$/m, `title: "${title.replace(/"/g, "''")}"`);
+      }
+      if (tags) {
+        const tagStr = `tags: [${tags.map((t: string) => `"${t}"`).join(', ')}]`;
+        if (updated.match(/^tags:\s*.+$/m)) {
+          updated = updated.replace(/^tags:\s*.+$/m, tagStr);
+        }
+      }
+      if (content !== undefined) {
+        // frontmatter 이후 본문 교체
+        const fmEnd = updated.indexOf('---', 4);
+        if (fmEnd > 0) {
+          const fm = updated.substring(0, fmEnd + 3);
+          updated = fm + '\n\n' + content;
+        } else {
+          updated = content;
+        }
+      }
+
+      writeFileSync(fullPath, updated, 'utf-8');
+
+      // DB 업데이트
+      await store.upsertDocument({
+        ...doc,
+        title: title ?? doc.title,
+        content: content ?? doc.content,
+        tags: tags ?? doc.tags,
+        lastModified: new Date().toISOString(),
+      });
+
+      res.json({ success: true, id, title: title ?? doc.title });
+    } catch (err: any) {
+      console.error('[edit]', err);
+      res.status(500).json({ error: err?.message ?? 'Edit failed' });
+    }
+  });
+
+  // DELETE /api/document/:id — 노트 삭제 (vault 파일 + DB)
+  app.delete('/api/document/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const doc = await store.getDocument(id);
+      if (!doc) { res.status(404).json({ error: 'Document not found' }); return; }
+
+      const { resolve } = await import('node:path');
+      const { unlinkSync, existsSync } = await import('node:fs');
+      const fullPath = resolve(vaultPath, doc.filePath);
+
+      // path traversal 방지
+      if (!fullPath.startsWith(resolve(vaultPath))) {
+        res.status(403).json({ error: 'Access denied' }); return;
+      }
+
+      // 파일 삭제
+      if (existsSync(fullPath)) {
+        unlinkSync(fullPath);
+      }
+
+      // DB에서 삭제
+      await store.deleteByDocumentId(id);
+
+      res.json({ success: true, id, deleted: doc.filePath });
+    } catch (err: any) {
+      console.error('[delete]', err);
+      res.status(500).json({ error: err?.message ?? 'Delete failed' });
+    }
+  });
+
   // GET /api/ask — 웹 UI Q&A
   app.get('/api/ask', async (req, res) => {
     try {

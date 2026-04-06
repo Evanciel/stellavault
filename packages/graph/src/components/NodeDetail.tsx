@@ -23,6 +23,11 @@ export function NodeDetail() {
   const [doc, setDoc] = useState<DocData | null>(null);
   const [loading, setLoading] = useState(false);
   const cacheRef = useRef<Map<string, DocData>>(new Map());
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'' | 'saving' | 'saved' | 'error'>('');
 
   useEffect(() => {
     if (!selectedNodeId) { setDoc(null); return; }
@@ -129,7 +134,136 @@ export function NodeDetail() {
           >
             Open in Obsidian
           </button>
-          <ContentAccordion content={doc.content} isDark={isDark} />
+
+          {/* 편집/삭제 버튼 */}
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+            <button
+              onClick={() => {
+                if (editing) {
+                  setEditing(false);
+                } else {
+                  setEditTitle(doc.title);
+                  setEditContent(doc.content);
+                  setEditTags(doc.tags.join(', '));
+                  setEditing(true);
+                }
+              }}
+              style={{
+                flex: 1, padding: '7px', background: editing ? btnBg : 'transparent',
+                border: `1px solid ${btnBorder}`, borderRadius: '5px',
+                color: btnColor, fontSize: '11px', cursor: 'pointer',
+              }}
+            >
+              {editing ? '편집 취소' : '편집'}
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm(`"${doc.title}" 노트를 삭제하시겠습니까?\nObsidian vault에서도 삭제됩니다.`)) return;
+                try {
+                  const resp = await fetch(`/api/document/${doc.id}`, { method: 'DELETE' });
+                  const data = await resp.json();
+                  if (data.success) {
+                    cacheRef.current.delete(doc.id);
+                    selectNode(null);
+                    // 그래프 새로고침
+                    const graphResp = await fetch('/api/graph/refresh?mode=semantic');
+                    const graphData = await graphResp.json();
+                    if (graphData.data?.nodes) {
+                      useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
+                    }
+                  }
+                } catch { /* ignore */ }
+              }}
+              style={{
+                padding: '7px 12px', background: 'transparent',
+                border: `1px solid ${isDark ? 'rgba(255,80,80,0.2)' : 'rgba(200,50,50,0.15)'}`,
+                borderRadius: '5px', color: isDark ? '#ff6666' : '#cc3333',
+                fontSize: '11px', cursor: 'pointer',
+              }}
+            >
+              삭제
+            </button>
+          </div>
+
+          {/* 편집 모드 */}
+          {editing ? (
+            <div style={{ marginBottom: '14px' }}>
+              <input
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="제목"
+                style={{
+                  width: '100%', padding: '6px 8px', marginBottom: '6px',
+                  background: isDark ? 'rgba(100,120,255,0.08)' : 'rgba(0,0,0,0.03)',
+                  border: `1px solid ${border}`, borderRadius: '5px',
+                  color: textPrimary, fontSize: '13px', fontWeight: 600, outline: 'none',
+                }}
+              />
+              <input
+                value={editTags}
+                onChange={(e) => setEditTags(e.target.value)}
+                placeholder="태그 (쉼표 구분)"
+                style={{
+                  width: '100%', padding: '5px 8px', marginBottom: '6px',
+                  background: isDark ? 'rgba(100,120,255,0.08)' : 'rgba(0,0,0,0.03)',
+                  border: `1px solid ${border}`, borderRadius: '5px',
+                  color: tagColor, fontSize: '11px', outline: 'none',
+                }}
+              />
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                style={{
+                  width: '100%', height: '200px', padding: '8px',
+                  background: isDark ? 'rgba(100,120,255,0.05)' : 'rgba(0,0,0,0.02)',
+                  border: `1px solid ${border}`, borderRadius: '5px',
+                  color: textPrimary, fontSize: '12px', lineHeight: 1.6,
+                  resize: 'vertical', outline: 'none', fontFamily: 'monospace',
+                }}
+              />
+              <button
+                onClick={async () => {
+                  setSaveStatus('saving');
+                  try {
+                    const resp = await fetch(`/api/document/${doc.id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        title: editTitle,
+                        content: editContent,
+                        tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+                      }),
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                      setSaveStatus('saved');
+                      // 캐시 업데이트
+                      const updated = { ...doc, title: editTitle, content: editContent, tags: editTags.split(',').map(t => t.trim()).filter(Boolean) };
+                      setDoc(updated);
+                      cacheRef.current.set(doc.id, updated);
+                      setTimeout(() => { setEditing(false); setSaveStatus(''); }, 1000);
+                    } else {
+                      setSaveStatus('error');
+                    }
+                  } catch {
+                    setSaveStatus('error');
+                  }
+                }}
+                disabled={saveStatus === 'saving'}
+                style={{
+                  width: '100%', padding: '8px', marginTop: '6px',
+                  background: saveStatus === 'saved' ? (isDark ? 'rgba(16,185,129,0.2)' : 'rgba(5,150,105,0.1)') : btnBg,
+                  border: `1px solid ${btnBorder}`, borderRadius: '5px',
+                  color: saveStatus === 'saved' ? (isDark ? '#10b981' : '#059669') : btnColor,
+                  fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                {saveStatus === 'saving' ? '저장 중...' : saveStatus === 'saved' ? '저장 완료!' : saveStatus === 'error' ? '오류 — 재시도' : '저장 (Obsidian에도 반영)'}
+              </button>
+            </div>
+          ) : (
+            <ContentAccordion content={doc.content} isDark={isDark} />
+          )}
           {doc.related.length > 0 && (
             <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: `1px solid ${border}` }}>
               <div style={{ fontSize: '10px', color: textSecondary, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
