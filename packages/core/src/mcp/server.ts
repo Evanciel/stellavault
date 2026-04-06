@@ -20,6 +20,7 @@ import { createLearningPathTool } from './tools/learning-path.js';
 import { createDetectGapsTool } from './tools/detect-gaps.js';
 import { createGetEvolutionTool } from './tools/get-evolution.js';
 import { createLinkCodeTool } from './tools/link-code.js';
+import { createAskTool } from './tools/ask.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 
 export interface McpServerOptions {
@@ -36,6 +37,7 @@ export function createMcpServer(options: McpServerOptions) {
   const detectGapsTool = createDetectGapsTool(store);
   const getEvolutionTool = createGetEvolutionTool(store);
   const linkCodeTool = createLinkCodeTool(searchEngine);
+  const askTool = createAskTool(searchEngine, vaultPath);
 
   const server = new Server(
     { name: 'stellavault', version: '0.2.0' },
@@ -53,6 +55,7 @@ export function createMcpServer(options: McpServerOptions) {
       { name: detectGapsTool.name, description: detectGapsTool.description, inputSchema: detectGapsTool.inputSchema },
       { name: getEvolutionTool.name, description: getEvolutionTool.description, inputSchema: getEvolutionTool.inputSchema },
       { name: linkCodeTool.name, description: linkCodeTool.description, inputSchema: linkCodeTool.inputSchema },
+      { name: askTool.name, description: askTool.description, inputSchema: askTool.inputSchema },
     ],
   }));
 
@@ -123,6 +126,9 @@ export function createMcpServer(options: McpServerOptions) {
           return result as any;
         case 'link-code':
           result = await linkCodeTool.handler(args as any);
+          return result as any;
+        case 'ask':
+          result = await askTool.handler(args as any);
           return result as any;
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

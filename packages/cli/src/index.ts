@@ -21,6 +21,9 @@ import { federateJoinCommand, federateStatusCommand } from './commands/federate-
 import { cloudSyncCommand, cloudRestoreCommand, cloudStatusCommand } from './commands/cloud-cmd.js';
 import { vaultAddCommand, vaultListCommand, vaultRemoveCommand, vaultSearchAllCommand } from './commands/vault-cmd.js';
 import { captureCommand } from './commands/capture-cmd.js';
+import { askCommand } from './commands/ask-cmd.js';
+import { compileCommand } from './commands/compile-cmd.js';
+import { lintCommand } from './commands/lint-cmd.js';
 
 const program = new Command();
 
@@ -92,6 +95,7 @@ program
   .command('digest')
   .description('주간 지식 활동 리포트')
   .option('-d, --days <n>', '기간 (일)', '7')
+  .option('-v, --visual', 'Save as .md with Mermaid charts for Obsidian')
   .action(digestCommand);
 
 program
@@ -143,6 +147,25 @@ program
   .option('-t, --tags <tags>', 'Comma-separated tags')
   .option('-f, --folder <folder>', 'Vault subfolder', '01_Knowledge/voice')
   .action(captureCommand);
+
+program
+  .command('ask <question>')
+  .description('Ask a question about your knowledge base — search, compose answer, optionally save')
+  .option('-s, --save', 'Save answer as a new note in your vault')
+  .action((question: string, opts: { save?: boolean }) => askCommand(question, opts));
+
+program
+  .command('compile')
+  .description('Compile raw/ documents into a structured wiki')
+  .option('-r, --raw <dir>', 'Raw documents directory (default: raw/)')
+  .option('-w, --wiki <dir>', 'Wiki output directory (default: _wiki/)')
+  .option('-f, --force', 'Overwrite existing wiki files')
+  .action((opts) => compileCommand(opts));
+
+program
+  .command('lint')
+  .description('Knowledge health check — find gaps, duplicates, contradictions, stale notes')
+  .action(() => lintCommand());
 
 const vault = program.command('vault').description('Multi-Vault — manage and search across vaults');
 vault.command('add <id> <path>').description('Register a vault').option('-n, --name <name>', 'Display name').option('-s, --shared', 'Allow federation sharing').action(vaultAddCommand);
