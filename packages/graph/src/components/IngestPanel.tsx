@@ -215,11 +215,31 @@ export function IngestPanel() {
           <div style={{ fontSize: '10px', color: th.textDim, marginBottom: '4px' }}>최근 저장</div>
           {recentItems.map((item, i) => (
             <div key={i} style={{
-              fontSize: '11px', color: th.textMuted, padding: '3px 0',
+              fontSize: '11px', color: th.textMuted, padding: '5px 6px',
               borderBottom: `1px solid ${th.border}`,
-            }}>
+              cursor: 'pointer',
+              borderRadius: '4px',
+              transition: 'background 0.1s',
+            }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = th.accent; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+              onClick={() => {
+                // 제목으로 노드 찾기 → 하이라이트 + 선택
+                const store = useGraphStore.getState();
+                const node = store.nodes.find(n =>
+                  n.label === item.title ||
+                  n.filePath === item.savedTo ||
+                  n.label.includes(item.title.slice(0, 20))
+                );
+                if (node) {
+                  store.selectNode(node.id);
+                  store.setHighlightedNodes([node.id]);
+                  setOpen(false);
+                }
+              }}
+            >
               <span style={{ color: th.text }}>{item.title}</span>
-              <span style={{ color: th.textDim, marginLeft: '6px' }}>({item.stage})</span>
+              <span style={{ color: th.textDim, marginLeft: '6px', fontSize: '10px' }}>→ 노드로 이동</span>
             </div>
           ))}
         </div>
