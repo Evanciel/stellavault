@@ -14,6 +14,7 @@ import { useMotion } from '../hooks/useMotion.js';
 import { useGraphStore } from '../stores/graph-store.js';
 import { ToolsPanel } from './ToolsPanel.js';
 import { MultiverseView } from './MultiverseView.js';
+import { IngestPanel } from './IngestPanel.js';
 
 export function Layout() {
   // ALL hooks must be called before any conditional return
@@ -207,6 +208,7 @@ export function Layout() {
       <Timeline />
       <ToolsPanel />
       <StatusBar />
+      <IngestPanel />
     </div>
   );
 }

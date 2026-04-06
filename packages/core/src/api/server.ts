@@ -232,6 +232,40 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // POST /api/ingest — 웹 UI에서 URL/텍스트 인제스트
+  app.post('/api/ingest', async (req, res) => {
+    try {
+      const { input, type, tags, title, stage } = req.body;
+      if (!input || typeof input !== 'string') {
+        res.status(400).json({ error: 'input is required' });
+        return;
+      }
+
+      const { ingest } = await import('../intelligence/ingest-pipeline.js');
+      const result = ingest(vaultPath, {
+        type: type ?? (input.startsWith('http') ? 'url' : 'text'),
+        content: input,
+        tags: tags ?? [],
+        title,
+        stage: stage ?? 'fleeting',
+        source: input.startsWith('http') ? input : undefined,
+      });
+
+      res.json({
+        success: true,
+        savedTo: result.savedTo,
+        stage: result.stage,
+        title: result.title,
+        indexCode: result.indexCode,
+        tags: result.tags,
+        wordCount: result.wordCount,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Ingest failed' });
+    }
+  });
+
   // GET /api/heatmap — Design Ref: §2.2 — 지식 히트맵 활동 점수
   app.get('/api/heatmap', async (_req, res) => {
     try {
