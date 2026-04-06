@@ -302,14 +302,37 @@ export function createApiServer(options: ApiServerOptions) {
       // URL인 경우 제목+내용 가져오기
       let content = input;
       let autoTitle = title;
-      if (input.startsWith('http')) {
+      let autoTags = tags ?? [];
+      let autoStage = stage ?? 'fleeting';
+      const isYouTube = /youtube\.com\/watch|youtu\.be\//.test(input);
+
+      if (isYouTube) {
+        // YouTube 전용: 자막 + 메타데이터 추출
+        try {
+          const { extractYouTubeContent, formatYouTubeNote } = await import('../intelligence/youtube-extractor.js');
+          const ytContent = await extractYouTubeContent(input);
+          autoTitle = ytContent.title;
+          autoTags = [...new Set([...autoTags, ...ytContent.tags])];
+          autoStage = 'literature'; // YouTube는 자동으로 literature
+          content = formatYouTubeNote(ytContent);
+        } catch (ytErr) {
+          console.error('[ingest] YouTube extraction failed, falling back to basic:', ytErr instanceof Error ? ytErr.message : ytErr);
+          // 폴백: 기본 HTML 추출
+          try {
+            const resp = await fetch(input, { signal: AbortSignal.timeout(8000) });
+            const html = await resp.text();
+            const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+            if (titleMatch && !autoTitle) autoTitle = titleMatch[1].trim();
+            content = input + '\n\n' + html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
+          } catch { /* URL만 저장 */ }
+        }
+      } else if (input.startsWith('http')) {
+        // 일반 웹페이지
         try {
           const resp = await fetch(input, { signal: AbortSignal.timeout(8000) });
           const html = await resp.text();
-          // HTML에서 title 추출
           const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
           if (titleMatch && !autoTitle) autoTitle = titleMatch[1].trim();
-          // HTML → 텍스트
           const text = html
             .replace(/<script[\s\S]*?<\/script>/gi, '')
             .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -327,11 +350,11 @@ export function createApiServer(options: ApiServerOptions) {
 
       const { ingest } = await import('../intelligence/ingest-pipeline.js');
       const result = ingest(vaultPath, {
-        type: type ?? (input.startsWith('http') ? 'url' : 'text'),
+        type: type ?? (isYouTube ? 'youtube' : input.startsWith('http') ? 'url' : 'text'),
         content,
-        tags: tags ?? [],
+        tags: autoTags,
         title: autoTitle,
-        stage: stage ?? 'fleeting',
+        stage: autoStage as any,
         source: input.startsWith('http') ? input : undefined,
       });
 
