@@ -1,6 +1,6 @@
 {
   "name": "@stellavault/core",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Stellavault core engine — indexer, hybrid search, vector store, MCP server",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./intelligence/youtube-extractor": {
+      "import": "./dist/intelligence/youtube-extractor.js",
+      "types": "./dist/intelligence/youtube-extractor.d.ts"
     }
   },
   "scripts": {

@@ -50,7 +50,7 @@ export async function extractYouTubeContent(url: string): Promise<YouTubeContent
   let transcript: TimedSegment[] = [];
   let rawTranscript = '';
   try {
-    transcript = await extractTimedTranscript(html);
+    transcript = await extractTimedTranscript(html, videoId);
     rawTranscript = transcript.map(s => s.text).join(' ');
   } catch { /* 자막 없음 */ }
 
@@ -102,15 +102,23 @@ export function formatYouTubeNote(content: YouTubeContent): string {
 
 // ─── 자막 추출 (타임스탬프 보존) ───
 
-async function extractTimedTranscript(html: string): Promise<TimedSegment[]> {
+async function extractTimedTranscript(html: string, videoId?: string): Promise<TimedSegment[]> {
+  // 1차: HTML에서 captionTracks URL 직접 fetch
+  const segments = await extractTimedTranscriptFromHtml(html);
+  if (segments.length > 0) return segments;
+
+  // 2차: yt-dlp fallback (YouTube bot 보호 우회)
+  if (videoId) return extractTimedTranscriptViaTool(videoId);
+  return [];
+}
+
+async function extractTimedTranscriptFromHtml(html: string): Promise<TimedSegment[]> {
   const captionMatch = html.match(/"captionTracks":\[(.*?)\]/);
   if (!captionMatch) return [];
 
   const tracks = captionMatch[1];
   let captionUrl = '';
 
-  // 한국어 > 영어 > 아무거나
-  // captionTracks JSON이 복잡하므로 baseUrl을 먼저 추출
   const allUrls = [...tracks.matchAll(/"baseUrl":"(.*?)"/g)].map(m => m[1]);
   const allLangs = [...tracks.matchAll(/"languageCode":"(.*?)"/g)].map(m => m[1]);
 
@@ -124,7 +132,44 @@ async function extractTimedTranscript(html: string): Promise<TimedSegment[]> {
   const cleanUrl = captionUrl.replace(/\\u0026/g, '&').replace(/\\u003d/g, '=').replace(/\\\//g, '/');
   const resp = await fetch(cleanUrl, { signal: AbortSignal.timeout(10000) });
   const xml = await resp.text();
+  return parseTranscriptXml(xml);
+}
 
+async function extractTimedTranscriptViaTool(videoId: string): Promise<TimedSegment[]> {
+  const { execSync } = await import('node:child_process');
+  const { readdirSync, readFileSync, unlinkSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const tmpDir = (await import('node:os')).tmpdir();
+  const tmpBase = join(tmpDir, `sv-sub-${videoId}`);
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+  // Try each language separately to avoid partial failure aborting everything
+  for (const lang of ['ko', 'en']) {
+    try {
+      execSync(
+        `python -m yt_dlp --write-auto-sub --sub-lang ${lang} --skip-download --sub-format srv1 -o "${tmpBase}" "${url}"`,
+        { timeout: 30000, stdio: 'pipe' },
+      );
+    } catch { /* lang not available — try next */ continue; }
+
+    // Find the subtitle file
+    const files = readdirSync(tmpDir).filter(f =>
+      f.startsWith(`sv-sub-${videoId}`) && f.endsWith('.srv1'),
+    );
+    if (files.length === 0) continue;
+
+    const xml = readFileSync(join(tmpDir, files[0]), 'utf-8');
+    // Cleanup
+    for (const f of files) { try { unlinkSync(join(tmpDir, f)); } catch { /* ok */ } }
+
+    const segments = parseTranscriptXml(xml);
+    if (segments.length > 0) return segments;
+  }
+  return [];
+}
+
+function parseTranscriptXml(xml: string): TimedSegment[] {
+  if (!xml || xml.length === 0) return [];
   const segments: TimedSegment[] = [];
   const matches = xml.matchAll(/<text start="([^"]+)"[^>]*>(.*?)<\/text>/g);
   for (const m of matches) {

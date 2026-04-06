@@ -22,7 +22,6 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
   if (/^https?:\/\//.test(input)) {
     // URL
     const isYouTube = /youtube\.com\/watch|youtu\.be\//.test(input);
-    let content = input + '\n';
 
     // SSRF 방지: private IP 차단
     try {
@@ -34,32 +33,58 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
       }
     } catch { /* invalid URL, will fail at fetch */ }
 
-    // 웹 페이지 내용 가져오기 시도
-    try {
-      const resp = await fetch(input);
-      const html = await resp.text();
-      // 간단한 HTML → 텍스트 변환
-      const text = html
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 5000);
-      content += text;
-    } catch (err) {
-      console.error(chalk.yellow(`Web fetch failed: saving URL only. (${err instanceof Error ? err.message : 'network error'})`));
+    if (isYouTube) {
+      // YouTube: 전용 추출기 사용 (메타데이터 + 자막 + 타임스탬프)
+      try {
+        const { extractYouTubeContent, formatYouTubeNote } = await import('@stellavault/core/intelligence/youtube-extractor');
+        const ytContent = await extractYouTubeContent(input);
+        const body = formatYouTubeNote(ytContent);
+        ingestInput = {
+          type: 'youtube',
+          content: input + '\n' + body,
+          tags: [...tags, ...ytContent.tags.filter((t: string) => !tags.includes(t))],
+          stage: stage === 'fleeting' ? 'literature' : stage, // YouTube는 literature로 자동 승격
+          title: options.title ?? ytContent.title,
+          source: input,
+        };
+      } catch (err) {
+        console.error(chalk.yellow(`YouTube extraction failed, falling back to basic URL. (${err instanceof Error ? err.message : 'error'})`));
+        ingestInput = {
+          type: 'youtube',
+          content: input + '\n',
+          tags,
+          stage,
+          title: options.title,
+          source: input,
+        };
+      }
+    } else {
+      // 일반 URL: HTML → 텍스트 변환
+      let content = input + '\n';
+      try {
+        const resp = await fetch(input);
+        const html = await resp.text();
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 5000);
+        content += text;
+      } catch (err) {
+        console.error(chalk.yellow(`Web fetch failed: saving URL only. (${err instanceof Error ? err.message : 'network error'})`));
+      }
+      ingestInput = {
+        type: 'url',
+        content,
+        tags,
+        stage,
+        title: options.title,
+        source: input,
+      };
     }
-
-    ingestInput = {
-      type: isYouTube ? 'youtube' : 'url',
-      content,
-      tags,
-      stage,
-      title: options.title,
-      source: input,
-    };
   } else if (existsSync(input)) {
     // 파일
     const ext = extname(input).toLowerCase();
