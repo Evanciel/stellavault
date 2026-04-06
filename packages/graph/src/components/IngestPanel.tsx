@@ -223,19 +223,43 @@ export function IngestPanel() {
             }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = th.accent; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-              onClick={() => {
-                // 제목으로 노드 찾기 → 하이라이트 + 선택
+              onClick={async () => {
+                // 1차: 그래프 노드에서 찾기
                 const store = useGraphStore.getState();
+                const titleShort = item.title.slice(0, 20);
+                const savedNorm = item.savedTo.replace(/\\/g, '/');
                 const node = store.nodes.find(n =>
                   n.label === item.title ||
-                  n.filePath === item.savedTo ||
-                  n.label.includes(item.title.slice(0, 20))
+                  n.filePath?.replace(/\\/g, '/') === savedNorm ||
+                  n.label.includes(titleShort)
                 );
                 if (node) {
                   store.selectNode(node.id);
                   store.setHighlightedNodes([node.id]);
                   setOpen(false);
+                  return;
                 }
+
+                // 2차: 검색으로 찾아서 하이라이트
+                try {
+                  const resp = await fetch(`/api/search?q=${encodeURIComponent(item.title)}&limit=1`);
+                  const data = await resp.json();
+                  if (data.results?.[0]) {
+                    const docId = data.results[0].documentId;
+                    const found = store.nodes.find(n => n.id === docId);
+                    if (found) {
+                      store.selectNode(found.id);
+                      store.setHighlightedNodes([found.id]);
+                      setOpen(false);
+                      return;
+                    }
+                  }
+                } catch { /* ignore */ }
+
+                // 못 찾으면 안내
+                setResult(`"${item.title}" — 아직 인덱싱 전입니다. stellavault index를 실행하면 노드에 나타나요.`);
+                setStatus('error');
+                setTimeout(() => { setStatus('idle'); setResult(''); }, 5000);
               }}
             >
               <span style={{ color: th.text }}>{item.title}</span>
