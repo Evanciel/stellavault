@@ -66,6 +66,27 @@ stellavault draft --format outline        # All-knowledge outline
 
 Or in Claude Code: *"Write a blog post about machine learning from my notes"* — Claude uses MCP `generate-draft` tool (free, no API key).
 
+## Self-Evolving Memory (Karpathy's Compounding Loop)
+
+```
+Session → session-save → daily-log → flush → wiki
+  ↑                                            ↓
+  └──── Claude reads wiki via MCP (20 tools) ←─┘
+```
+
+Every conversation makes your knowledge base smarter:
+
+```bash
+# Auto-capture session summary to daily log
+echo "Decided to use JWT. Lesson: never store tokens in localStorage" | stellavault session-save
+
+# Flush daily logs → extract concepts → rebuild wiki
+stellavault flush
+
+# Or set up Claude Code hooks for full automation
+# See: docs/hooks-setup.md
+```
+
 ## Daily Commands
 
 ```bash
@@ -74,6 +95,7 @@ stellavault brief                              # Morning knowledge briefing
 stellavault decay                              # What's fading from memory?
 stellavault lint                               # Health score (0-100)
 stellavault learn                              # AI learning path
+stellavault flush                              # Daily logs → wiki compilation
 stellavault digest --visual                    # Weekly Mermaid chart report
 ```
 
