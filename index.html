@@ -107,6 +107,16 @@ a:hover{color:var(--cyan)}
 .step-name{font-family:var(--font-display);font-size:22px;margin-bottom:10px}
 .step-desc{color:var(--text-dim);font-size:12px;line-height:1.6}
 
+/* ═══ SCREENSHOTS ═══ */
+.s-screenshots{padding:100px 0}
+.screenshot-hero{margin-top:40px;border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.screenshot-hero img{width:100%;display:block}
+.screenshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:20px}
+.screenshot-card{border-radius:12px;overflow:hidden;border:1px solid var(--border);transition:all .3s cubic-bezier(.16,1,.3,1);position:relative}
+.screenshot-card:hover{border-color:var(--violet);transform:translateY(-4px);box-shadow:0 12px 40px rgba(99,102,241,.15)}
+.screenshot-card img{width:100%;display:block}
+.screenshot-card .caption{position:absolute;bottom:0;left:0;right:0;padding:12px 16px;background:linear-gradient(transparent,rgba(5,5,8,.9));font-size:12px;color:var(--text-dim)}
+
 /* ═══ FORMATS ═══ */
 .s-formats{padding:80px 0 60px}
 .formats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:36px}
@@ -279,6 +289,33 @@ footer{padding:60px 0;text-align:center}
     </div>
   </div>
 </section>
+
+<!-- ═══ SCREENSHOTS ═══ -->
+<section class="s-screenshots">
+  <div class="container">
+    <div class="section-label reveal">See It In Action</div>
+    <h2 class="section-title reveal">Your vault as a<br>living neural network.</h2>
+    <div class="screenshot-hero reveal">
+      <img src="images/screenshots/graph-main-2.png" alt="Stellavault 3D Knowledge Graph" loading="lazy">
+    </div>
+    <div class="screenshot-grid">
+      <div class="screenshot-card reveal">
+        <img src="images/screenshots/search-active.png" alt="Semantic Search" loading="lazy">
+        <div class="caption">Hybrid AI search &mdash; meaning, not just keywords</div>
+      </div>
+      <div class="screenshot-card reveal">
+        <img src="images/screenshots/graph-heatmap.png" alt="Knowledge Heatmap" loading="lazy">
+        <div class="caption">Heatmap overlay &mdash; see where your knowledge lives</div>
+      </div>
+      <div class="screenshot-card reveal">
+        <img src="images/screenshots/graph-light-mode.png" alt="Light Mode" loading="lazy">
+        <div class="caption">Light mode &mdash; monochrome with color on interaction</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
 
 <!-- ═══ MCP ═══ -->
 <section class="s-mcp">
