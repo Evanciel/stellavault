@@ -2,7 +2,7 @@
 
 > **Self-compiling knowledge MCP server** — ingest anything, auto-organize into Zettelkasten wiki, and let Claude access your entire knowledge base.
 
-Drop a PDF, paste a YouTube link, type a thought — Stellavault compiles it into structured knowledge, connects the dots, and gives your AI agent full access through 20 MCP tools.
+Drop a PDF, paste a YouTube link, type a thought — Stellavault compiles it into structured knowledge, connects the dots, and gives your AI agent full access through 21 MCP tools.
 
 <p align="center">
   <img src="images/screenshots/graph-dark-full.png" alt="3D Knowledge Graph" width="800" />
@@ -21,7 +21,7 @@ PDF, DOCX, YouTube, URL, text — everything goes through the same pipeline. You
 ```bash
 claude mcp add stellavault -- stellavault serve
 ```
-20 MCP tools give Claude direct access to search, ask, draft, and navigate your entire knowledge base.
+21 MCP tools give Claude direct access to search, ask, draft, and navigate your entire knowledge base.
 
 ## 5-Minute Setup
 
@@ -99,7 +99,7 @@ stellavault flush                              # Daily logs → wiki compilation
 stellavault digest --visual                    # Weekly Mermaid chart report
 ```
 
-## MCP Tools (20)
+## MCP Tools (21)
 
 | Tool | What it does |
 |------|-------------|
@@ -121,6 +121,16 @@ stellavault digest --visual                    # Weekly Mermaid chart report
 | `create-snapshot` / `load-snapshot` | Context snapshots |
 | `generate-claude-md` | Auto-generate CLAUDE.md |
 | `export` | JSON/CSV export |
+| `federated-search` | P2P federated search |
+
+## Self-Evolving Commands
+
+```bash
+stellavault session-save              # Capture session summary to daily log
+stellavault flush                     # Daily logs → wiki (Karpathy compile)
+stellavault promote note.md --to lit  # Upgrade note stage
+stellavault autopilot                 # Full cycle: inbox → compile → lint → archive
+```
 
 ## Zettelkasten (Luhmann + Karpathy)
 
@@ -182,6 +192,20 @@ stellavault autopilot                          # Full cycle: inbox → compile �
 | Memory | FSRS (Free Spaced Repetition Scheduler) |
 | 3D | React Three Fiber + Three.js |
 | AI | MCP (Model Context Protocol) + Anthropic SDK |
+
+## Full Feature List
+
+| Category | Features |
+|----------|----------|
+| **Capture** | ingest (URL/YouTube/PDF/DOCX/PPTX/XLSX/text), fleeting, web drag & drop, mobile PWA |
+| **Organize** | Zettelkasten 3-stage, auto index codes, wikilink auto-connect, configurable folders |
+| **Distill** | compile (raw→wiki), lint (health score), gaps, contradictions, duplicates |
+| **Express** | draft (blog/report/outline), --ai (Claude API), MCP generate-draft (free) |
+| **Memory** | FSRS decay tracking, session-save (daily logs), flush (logs→wiki), compounding loop |
+| **Search** | hybrid (BM25+vector+RRF), multilingual (50+ langs), ask Q&A |
+| **Visualize** | 3D graph, constellation, heatmap, timeline, decay overlay, dark/light |
+| **AI Integration** | 21 MCP tools, Claude Code hooks, Anthropic SDK, generate-draft |
+| **CLI** | 39+ commands, `sv` alias |
 
 ## License
 

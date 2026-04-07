@@ -1,10 +1,13 @@
 # Stellavault — Project Rules
 
 ## Project Info
-- **Name**: Stellavault (분산 지식 인텔리전스 플랫폼)
+- **Name**: Stellavault — Self-compiling knowledge MCP server
+- **Version**: 0.4.2
 - **GitHub**: https://github.com/Evanciel/stellavault
+- **npm**: stellavault (171KB)
 - **Stack**: Node.js 20+, TypeScript, ESM, Monorepo (npm workspaces)
-- **Packages**: core, cli, graph, sync
+- **Packages**: core (21 MCP tools), cli (39+ commands), graph (3D UI), sync
+- **Architecture**: Karpathy self-compiling KB (ingest→compile→wiki→session→flush loop)
 
 ## Autopilot 추가 규칙
 
