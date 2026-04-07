@@ -52,3 +52,7 @@ packages/graph/*.png
 
 # Legacy config
 .ekh.json
+
+# Stray files (not part of project)
+unnamed*.png
+Autonomous_Knowledge_Foundry.pdf
