@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.1] - 2026-04-07
+
+### Features
+- **Binary File Ingest** — PDF (unpdf), DOCX (mammoth), PPTX (officeparser), XLSX (SheetJS) text extraction
+- **Auto Pipeline** — `ingest` now auto-runs `compile` → wiki generated automatically
+- **Web File Upload** — Drag & drop files in browser (POST /api/ingest/file, 50MB limit)
+- **Mobile/PWA** — Responsive IngestPanel, service worker registration, installable as app
+- **Express: stellavault draft** — Generate blog/report/outline from vault knowledge
+- **MCP generate-draft** — 20th MCP tool: Claude writes drafts using vault context (free in Claude Code)
+- **CLI --ai flag** — `stellavault draft --ai` uses Claude API for full AI-generated drafts
+- **Configurable folders** — Override raw/_wiki/_literature/ in .stellavault.json
+- **Multilingual embeddings** — paraphrase-multilingual-MiniLM-L12-v2 (50+ languages)
+
+### Changes
+- Binary files default to fleeting stage (Zettelkasten principle: all inputs start as fleeting)
+- Repositioned as "Self-compiling knowledge MCP server"
+- .npmignore excludes PDF (was 16MB in npm package)
+- MCP tools: 19 → 20
+
+### Fixes
+- CLI YouTube ingest now properly calls extractYouTubeContent
+- officeparser type cast fix (OfficeParserAST → string)
+- unpdf text array handling (pages returned as array, not string)
+
 ## [0.4.0] - 2026-04-06
 
 ### Features
