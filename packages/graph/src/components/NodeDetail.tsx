@@ -297,11 +297,13 @@ export function NodeDetail() {
   );
 }
 
-/** [[wikilink]] → markdown link로 변환 */
+/** [[wikilink]] → markdown link로 변환 + YouTube URL → 임베딩 */
 function processWikilinks(text: string): string {
-  return text.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) => {
-    return `[${display ?? target}](wikilink:${encodeURIComponent(target)})`;
-  });
+  return text
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) =>
+      `[${display ?? target}](wikilink:${encodeURIComponent(target)})`)
+    .replace(/^(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)\S*)$/gm,
+      '[![YouTube](https://img.youtube.com/vi/$2/hqdefault.jpg)]($1)');
 }
 
 /** 리치 마크다운 렌더러 — 링크 클릭, wikilink 노드 이동, 코드 하이라이트 */

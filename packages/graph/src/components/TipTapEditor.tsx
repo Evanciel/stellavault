@@ -35,6 +35,9 @@ function markdownToHtml(md: string): string {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     // inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // youtube embeds
+    .replace(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)(?:\S*)/g,
+      '<div class="sv-youtube" data-id="$1"><iframe src="https://www.youtube.com/embed/$1" frameborder="0" allowfullscreen></iframe></div>')
     // images
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
     // code blocks
@@ -335,6 +338,15 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
         .sv-tiptap-editor ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
         .sv-tiptap-editor ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 6px; }
         .sv-tiptap-editor ul[data-type="taskList"] li label { cursor: pointer; }
+        .sv-tiptap-editor .sv-youtube {
+          position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden;
+          margin: 12px 0; border-radius: 10px;
+          border: 1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'};
+        }
+        .sv-tiptap-editor .sv-youtube iframe {
+          position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+          border-radius: 10px;
+        }
         .sv-tiptap-editor img, .sv-tiptap-editor .sv-image {
           max-width: 100%; height: auto; border-radius: 8px;
           margin: 8px 0; display: block;
