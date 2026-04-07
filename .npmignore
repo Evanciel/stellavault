@@ -13,9 +13,10 @@ memory/
 # Node modules in workspaces
 packages/*/node_modules/
 
-# Test screenshots and images
+# Binary files and images
 *.png
 *.jpg
+*.pdf
 
 # Sync state and logs
 packages/sync/.sync-state.json

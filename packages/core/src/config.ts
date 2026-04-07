@@ -4,9 +4,17 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 
+export interface FolderNames {
+  fleeting: string;
+  literature: string;
+  permanent: string;
+  wiki: string;
+}
+
 export interface StellavaultConfig {
   vaultPath: string;
   dbPath: string;
+  folders: FolderNames;
   embedding: {
     model: 'local' | 'openai';
     localModel: string;
@@ -26,12 +34,20 @@ export interface StellavaultConfig {
   };
 }
 
+export const DEFAULT_FOLDERS: FolderNames = {
+  fleeting: 'raw',
+  literature: '_literature',
+  permanent: '_permanent',
+  wiki: '_wiki',
+};
+
 const DEFAULT_CONFIG: StellavaultConfig = {
   vaultPath: '',
   dbPath: join(homedir(), '.stellavault', 'index.db'),
+  folders: { ...DEFAULT_FOLDERS },
   embedding: {
     model: 'local',
-    localModel: 'all-MiniLM-L6-v2',
+    localModel: 'paraphrase-multilingual-MiniLM-L12-v2',
   },
   chunking: {
     maxTokens: 300,
@@ -74,6 +90,7 @@ function mergeConfig(defaults: StellavaultConfig, overrides: Partial<Stellavault
   return {
     vaultPath: overrides.vaultPath ?? defaults.vaultPath,
     dbPath: overrides.dbPath ?? defaults.dbPath,
+    folders: { ...defaults.folders, ...overrides.folders },
     embedding: { ...defaults.embedding, ...overrides.embedding },
     chunking: { ...defaults.chunking, ...overrides.chunking },
     search: { ...defaults.search, ...overrides.search },

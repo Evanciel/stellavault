@@ -17,6 +17,10 @@
     "./intelligence/file-extractors": {
       "import": "./dist/intelligence/file-extractors.js",
       "types": "./dist/intelligence/file-extractors.d.ts"
+    },
+    "./intelligence/draft-generator": {
+      "import": "./dist/intelligence/draft-generator.js",
+      "types": "./dist/intelligence/draft-generator.d.ts"
     }
   },
   "scripts": {

@@ -1,8 +1,8 @@
 // Design Ref: §4.2 — Core Internal API (Facade)
 // Design Ref: §9.3 — Dependency Injection Pattern
 
-export { loadConfig } from './config.js';
-export type { StellavaultConfig } from './config.js';
+export { loadConfig, DEFAULT_FOLDERS } from './config.js';
+export type { StellavaultConfig, FolderNames } from './config.js';
 
 // Types
 export type { Document } from './types/document.js';

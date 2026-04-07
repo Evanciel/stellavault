@@ -82,7 +82,7 @@ async function extractDocx(buffer: Buffer, filePath: string): Promise<ExtractedC
 async function extractPptx(buffer: Buffer, filePath: string): Promise<ExtractedContent> {
   try {
     const officeparser = await import('officeparser');
-    const text = await officeparser.default.parseOffice(buffer) as string;
+    const text = String(await officeparser.default.parseOffice(buffer));
     return {
       text: text ?? '',
       metadata: {

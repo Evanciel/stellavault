@@ -8,6 +8,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, resolve, extname, basename } from 'node:path';
 import { scanFrontmatter, assignIndexCodes, archiveFile, type FrontmatterEntry } from './zettelkasten.js';
 import { compileWiki } from './wiki-compiler.js';
+import { DEFAULT_FOLDERS, type FolderNames } from '../config.js';
 
 /** YAML 값에서 위험한 문자를 이스케이프 */
 function sanitizeYaml(val: string): string {
@@ -40,6 +41,7 @@ export interface IngestResult {
 export function ingest(
   vaultPath: string,
   input: IngestInput,
+  folders: FolderNames = DEFAULT_FOLDERS,
 ): IngestResult {
   const stage = input.stage ?? 'fleeting';
   const title = input.title ?? extractTitleFromContent(input.content, input.type);
@@ -53,11 +55,11 @@ export function ingest(
   // 자동 분류: 길이/구조에 따라 stage 결정
   const autoStage = classifyStage(body, stage, wordCount);
 
-  // 폴더 결정
+  // 폴더 결정 (config-driven)
   const folderMap: Record<NoteStage, string> = {
-    fleeting: 'raw',
-    literature: '_literature',
-    permanent: '_permanent',
+    fleeting: folders.fleeting,
+    literature: folders.literature,
+    permanent: folders.permanent,
   };
   const folder = folderMap[autoStage];
   const dir = resolve(vaultPath, folder);
@@ -101,10 +103,10 @@ export function ingest(
 
   writeFileSync(fullPath, md, 'utf-8');
 
-  // 자동 compile: raw/ → _wiki/ (rule-based, <100ms)
+  // 자동 compile: fleeting → wiki (rule-based, <100ms)
   try {
-    const rawDir = resolve(vaultPath, 'raw');
-    const wikiDir = resolve(vaultPath, '_wiki');
+    const rawDir = resolve(vaultPath, folders.fleeting);
+    const wikiDir = resolve(vaultPath, folders.wiki);
     if (existsSync(rawDir)) {
       compileWiki(rawDir, wikiDir);
     }
@@ -138,6 +140,7 @@ export function promoteNote(
   vaultPath: string,
   filePath: string,
   targetStage: NoteStage,
+  folders: FolderNames = DEFAULT_FOLDERS,
 ): string {
   const fullPath = resolve(vaultPath, filePath);
   if (!existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
@@ -150,11 +153,11 @@ export function promoteNote(
     `type: ${targetStage}`
   );
 
-  // 대상 폴더로 이동
+  // 대상 폴더로 이동 (config-driven)
   const folderMap: Record<NoteStage, string> = {
-    fleeting: 'raw',
-    literature: '_literature',
-    permanent: '_permanent',
+    fleeting: folders.fleeting,
+    literature: folders.literature,
+    permanent: folders.permanent,
   };
   const newDir = resolve(vaultPath, folderMap[targetStage]);
   if (!existsSync(newDir)) mkdirSync(newDir, { recursive: true });

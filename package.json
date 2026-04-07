@@ -1,7 +1,7 @@
 {
   "name": "stellavault",
   "version": "0.4.0",
-  "description": "Turn your Obsidian vault into a 3D neural knowledge graph with AI-powered search, memory decay tracking, and MCP integration.",
+  "description": "Self-compiling knowledge MCP server — ingest anything, auto-organize into Zettelkasten wiki, search with AI, and let Claude access your entire knowledge base.",
   "repository": {
     "type": "git",
     "url": "https://github.com/Evanciel/stellavault"

@@ -23,6 +23,7 @@ import { vaultAddCommand, vaultListCommand, vaultRemoveCommand, vaultSearchAllCo
 import { captureCommand } from './commands/capture-cmd.js';
 import { askCommand } from './commands/ask-cmd.js';
 import { compileCommand } from './commands/compile-cmd.js';
+import { draftCommand } from './commands/draft-cmd.js';
 import { lintCommand } from './commands/lint-cmd.js';
 import { fleetingCommand } from './commands/fleeting-cmd.js';
 import { ingestCommand, promoteCommand } from './commands/ingest-cmd.js';
@@ -164,6 +165,12 @@ program
   .option('-w, --wiki <dir>', 'Wiki output directory (default: _wiki/)')
   .option('-f, --force', 'Overwrite existing wiki files')
   .action((opts) => compileCommand(opts));
+
+program
+  .command('draft [topic]')
+  .description('Express: Generate a blog post, report, or outline draft from your knowledge')
+  .option('--format <type>', 'Output format: blog, report, outline (default: blog)')
+  .action((topic, opts) => draftCommand(topic, opts));
 
 program
   .command('lint')
