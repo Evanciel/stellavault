@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stellavault — Self-Compiling Knowledge MCP Server</title>
+<meta name="description" content="Drop anything. It organizes itself. Claude knows everything you know. Self-compiling Zettelkasten with 20 MCP tools.">
+<meta name="theme-color" content="#6366f1">
+<meta property="og:title" content="Stellavault — Self-Compiling Knowledge MCP Server">
+<meta property="og:description" content="Drop anything. It organizes itself. Claude knows everything you know.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --void:#050508;--surface:#0a0a10;--surface2:#111118;
+  --border:#1e1e2e;--border-glow:#6366f140;
+  --text:#e8e8ed;--text-dim:#8888a0;--text-muted:#55556a;
+  --violet:#6366f1;--violet-bright:#818cf8;--violet-glow:#6366f180;
+  --cyan:#22d3ee;--emerald:#34d399;--rose:#f43f5e;
+  --font-display:'Instrument Serif',Georgia,serif;
+  --font-mono:'DM Mono',monospace;
+}
+html{scroll-behavior:smooth;background:var(--void);color:var(--text);font-family:var(--font-mono);font-weight:300;font-size:15px;line-height:1.7}
+body{overflow-x:hidden;background:var(--void)}
+a{color:var(--violet-bright);text-decoration:none;transition:color .2s}
+a:hover{color:var(--cyan)}
+::selection{background:var(--violet);color:#fff}
+
+.cosmos{position:fixed;inset:0;z-index:0;pointer-events:none}
+.cosmos::before{content:'';position:absolute;width:600px;height:600px;top:-200px;right:-100px;background:radial-gradient(circle,var(--violet-glow) 0%,transparent 70%);filter:blur(120px);animation:drift 20s ease-in-out infinite}
+.cosmos::after{content:'';position:absolute;width:400px;height:400px;bottom:20%;left:-100px;background:radial-gradient(circle,#22d3ee30 0%,transparent 70%);filter:blur(100px);animation:drift 25s ease-in-out infinite reverse}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,-30px)}}
+
+.star-field{position:fixed;inset:0;z-index:0;pointer-events:none}
+.container{max-width:1100px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+section{padding:100px 0}
+
+.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;position:relative;padding:60px 0}
+.hero-inner{max-width:800px}
+.hero-badge{display:inline-block;padding:6px 16px;border:1px solid var(--border);border-radius:100px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:32px;animation:fadeUp .8s ease both}
+.hero-badge span{color:var(--violet-bright)}
+.hero h1{font-family:var(--font-display);font-size:clamp(42px,7vw,80px);font-weight:400;line-height:1.1;letter-spacing:-1px;margin-bottom:24px;animation:fadeUp .8s .1s ease both}
+.hero h1 em{font-style:italic;color:var(--violet-bright);position:relative}
+.hero h1 em::after{content:'';position:absolute;bottom:-2px;left:0;width:100%;height:2px;background:var(--violet);opacity:.5}
+.hero-sub{font-size:16px;color:var(--text-dim);max-width:520px;margin:0 auto 40px;animation:fadeUp .8s .2s ease both}
+.hero-cta{animation:fadeUp .8s .3s ease both}
+.cta-install{display:inline-flex;align-items:center;gap:12px;padding:14px 28px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono);font-size:14px;color:var(--text);cursor:pointer;transition:all .3s}
+.cta-install:hover{border-color:var(--violet);box-shadow:0 0 30px var(--violet-glow);transform:translateY(-2px)}
+.cta-install .prompt{color:var(--violet-bright)}
+.cta-install .copy-hint{font-size:10px;color:var(--text-muted);margin-left:8px;opacity:0;transition:opacity .2s}
+.cta-install:hover .copy-hint{opacity:1}
+.hero-links{margin-top:20px;display:flex;gap:24px;justify-content:center;font-size:12px;animation:fadeUp .8s .4s ease both}
+.hero-links a{color:var(--text-muted);border-bottom:1px solid transparent}
+.hero-links a:hover{color:var(--text);border-color:var(--text-muted)}
+
+.graph-visual{position:absolute;inset:0;z-index:-1;opacity:.15;overflow:hidden}
+.node{position:absolute;border-radius:50%;animation:pulse 3s ease-in-out infinite}
+.node.v{background:var(--violet);box-shadow:0 0 20px var(--violet-glow)}
+.node.c{background:var(--cyan);box-shadow:0 0 15px #22d3ee40}
+.node.e{background:var(--emerald);box-shadow:0 0 15px #34d39940}
+.edge{position:absolute;height:1px;background:linear-gradient(90deg,transparent,var(--violet-glow),transparent);transform-origin:left center}
+@keyframes pulse{0%,100%{opacity:.6;transform:scale(1)}50%{opacity:1;transform:scale(1.3)}}
+
+.section-label{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--violet-bright);margin-bottom:12px}
+.section-title{font-family:var(--font-display);font-size:clamp(28px,4vw,44px);font-weight:400;line-height:1.2;margin-bottom:16px}
+.section-desc{color:var(--text-dim);max-width:560px;font-size:14px}
+
+.problems{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;margin-top:48px}
+.problem-card{padding:32px;background:var(--surface);border:1px solid var(--border);border-radius:12px;transition:all .4s;position:relative;overflow:hidden}
+.problem-card:hover{border-color:var(--violet);transform:translateY(-4px);box-shadow:0 8px 40px var(--violet-glow)}
+.problem-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--violet),transparent);opacity:0;transition:opacity .4s}
+.problem-card:hover::before{opacity:1}
+.problem-icon{font-size:24px;margin-bottom:16px;display:block}
+.problem-label{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px}
+.problem-title{font-family:var(--font-display);font-size:22px;margin-bottom:12px}
+.problem-desc{color:var(--text-dim);font-size:13px}
+.problem-arrow{color:var(--violet-bright);font-size:18px;margin:12px 0;display:block}
+.problem-solution{color:var(--text);font-size:13px;font-weight:500}
+
+.pipeline-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:32px}
+.pipeline-step{text-align:center;padding:28px 16px;background:var(--surface);border:1px solid var(--border);position:relative;transition:all .3s}
+.pipeline-step:first-child{border-radius:12px 0 0 12px}
+.pipeline-step:last-child{border-radius:0 12px 12px 0}
+.pipeline-step:hover{background:var(--surface2);border-color:var(--violet)}
+.pipeline-step::after{content:'';position:absolute;right:-8px;top:50%;width:14px;height:14px;border-right:2px solid var(--violet);border-top:2px solid var(--violet);transform:translateY(-50%) rotate(45deg);z-index:2}
+.pipeline-step:last-child::after{display:none}
+.step-num{font-size:10px;color:var(--violet-bright);letter-spacing:2px;margin-bottom:8px}
+.step-name{font-family:var(--font-display);font-size:20px;margin-bottom:8px}
+.step-desc{color:var(--text-dim);font-size:11px;line-height:1.5}
+
+.formats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:32px}
+.format-chip{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;text-align:center;transition:all .3s}
+.format-chip:hover{border-color:var(--violet);background:var(--surface2)}
+.format-ext{font-size:20px;font-weight:500;color:var(--violet-bright);margin-bottom:4px}
+.format-name{font-size:11px;color:var(--text-muted)}
+
+.mcp-section{background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.mcp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:24px}
+.mcp-tool{padding:10px 14px;border:1px solid var(--border);border-radius:6px;font-size:12px;transition:all .2s;display:flex;align-items:center;gap:8px}
+.mcp-tool:hover{border-color:var(--violet);background:var(--surface2)}
+.mcp-tool .dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);flex-shrink:0}
+.mcp-tool code{color:var(--violet-bright);font-size:11px}
+.mcp-tool span{color:var(--text-dim);font-size:11px}
+.mcp-connect{margin-top:32px;padding:20px;background:var(--void);border:1px solid var(--border);border-radius:8px;font-size:13px}
+.mcp-connect::before{content:'$';color:var(--violet-bright);margin-right:8px}
+.mcp-connect code{color:var(--text)}
+
+.setup-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;margin-top:32px}
+.setup-step{padding:28px;background:var(--surface);border:1px solid var(--border);border-radius:12px;position:relative}
+.setup-step:hover{border-color:var(--violet)}
+.setup-num{position:absolute;top:-12px;left:20px;background:var(--violet);color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500}
+.setup-cmd{display:block;margin-top:12px;padding:12px;background:var(--void);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:13px;color:var(--cyan)}
+.setup-label{font-size:13px;color:var(--text);font-weight:400}
+.setup-desc{font-size:12px;color:var(--text-muted);margin-top:4px}
+
+.tech-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:24px}
+.tech-item{padding:14px 18px;border:1px solid var(--border);border-radius:8px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.tech-item .label{color:var(--text-muted)}
+.tech-item .value{color:var(--text)}
+
+footer{padding:48px 0;border-top:1px solid var(--border);text-align:center}
+.footer-brand{font-family:var(--font-display);font-size:24px;margin-bottom:8px}
+.footer-tagline{color:var(--text-muted);font-size:12px;margin-bottom:24px}
+.footer-links{display:flex;gap:24px;justify-content:center;font-size:12px;margin-bottom:24px}
+.footer-links a{color:var(--text-dim)}
+.footer-copy{font-size:10px;color:var(--text-muted)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+@media(max-width:768px){
+  section{padding:60px 0}
+  .hero{min-height:auto;padding:120px 0 60px}
+  .problems{grid-template-columns:1fr}
+  .pipeline-flow{grid-template-columns:1fr}
+  .pipeline-step{border-radius:0!important}
+  .pipeline-step:first-child{border-radius:12px 12px 0 0!important}
+  .pipeline-step:last-child{border-radius:0 0 12px 12px!important}
+  .pipeline-step::after{right:50%;top:auto;bottom:-8px;transform:translateX(50%) rotate(135deg)}
+  .mcp-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:480px){
+  .mcp-grid{grid-template-columns:1fr}
+  .formats-grid{grid-template-columns:repeat(3,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="cosmos"></div>
+<div class="star-field" id="stars"></div>
+
+<section class="hero">
+  <div class="graph-visual" id="graphVisual"></div>
+  <div class="hero-inner container">
+    <div class="hero-badge">open source <span>&middot;</span> local-first <span>&middot;</span> MIT</div>
+    <h1>Drop anything.<br>It <em>compiles itself</em><br>into knowledge.</h1>
+    <p class="hero-sub">Self-compiling Zettelkasten MCP server. Ingest PDFs, YouTube, documents&mdash;auto-organized into linked wiki. Claude accesses your entire knowledge base through 20 MCP tools.</p>
+    <div class="hero-cta">
+      <button class="cta-install" onclick="navigator.clipboard.writeText('npm install -g stellavault');this.querySelector('.copy-hint').textContent='copied!'">
+        <span class="prompt">$</span> npm install -g stellavault
+        <span class="copy-hint">click to copy</span>
+      </button>
+    </div>
+    <div class="hero-links">
+      <a href="https://github.com/Evanciel/stellavault">GitHub</a>
+      <a href="https://www.npmjs.com/package/stellavault">npm</a>
+      <a href="https://github.com/Evanciel/stellavault/releases">Releases</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-label reveal">The Problem</div>
+    <h2 class="section-title reveal">Notes pile up. Knowledge doesn't.</h2>
+    <p class="section-desc reveal">Three things break every knowledge system. Stellavault fixes all three automatically.</p>
+    <div class="problems">
+      <div class="problem-card reveal">
+        <span class="problem-icon">&#128466;</span>
+        <div class="problem-label">Problem</div>
+        <div class="problem-title">Notes rot in folders</div>
+        <div class="problem-desc">You save articles, highlight books, clip videos. They never become connected knowledge.</div>
+        <span class="problem-arrow">&darr;</span>
+        <div class="problem-solution">Auto-compiling wiki &mdash; raw notes become linked concepts in &lt;100ms</div>
+      </div>
+      <div class="problem-card reveal">
+        <span class="problem-icon">&#128270;</span>
+        <div class="problem-label">Problem</div>
+        <div class="problem-title">Search finds words, not meaning</div>
+        <div class="problem-desc">Keyword search misses semantic connections. You know you wrote it, but can't find it.</div>
+        <span class="problem-arrow">&darr;</span>
+        <div class="problem-solution">Hybrid AI search &mdash; BM25 + vector + RRF fusion, 50+ languages, locally</div>
+      </div>
+      <div class="problem-card reveal">
+        <span class="problem-icon">&#129302;</span>
+        <div class="problem-label">Problem</div>
+        <div class="problem-title">AI doesn't know what you know</div>
+        <div class="problem-desc">ChatGPT has the internet. It doesn't have your notes, your decisions, your context.</div>
+        <span class="problem-arrow">&darr;</span>
+        <div class="problem-solution">20 MCP tools &mdash; Claude searches, asks, drafts from your vault directly</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-label reveal">The Pipeline</div>
+    <h2 class="section-title reveal">Karpathy's self-compiling loop,<br>built for your brain.</h2>
+    <p class="section-desc reveal">Inspired by Andrej Karpathy and Niklas Luhmann. Every input flows through the same pipeline.</p>
+    <div class="pipeline-flow reveal">
+      <div class="pipeline-step">
+        <div class="step-num">01</div>
+        <div class="step-name">Capture</div>
+        <div class="step-desc">Drop PDF, paste YouTube, type thought. Drag files in browser. Any format.</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">02</div>
+        <div class="step-name">Organize</div>
+        <div class="step-desc">Zettelkasten auto-classification. Index codes, tags, wikilinks auto-inserted.</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">03</div>
+        <div class="step-name">Distill</div>
+        <div class="step-desc">Compile into wiki. Extract concepts. Detect gaps, contradictions, duplicates.</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">04</div>
+        <div class="step-name">Express</div>
+        <div class="step-desc">Generate drafts. Blog, report, outline. AI-enhanced or rule-based. Ship it.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-label reveal">Ingest Anything</div>
+    <h2 class="section-title reveal">Every format. One command.</h2>
+    <p class="section-desc reveal">Text extraction built-in. No external services. Transcripts with timestamps.</p>
+    <div class="formats-grid reveal">
+      <div class="format-chip"><div class="format-ext">.pdf</div><div class="format-name">unpdf</div></div>
+      <div class="format-chip"><div class="format-ext">.docx</div><div class="format-name">mammoth</div></div>
+      <div class="format-chip"><div class="format-ext">.pptx</div><div class="format-name">officeparser</div></div>
+      <div class="format-chip"><div class="format-ext">.xlsx</div><div class="format-name">SheetJS</div></div>
+      <div class="format-chip"><div class="format-ext" style="color:var(--rose)">YouTube</div><div class="format-name">yt-dlp transcript</div></div>
+      <div class="format-chip"><div class="format-ext" style="color:var(--cyan)">URL</div><div class="format-name">HTML to text</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="mcp-section">
+  <div class="container">
+    <div class="section-label reveal">Claude Integration</div>
+    <h2 class="section-title reveal">20 MCP tools. Claude knows<br>everything you know.</h2>
+    <p class="section-desc reveal">One command connects your vault to Claude Code. No API key needed for MCP.</p>
+    <div class="mcp-connect reveal"><code>claude mcp add stellavault -- stellavault serve</code></div>
+    <div class="mcp-grid reveal">
+      <div class="mcp-tool"><span class="dot"></span><code>search</code><span>hybrid AI search</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>ask</code><span>Q&A from vault</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>generate-draft</code><span>AI writes drafts</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-document</code><span>full doc + metadata</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-related</code><span>semantic neighbors</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>detect-gaps</code><span>knowledge gaps</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-decay-status</code><span>fading memories</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-learning-path</code><span>review order</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-evolution</code><span>idea drift tracking</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>link-code</code><span>code-knowledge links</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-node</code><span>AI writes notes</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-link</code><span>auto-connect</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>log-decision</code><span>decision journal</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-morning-brief</code><span>daily briefing</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>list-topics</code><span>topic cloud</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>export</code><span>JSON / CSV</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-label reveal">Get Started</div>
+    <h2 class="section-title reveal">5 minutes to a living knowledge graph.</h2>
+    <div class="setup-steps">
+      <div class="setup-step reveal">
+        <div class="setup-num">1</div>
+        <div class="setup-label">Install globally</div>
+        <code class="setup-cmd">npm install -g stellavault</code>
+        <div class="setup-desc">157KB. Node.js 20+ required.</div>
+      </div>
+      <div class="setup-step reveal">
+        <div class="setup-num">2</div>
+        <div class="setup-label">Initialize your vault</div>
+        <code class="setup-cmd">stellavault init</code>
+        <div class="setup-desc">Interactive setup. Points to your Obsidian vault. Indexes everything.</div>
+      </div>
+      <div class="setup-step reveal">
+        <div class="setup-num">3</div>
+        <div class="setup-label">Launch the graph</div>
+        <code class="setup-cmd">stellavault graph</code>
+        <div class="setup-desc">3D neural graph in your browser. Drag files to ingest. Mobile ready.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-label reveal">Under The Hood</div>
+    <h2 class="section-title reveal">Local-first. No cloud required.</h2>
+    <p class="section-desc reveal">Your knowledge stays on your machine. No API keys needed for core features.</p>
+    <div class="tech-grid reveal">
+      <div class="tech-item"><span class="label">Embeddings</span><span class="value">multilingual-MiniLM (50+ langs)</span></div>
+      <div class="tech-item"><span class="label">Vector Store</span><span class="value">SQLite-vec (local)</span></div>
+      <div class="tech-item"><span class="label">Search</span><span class="value">BM25 + Cosine + RRF</span></div>
+      <div class="tech-item"><span class="label">Memory</span><span class="value">FSRS spaced repetition</span></div>
+      <div class="tech-item"><span class="label">3D Graph</span><span class="value">React Three Fiber</span></div>
+      <div class="tech-item"><span class="label">AI Protocol</span><span class="value">MCP (20 tools)</span></div>
+      <div class="tech-item"><span class="label">Runtime</span><span class="value">Node.js 20+ ESM</span></div>
+      <div class="tech-item"><span class="label">Package</span><span class="value">157KB on npm</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-brand">Stellavault</div>
+    <div class="footer-tagline">Self-compiling knowledge MCP server</div>
+    <div class="footer-links">
+      <a href="https://github.com/Evanciel/stellavault">GitHub</a>
+      <a href="https://www.npmjs.com/package/stellavault">npm</a>
+      <a href="https://github.com/Evanciel/stellavault/releases">Releases</a>
+      <a href="https://github.com/Evanciel/stellavault-obsidian">Obsidian Plugin</a>
+    </div>
+    <div class="footer-copy">MIT License &middot; Built by Evan</div>
+  </div>
+</footer>
+
+<script>
+!function(){const c=document.getElementById('stars'),s=document.createDocumentFragment();for(let i=0;i<80;i++){const d=document.createElement('div');d.style.cssText=`position:absolute;width:${Math.random()*2+1}px;height:${Math.random()*2+1}px;background:#fff;border-radius:50%;opacity:${Math.random()*.4+.1};left:${Math.random()*100}%;top:${Math.random()*100}%;animation:pulse ${Math.random()*4+3}s ${Math.random()*3}s ease-in-out infinite`;s.appendChild(d)}c.appendChild(s)}();
+!function(){const g=document.getElementById('graphVisual'),nodes=[],colors=['v','c','e'];for(let i=0;i<20;i++){const d=document.createElement('div'),sz=Math.random()*8+4,x=Math.random()*100,y=Math.random()*100;d.className=`node ${colors[i%3]}`;d.style.cssText=`width:${sz}px;height:${sz}px;left:${x}%;top:${y}%;animation-delay:${Math.random()*3}s;animation-duration:${Math.random()*3+2}s`;g.appendChild(d);nodes.push({x,y})}for(let i=0;i<12;i++){const a=nodes[0|Math.random()*nodes.length],b=nodes[0|Math.random()*nodes.length];if(a===b)continue;const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy);if(len>40)continue;const e=document.createElement('div');e.className='edge';e.style.cssText=`left:${a.x}%;top:${a.y}%;width:${len}%;transform:rotate(${Math.atan2(dy,dx)*180/Math.PI}deg);opacity:.3`;g.appendChild(e)}}();
+const observer=new IntersectionObserver(e=>{e.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');observer.unobserve(e.target)}})},{threshold:.1,rootMargin:'0px 0px -40px 0px'});document.querySelectorAll('.reveal').forEach(el=>observer.observe(el));
+</script>
+</body>
+</html>
