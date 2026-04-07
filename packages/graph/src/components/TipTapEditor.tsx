@@ -4,10 +4,11 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface TipTapEditorProps {
   content: string;        // markdown 원문
@@ -34,6 +35,8 @@ function markdownToHtml(md: string): string {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     // inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // images
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
     // code blocks
     .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
     // blockquotes
@@ -64,6 +67,8 @@ function htmlToMarkdown(html: string): string {
     .replace(/<blockquote>(.*?)<\/blockquote>/g, '> $1\n')
     .replace(/<a[^>]*href="wikilink:([^"]*)"[^>]*>(.*?)<\/a>/g, (_, target, display) =>
       `[[${decodeURIComponent(target)}|${display}]]`)
+    .replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*\/?>/g, '![$2]($1)')
+    .replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/g, '![]($1)')
     .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g, '[$2]($1)')
     .replace(/<li data-type="taskItem" data-checked="true">(.*?)<\/li>/g, '- [x] $1')
     .replace(/<li data-type="taskItem" data-checked="false">(.*?)<\/li>/g, '- [ ] $1')
@@ -79,6 +84,9 @@ function htmlToMarkdown(html: string): string {
 
 export function TipTapEditor({ content, isDark, onSave, editable = true, onWikilinkClick }: TipTapEditorProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showImageInput, setShowImageInput] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
+  const imageFileRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
     extensions: [
@@ -88,6 +96,11 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
       Link.configure({
         openOnClick: false,
         HTMLAttributes: { class: 'sv-link' },
+      }),
+      Image.configure({
+        inline: false,
+        allowBase64: true,
+        HTMLAttributes: { class: 'sv-image' },
       }),
       Placeholder.configure({
         placeholder: 'Start writing...',
@@ -118,12 +131,50 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
         if (!href) return false;
 
         event.preventDefault();
+        event.stopPropagation();
         if (href.startsWith('wikilink:')) {
           onWikilinkClick?.(decodeURIComponent(href.replace('wikilink:', '')));
         } else {
           window.open(href, '_blank', 'noopener,noreferrer');
         }
         return true;
+      },
+      handleDrop: (view, event) => {
+        const files = event.dataTransfer?.files;
+        if (!files?.length) return false;
+        const file = files[0];
+        if (!file.type.startsWith('image/')) return false;
+        event.preventDefault();
+        const reader = new FileReader();
+        reader.onload = () => {
+          const src = reader.result as string;
+          view.dispatch(view.state.tr.replaceSelectionWith(
+            view.state.schema.nodes.image.create({ src })
+          ));
+        };
+        reader.readAsDataURL(file);
+        return true;
+      },
+      handlePaste: (view, event) => {
+        const items = event.clipboardData?.items;
+        if (!items) return false;
+        for (const item of items) {
+          if (item.type.startsWith('image/')) {
+            event.preventDefault();
+            const file = item.getAsFile();
+            if (!file) continue;
+            const reader = new FileReader();
+            reader.onload = () => {
+              const src = reader.result as string;
+              view.dispatch(view.state.tr.replaceSelectionWith(
+                view.state.schema.nodes.image.create({ src })
+              ));
+            };
+            reader.readAsDataURL(file);
+            return true;
+          }
+        }
+        return false;
       },
     },
     onUpdate: ({ editor: e }) => {
@@ -163,6 +214,7 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
             { cmd: () => editor.chain().focus().toggleBlockquote().run(), label: '"', active: editor.isActive('blockquote'), style: { fontSize: '14px' } as React.CSSProperties },
             { cmd: () => editor.chain().focus().toggleBulletList().run(), label: '•', active: editor.isActive('bulletList'), style: {} as React.CSSProperties },
             { cmd: () => editor.chain().focus().toggleCodeBlock().run(), label: '{}', active: editor.isActive('codeBlock'), style: { fontFamily: 'monospace', fontSize: '11px' } as React.CSSProperties },
+            { cmd: () => setShowImageInput(!showImageInput), label: '🖼', active: showImageInput, style: { fontSize: '12px' } as React.CSSProperties },
           ].map((btn, i) => (
             <button
               key={i}
@@ -178,6 +230,65 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
               {btn.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* 이미지 삽입 패널 */}
+      {showImageInput && (
+        <div style={{
+          display: 'flex', gap: '6px', padding: '6px 8px', marginBottom: '8px',
+          background: isDark ? 'rgba(100,120,255,0.05)' : 'rgba(0,0,0,0.02)',
+          border: `1px solid ${isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+          borderRadius: '6px', alignItems: 'center',
+        }}>
+          <input
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            placeholder="Image URL..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && imageUrl) {
+                editor.chain().focus().setImage({ src: imageUrl }).run();
+                setImageUrl(''); setShowImageInput(false);
+              }
+            }}
+            style={{
+              flex: 1, padding: '4px 8px', background: 'transparent',
+              border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
+              borderRadius: '4px', color: isDark ? '#c8c8e0' : '#333',
+              fontSize: '11px', outline: 'none',
+            }}
+          />
+          <button
+            onClick={() => {
+              if (imageUrl) { editor.chain().focus().setImage({ src: imageUrl }).run(); setImageUrl(''); setShowImageInput(false); }
+            }}
+            style={{ padding: '3px 10px', background: isDark ? '#6366f1' : '#e0e7ff', border: 'none', borderRadius: '4px', color: isDark ? '#fff' : '#6366f1', fontSize: '11px', cursor: 'pointer' }}
+          >
+            Insert
+          </button>
+          <button
+            onClick={() => imageFileRef.current?.click()}
+            style={{ padding: '3px 8px', background: 'transparent', border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`, borderRadius: '4px', color: isDark ? '#aab' : '#666', fontSize: '11px', cursor: 'pointer' }}
+          >
+            File
+          </button>
+          <input
+            ref={imageFileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                editor.chain().focus().setImage({ src: reader.result as string }).run();
+                setShowImageInput(false);
+              };
+              reader.readAsDataURL(file);
+              e.target.value = '';
+            }}
+          />
         </div>
       )}
 
@@ -224,6 +335,15 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
         .sv-tiptap-editor ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
         .sv-tiptap-editor ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 6px; }
         .sv-tiptap-editor ul[data-type="taskList"] li label { cursor: pointer; }
+        .sv-tiptap-editor img, .sv-tiptap-editor .sv-image {
+          max-width: 100%; height: auto; border-radius: 8px;
+          margin: 8px 0; display: block;
+          border: 1px solid ${isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.08)'};
+        }
+        .sv-tiptap-editor img:hover {
+          border-color: ${isDark ? '#6366f1' : '#6366f1'};
+          box-shadow: 0 2px 12px rgba(99,102,241,0.15);
+        }
         .sv-tiptap-editor .ProseMirror-focused { outline: none; }
         .sv-tiptap-editor .is-editor-empty:first-child::before {
           content: attr(data-placeholder);
