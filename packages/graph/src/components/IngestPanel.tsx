@@ -94,17 +94,18 @@ export function IngestPanel() {
     }
   }, [input, tags, stage, onIngestSuccess]);
 
-  // 드래그앤드롭 핸들러
+  // 드래그앤드롭 핸들러 (다중 파일 지원)
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFileUpload(file);
+    const files = e.dataTransfer.files;
+    for (let i = 0; i < files.length; i++) handleFileUpload(files[i]);
   }, [handleFileUpload]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFileUpload(file);
+    const files = e.target.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) handleFileUpload(files[i]);
     e.target.value = '';
   }, [handleFileUpload]);
 
@@ -195,6 +196,7 @@ export function IngestPanel() {
           ref={fileInputRef}
           type="file"
           accept={ACCEPT_EXTS}
+          multiple
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />

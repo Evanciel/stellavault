@@ -28,12 +28,18 @@ export function createAskTool(searchEngine: SearchEngine, vaultPath: string) {
         vaultPath,
       });
 
+      const sourceList = result.sources.slice(0, 5).map((s, i) =>
+        `${i + 1}. **${s.title}** (score: ${s.score})\n   > ${s.snippet.slice(0, 120)}...`
+      ).join('\n');
+
       const text = [
         result.answer,
         '',
-        result.savedTo ? `Saved to: ${result.savedTo}` : '',
+        '---',
+        `### Sources (${result.sources.length} documents)`,
+        sourceList,
         '',
-        `Sources: ${result.sources.length} documents found`,
+        result.savedTo ? `Saved to: ${result.savedTo}` : '',
       ].filter(Boolean).join('\n');
 
       return {

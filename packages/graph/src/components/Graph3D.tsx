@@ -196,6 +196,12 @@ export function Graph3D() {
         return;
       }
 
+      // N → Quick Capture (빠른 메모)
+      if (e.key === 'n' || e.key === 'N') {
+        window.dispatchEvent(new CustomEvent('sv-quick-capture'));
+        return;
+      }
+
       // T → 테마 토글
       if (e.key === 't' || e.key === 'T') {
         useGraphStore.getState().toggleTheme();

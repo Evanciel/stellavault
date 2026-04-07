@@ -2,14 +2,39 @@
 
 import chalk from 'chalk';
 import { loadConfig, ingest, promoteNote } from '@stellavault/core';
-import { readFileSync, existsSync } from 'node:fs';
-import { extname, resolve } from 'node:path';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { extname, resolve, join } from 'node:path';
 import type { IngestInput } from '@stellavault/core';
 
 export async function ingestCommand(input: string, options: { tags?: string; stage?: string; title?: string }) {
   if (!input) {
-    console.error(chalk.yellow('Usage: stellavault ingest <url|file|text> [--tags t1,t2] [--stage fleeting|literature|permanent]'));
+    console.error(chalk.yellow('Usage: stellavault ingest <url|file|text|folder/> [--tags t1,t2]'));
     process.exit(1);
+  }
+
+  // 배치 모드: 폴더 경로이면 내부 파일 전부 처리
+  if (existsSync(input) && statSync(input).isDirectory()) {
+    const files = readdirSync(input)
+      .filter(f => /\.(md|txt|pdf|docx|pptx|xlsx|xls|csv)$/i.test(f))
+      .map(f => join(input, f));
+
+    if (files.length === 0) {
+      console.error(chalk.yellow(`No supported files found in ${input}`));
+      process.exit(1);
+    }
+
+    console.log(chalk.dim(`Batch ingest: ${files.length} files from ${input}`));
+    let success = 0;
+    for (const file of files) {
+      try {
+        await ingestCommand(file, { ...options, title: undefined });
+        success++;
+      } catch (err) {
+        console.error(chalk.yellow(`  Failed: ${file} — ${err instanceof Error ? err.message : 'error'}`));
+      }
+    }
+    console.log(chalk.green(`\nBatch complete: ${success}/${files.length} files ingested`));
+    return;
   }
 
   const config = loadConfig();

@@ -15,6 +15,7 @@ import { useGraphStore } from '../stores/graph-store.js';
 import { ToolsPanel } from './ToolsPanel.js';
 import { MultiverseView } from './MultiverseView.js';
 import { IngestPanel } from './IngestPanel.js';
+import { QuickCapture } from './QuickCapture.js';
 import { OnboardingGuide } from './OnboardingGuide.js';
 import { t } from '../lib/i18n.js';
 
@@ -211,6 +212,7 @@ export function Layout() {
       <ToolsPanel />
       <StatusBar />
       <IngestPanel />
+      <QuickCapture />
       <OnboardingGuide />
     </div>
   );
