@@ -110,12 +110,30 @@ a:hover{color:var(--cyan)}
 /* ═══ SCREENSHOTS ═══ */
 .s-screenshots{padding:100px 0}
 .screenshot-hero{margin-top:40px;border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.screenshot-hero img{width:100%;display:block}
+.screenshot-hero img,.screenshot-hero video{width:100%;display:block}
 .screenshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:20px}
-.screenshot-card{border-radius:12px;overflow:hidden;border:1px solid var(--border);transition:all .3s cubic-bezier(.16,1,.3,1);position:relative}
-.screenshot-card:hover{border-color:var(--violet);transform:translateY(-4px);box-shadow:0 12px 40px rgba(99,102,241,.15)}
-.screenshot-card img{width:100%;display:block}
-.screenshot-card .caption{position:absolute;bottom:0;left:0;right:0;padding:12px 16px;background:linear-gradient(transparent,rgba(5,5,8,.9));font-size:12px;color:var(--text-dim)}
+.screenshot-card{border-radius:12px;overflow:hidden;border:1px solid var(--border);transition:all .3s cubic-bezier(.16,1,.3,1);position:relative;cursor:pointer}
+.screenshot-card:hover{border-color:var(--violet);transform:translateY(-4px) scale(1.01);box-shadow:0 12px 40px rgba(99,102,241,.2)}
+.screenshot-card img{width:100%;display:block;transition:transform .4s cubic-bezier(.16,1,.3,1)}
+.screenshot-card:hover img{transform:scale(1.03)}
+.screenshot-card .caption{position:absolute;bottom:0;left:0;right:0;padding:12px 16px;background:linear-gradient(transparent,rgba(5,5,8,.9));font-size:12px;color:var(--text-dim);transition:padding .3s}
+.screenshot-card:hover .caption{padding-bottom:16px}
+.screenshot-card .expand-hint{position:absolute;top:12px;right:12px;width:28px;height:28px;background:rgba(5,5,8,.7);border:1px solid var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;font-size:14px;color:var(--text-dim)}
+.screenshot-card:hover .expand-hint{opacity:1}
+
+/* Lightbox */
+.lightbox{position:fixed;inset:0;z-index:9999;background:rgba(5,5,8,.92);backdrop-filter:blur(20px);display:none;align-items:center;justify-content:center;cursor:zoom-out;animation:lbIn .25s ease}
+.lightbox.active{display:flex}
+.lightbox img{max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid var(--border);box-shadow:0 24px 80px rgba(0,0,0,.6);animation:lbZoom .3s cubic-bezier(.16,1,.3,1)}
+.lightbox .lb-caption{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:var(--text-dim);font-size:13px;background:rgba(5,5,8,.8);padding:8px 20px;border-radius:8px;border:1px solid var(--border)}
+.lightbox .lb-close{position:absolute;top:20px;right:24px;width:36px;height:36px;background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text);font-size:18px;cursor:pointer;transition:background .2s}
+.lightbox .lb-close:hover{background:rgba(255,255,255,.15)}
+.lightbox .lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--text);font-size:20px;cursor:pointer;transition:all .2s}
+.lightbox .lb-nav:hover{background:rgba(99,102,241,.2);border-color:var(--violet)}
+.lightbox .lb-prev{left:20px}
+.lightbox .lb-next{right:20px}
+@keyframes lbIn{from{opacity:0}to{opacity:1}}
+@keyframes lbZoom{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
 
 /* ═══ FORMATS ═══ */
 .s-formats{padding:80px 0 60px}
@@ -302,17 +320,20 @@ footer{padding:60px 0;text-align:center}
       </video>
     </div>
     <div class="screenshot-grid">
-      <div class="screenshot-card reveal">
+      <div class="screenshot-card reveal" data-lb="0">
         <img src="images/screenshots/search-active.png" alt="Semantic Search" loading="lazy">
         <div class="caption">Hybrid AI search &mdash; meaning, not just keywords</div>
+        <div class="expand-hint">&#x26F6;</div>
       </div>
-      <div class="screenshot-card reveal">
+      <div class="screenshot-card reveal" data-lb="1">
         <img src="images/screenshots/graph-heatmap.png" alt="Knowledge Heatmap" loading="lazy">
         <div class="caption">Heatmap overlay &mdash; see where your knowledge lives</div>
+        <div class="expand-hint">&#x26F6;</div>
       </div>
-      <div class="screenshot-card reveal">
+      <div class="screenshot-card reveal" data-lb="2">
         <img src="images/screenshots/graph-light-mode.png" alt="Light Mode" loading="lazy">
         <div class="caption">Light mode &mdash; monochrome with color on interaction</div>
+        <div class="expand-hint">&#x26F6;</div>
       </div>
     </div>
   </div>
@@ -422,7 +443,36 @@ footer{padding:60px 0;text-align:center}
   </div>
 </footer>
 
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox">
+  <button class="lb-close" id="lbClose">&times;</button>
+  <button class="lb-nav lb-prev" id="lbPrev">&#8249;</button>
+  <button class="lb-nav lb-next" id="lbNext">&#8250;</button>
+  <img id="lbImg" src="" alt="">
+  <div class="lb-caption" id="lbCaption"></div>
+</div>
+
 <script>
+// Lightbox
+!function(){
+  const slides=[
+    {src:'images/screenshots/search-active.png',cap:'Hybrid AI search — meaning, not just keywords'},
+    {src:'images/screenshots/graph-heatmap.png',cap:'Heatmap overlay — see where your knowledge lives'},
+    {src:'images/screenshots/graph-light-mode.png',cap:'Light mode — monochrome with color on interaction'},
+  ];
+  let cur=0;
+  const lb=document.getElementById('lightbox'),img=document.getElementById('lbImg'),cap=document.getElementById('lbCaption');
+  const show=i=>{cur=((i%slides.length)+slides.length)%slides.length;img.src=slides[cur].src;cap.textContent=slides[cur].cap;lb.classList.add('active');document.body.style.overflow='hidden'};
+  const hide=()=>{lb.classList.remove('active');document.body.style.overflow=''};
+  document.querySelectorAll('.screenshot-card[data-lb]').forEach(c=>c.addEventListener('click',()=>show(+c.dataset.lb)));
+  document.getElementById('lbClose').addEventListener('click',e=>{e.stopPropagation();hide()});
+  document.getElementById('lbPrev').addEventListener('click',e=>{e.stopPropagation();show(cur-1)});
+  document.getElementById('lbNext').addEventListener('click',e=>{e.stopPropagation();show(cur+1)});
+  lb.addEventListener('click',hide);
+  lb.querySelector('img').addEventListener('click',e=>e.stopPropagation());
+  document.addEventListener('keydown',e=>{if(!lb.classList.contains('active'))return;if(e.key==='Escape')hide();if(e.key==='ArrowLeft')show(cur-1);if(e.key==='ArrowRight')show(cur+1)});
+}();
+
 !function(){const c=document.getElementById('stars'),s=document.createDocumentFragment();for(let i=0;i<100;i++){const d=document.createElement('div');const sz=Math.random()*2+.5;d.style.cssText=`position:absolute;width:${sz}px;height:${sz}px;background:#fff;border-radius:50%;opacity:${Math.random()*.35+.05};left:${Math.random()*100}%;top:${Math.random()*100}%;animation:pulse ${Math.random()*5+3}s ${Math.random()*4}s ease-in-out infinite`;s.appendChild(d)}c.appendChild(s)}();
 !function(){const g=document.getElementById('graphVisual'),nodes=[],cls=['v','c','e'];for(let i=0;i<24;i++){const d=document.createElement('div'),sz=Math.random()*10+3,x=Math.random()*100,y=Math.random()*100;d.className=`node ${cls[i%3]}`;d.style.cssText=`width:${sz}px;height:${sz}px;left:${x}%;top:${y}%;animation-delay:${Math.random()*3}s;animation-duration:${Math.random()*4+2}s`;g.appendChild(d);nodes.push({x,y})}for(let i=0;i<15;i++){const a=nodes[0|Math.random()*nodes.length],b=nodes[0|Math.random()*nodes.length];if(a===b)continue;const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy);if(len>35)continue;const e=document.createElement('div');e.className='edge';e.style.cssText=`left:${a.x}%;top:${a.y}%;width:${len}%;transform:rotate(${Math.atan2(dy,dx)*180/Math.PI}deg);opacity:.25`;g.appendChild(e)}}();
 document.getElementById('ctaInstall').addEventListener('click',function(){navigator.clipboard.writeText('npm install -g stellavault');this.classList.add('copied');this.querySelector('.copy-hint').textContent='copied!';setTimeout(()=>{this.classList.remove('copied');this.querySelector('.copy-hint').textContent='click to copy'},2000)});
