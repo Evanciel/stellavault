@@ -170,6 +170,7 @@ program
   .command('draft [topic]')
   .description('Express: Generate a blog post, report, or outline draft from your knowledge')
   .option('--format <type>', 'Output format: blog, report, outline (default: blog)')
+  .option('--ai', 'Use Claude API for AI-enhanced draft (requires ANTHROPIC_API_KEY)')
   .action((topic, opts) => draftCommand(topic, opts));
 
 program

@@ -21,6 +21,7 @@ import { createDetectGapsTool } from './tools/detect-gaps.js';
 import { createGetEvolutionTool } from './tools/get-evolution.js';
 import { createLinkCodeTool } from './tools/link-code.js';
 import { createAskTool } from './tools/ask.js';
+import { createGenerateDraftTool } from './tools/generate-draft.js';
 import { createAgenticGraphTools } from './tools/agentic-graph.js';
 import type { Embedder } from '../indexer/embedder.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
@@ -41,6 +42,7 @@ export function createMcpServer(options: McpServerOptions) {
   const getEvolutionTool = createGetEvolutionTool(store);
   const linkCodeTool = createLinkCodeTool(searchEngine);
   const askTool = createAskTool(searchEngine, vaultPath);
+  const generateDraftTool = createGenerateDraftTool(searchEngine, vaultPath);
   const agenticTools = embedder ? createAgenticGraphTools(store, embedder, vaultPath) : [];
 
   const server = new Server(
@@ -60,6 +62,7 @@ export function createMcpServer(options: McpServerOptions) {
       { name: getEvolutionTool.name, description: getEvolutionTool.description, inputSchema: getEvolutionTool.inputSchema },
       { name: linkCodeTool.name, description: linkCodeTool.description, inputSchema: linkCodeTool.inputSchema },
       { name: askTool.name, description: askTool.description, inputSchema: askTool.inputSchema },
+      { name: generateDraftTool.name, description: generateDraftTool.description, inputSchema: generateDraftTool.inputSchema },
       ...agenticTools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
     ],
   }));
@@ -134,6 +137,9 @@ export function createMcpServer(options: McpServerOptions) {
           return result as any;
         case 'ask':
           result = await askTool.handler(args as any);
+          return result as any;
+        case 'generate-draft':
+          result = await generateDraftTool.handler(args as any);
           return result as any;
         default: {
           // Agentic graph tools (create-knowledge-node, create-knowledge-link)
