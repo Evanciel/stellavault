@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import { fetchDocument } from '../api/client.js';
 import { useGraphStore } from '../stores/graph-store.js';
 import { t } from '../lib/i18n.js';
+import { TipTapEditor } from './TipTapEditor.js';
 
 interface DocData {
   id: string;
@@ -212,17 +213,25 @@ export function NodeDetail() {
                   color: tagColor, fontSize: '11px', outline: 'none',
                 }}
               />
-              <textarea
-                value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
-                style={{
-                  width: '100%', height: '200px', padding: '8px',
-                  background: isDark ? 'rgba(100,120,255,0.05)' : 'rgba(0,0,0,0.02)',
-                  border: `1px solid ${border}`, borderRadius: '5px',
-                  color: textPrimary, fontSize: '12px', lineHeight: 1.6,
-                  resize: 'vertical', outline: 'none', fontFamily: 'monospace',
-                }}
-              />
+              <div style={{
+                border: `1px solid ${border}`, borderRadius: '8px',
+                background: isDark ? 'rgba(100,120,255,0.03)' : 'rgba(0,0,0,0.01)',
+                padding: '8px 12px', minHeight: '200px',
+              }}>
+                <TipTapEditor
+                  content={editContent}
+                  isDark={isDark}
+                  editable={true}
+                  onSave={(md) => setEditContent(md)}
+                  onWikilinkClick={(target) => {
+                    const store = useGraphStore.getState();
+                    const node = store.nodes.find(n =>
+                      n.label?.toLowerCase().includes(target.toLowerCase())
+                    );
+                    if (node) { store.selectNode(node.id); store.setHighlightedNodes([node.id]); }
+                  }}
+                />
+              </div>
               <button
                 onClick={async () => {
                   setSaveStatus('saving');
