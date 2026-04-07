@@ -15,6 +15,7 @@ import { useLayout } from '../hooks/useLayout.js';
 import { usePulse } from '../hooks/usePulse.js';
 import { useDecay } from '../hooks/useDecay.js';
 import { useKeyboardNav } from '../hooks/useKeyboardNav.js';
+import { ContextMenu } from './ContextMenu.js';
 
 function Scene() {
   useLayout();
@@ -218,6 +219,7 @@ export function Graph3D() {
     : 'radial-gradient(ellipse at center, #ffffff 0%, #f4f4f6 50%, #ebebef 100%)';
 
   return (
+    <>
     <Canvas
       camera={{ position: [0, 100, 600], fov: 55, near: 1, far: 5000 }}
       raycaster={{ params: { Points: { threshold: 8 } } } as any}
@@ -226,5 +228,7 @@ export function Graph3D() {
     >
       <Scene />
     </Canvas>
+    <ContextMenu />
+    </>
   );
 }
