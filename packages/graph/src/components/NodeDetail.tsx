@@ -1,7 +1,8 @@
 // 사이드패널: 클릭된 노드의 문서 미리보기
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { fetchDocument } from '../api/client.js';
 import { useGraphStore } from '../stores/graph-store.js';
 import { t } from '../lib/i18n.js';
@@ -287,6 +288,149 @@ export function NodeDetail() {
   );
 }
 
+/** [[wikilink]] → markdown link로 변환 */
+function processWikilinks(text: string): string {
+  return text.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) => {
+    return `[${display ?? target}](wikilink:${encodeURIComponent(target)})`;
+  });
+}
+
+/** 리치 마크다운 렌더러 — 링크 클릭, wikilink 노드 이동, 코드 하이라이트 */
+function RichMarkdown({ children, isDark }: { children: string; isDark: boolean }) {
+  const handleWikilinkClick = useCallback((target: string) => {
+    const store = useGraphStore.getState();
+    const decoded = decodeURIComponent(target);
+    const node = store.nodes.find(n =>
+      n.label === decoded ||
+      n.filePath?.includes(decoded) ||
+      n.label?.toLowerCase().includes(decoded.toLowerCase())
+    );
+    if (node) {
+      store.selectNode(node.id);
+      store.setHighlightedNodes([node.id]);
+    }
+  }, []);
+
+  const processed = processWikilinks(children);
+
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children: linkChildren }) => {
+          if (href?.startsWith('wikilink:')) {
+            const target = href.replace('wikilink:', '');
+            return (
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); handleWikilinkClick(target); }}
+                style={{
+                  color: isDark ? '#818cf8' : '#6366f1',
+                  textDecoration: 'none',
+                  borderBottom: `1px dashed ${isDark ? '#818cf880' : '#6366f180'}`,
+                  cursor: 'pointer',
+                }}
+                title={`Go to: ${decodeURIComponent(target)}`}
+              >
+                {linkChildren}
+              </a>
+            );
+          }
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: isDark ? '#22d3ee' : '#0891b2',
+                textDecoration: 'none',
+                borderBottom: `1px solid ${isDark ? '#22d3ee40' : '#0891b240'}`,
+              }}
+            >
+              {linkChildren}
+            </a>
+          );
+        },
+        code: ({ className, children: codeChildren, ...props }) => {
+          const isInline = !className;
+          if (isInline) {
+            return (
+              <code style={{
+                background: isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.06)',
+                padding: '2px 6px', borderRadius: '4px',
+                fontSize: '12px', fontFamily: "'DM Mono', monospace",
+                color: isDark ? '#c0c0f0' : '#6366f1',
+              }}>
+                {codeChildren}
+              </code>
+            );
+          }
+          return (
+            <pre style={{
+              background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.04)',
+              padding: '12px 16px', borderRadius: '8px',
+              overflow: 'auto', fontSize: '12px',
+              fontFamily: "'DM Mono', monospace",
+              border: `1px solid ${isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.08)'}`,
+              lineHeight: 1.6,
+            }}>
+              <code className={className} style={{ color: isDark ? '#c8c8e0' : '#333' }}>
+                {codeChildren}
+              </code>
+            </pre>
+          );
+        },
+        blockquote: ({ children: bqChildren }) => (
+          <blockquote style={{
+            borderLeft: `3px solid ${isDark ? '#6366f1' : '#6366f1'}`,
+            margin: '8px 0', padding: '4px 12px',
+            color: isDark ? '#9898b8' : '#666',
+            fontSize: '13px',
+          }}>
+            {bqChildren}
+          </blockquote>
+        ),
+        table: ({ children: tChildren }) => (
+          <div style={{ overflowX: 'auto', margin: '8px 0' }}>
+            <table style={{
+              width: '100%', borderCollapse: 'collapse', fontSize: '12px',
+              border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
+            }}>
+              {tChildren}
+            </table>
+          </div>
+        ),
+        th: ({ children: thChildren }) => (
+          <th style={{
+            padding: '6px 10px', textAlign: 'left',
+            borderBottom: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
+            background: isDark ? 'rgba(100,120,255,0.05)' : 'rgba(0,0,0,0.02)',
+            fontSize: '11px', fontWeight: 600,
+          }}>
+            {thChildren}
+          </th>
+        ),
+        td: ({ children: tdChildren }) => (
+          <td style={{
+            padding: '5px 10px',
+            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+          }}>
+            {tdChildren}
+          </td>
+        ),
+        hr: () => (
+          <hr style={{
+            border: 'none', height: '1px', margin: '16px 0',
+            background: isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.08)',
+          }} />
+        ),
+      }}
+    >
+      {processed}
+    </Markdown>
+  );
+}
+
 function ContentAccordion({ content, isDark }: { content: string; isDark: boolean }) {
   const sections = useMemo(() => {
     const parts: Array<{ heading: string; body: string }> = [];
@@ -318,7 +462,7 @@ function ContentAccordion({ content, isDark }: { content: string; isDark: boolea
   if (content.length < 500 || sections.length <= 1) {
     return (
       <div style={{ fontSize: '13px', lineHeight: 1.7, color: bodyColor }}>
-        <Markdown>{content}</Markdown>
+        <RichMarkdown isDark={isDark}>{content}</RichMarkdown>
       </div>
     );
   }
@@ -359,7 +503,7 @@ function AccordionSection({ heading, body, defaultOpen, isDark }: { heading: str
       </button>
       {open && (
         <div style={{ fontSize: '13px', lineHeight: 1.7, color: isDark ? '#b0b0c0' : '#444', paddingBottom: '8px' }}>
-          <Markdown>{trimmed}</Markdown>
+          <RichMarkdown isDark={isDark}>{trimmed}</RichMarkdown>
         </div>
       )}
     </div>

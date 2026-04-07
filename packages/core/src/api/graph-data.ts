@@ -165,7 +165,7 @@ export async function buildGraphData(
     const size = 1 + 6 * Math.pow(ratio, 0.5);
     return {
       id: doc.id,
-      label: doc.title.slice(0, 40),
+      label: doc.title.replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s*-\s*YouTube$/, '').slice(0, 40),
       filePath: doc.filePath,
       tags: doc.tags,
       clusterId: assignmentMap.get(doc.id) ?? 0,

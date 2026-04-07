@@ -11,9 +11,18 @@ import { compileWiki } from './wiki-compiler.js';
 import { autoLink } from './auto-linker.js';
 import { DEFAULT_FOLDERS, type FolderNames } from '../config.js';
 
+/** HTML 엔티티 디코딩 */
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&#39;/g, "'").replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ');
+}
+
 /** YAML 값에서 위험한 문자를 이스케이프 */
 function sanitizeYaml(val: string): string {
-  return val.replace(/["\\]/g, '\\$&').replace(/\n/g, ' ').slice(0, 200);
+  return decodeHtmlEntities(val).replace(/["\\]/g, '\\$&').replace(/\n/g, ' ').slice(0, 200);
 }
 
 export type NoteStage = 'fleeting' | 'literature' | 'permanent';
@@ -45,7 +54,7 @@ export function ingest(
   folders: FolderNames = DEFAULT_FOLDERS,
 ): IngestResult {
   const stage = input.stage ?? 'fleeting';
-  const title = input.title ?? extractTitleFromContent(input.content, input.type);
+  const title = decodeHtmlEntities(input.title ?? extractTitleFromContent(input.content, input.type));
   const tags = input.tags ?? extractAutoTags(input.content, input.type);
   const source = input.source ?? (input.type === 'url' || input.type === 'youtube' ? input.content.split('\n')[0] : 'manual');
 
