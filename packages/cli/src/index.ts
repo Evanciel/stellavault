@@ -24,6 +24,8 @@ import { captureCommand } from './commands/capture-cmd.js';
 import { askCommand } from './commands/ask-cmd.js';
 import { compileCommand } from './commands/compile-cmd.js';
 import { draftCommand } from './commands/draft-cmd.js';
+import { sessionSaveCommand } from './commands/session-cmd.js';
+import { flushCommand } from './commands/flush-cmd.js';
 import { lintCommand } from './commands/lint-cmd.js';
 import { fleetingCommand } from './commands/fleeting-cmd.js';
 import { ingestCommand, promoteCommand } from './commands/ingest-cmd.js';
@@ -172,6 +174,20 @@ program
   .option('--format <type>', 'Output format: blog, report, outline (default: blog)')
   .option('--ai', 'Use Claude API for AI-enhanced draft (requires ANTHROPIC_API_KEY)')
   .action((topic, opts) => draftCommand(topic, opts));
+
+program
+  .command('session-save')
+  .description('Save session summary to daily log (used by Claude Code hooks)')
+  .option('-s, --summary <text>', 'Session summary text (or pipe via stdin)')
+  .option('-d, --decisions <text>', 'Key decisions made')
+  .option('-l, --lessons <text>', 'Lessons learned')
+  .option('-a, --actions <text>', 'Action items')
+  .action((opts) => sessionSaveCommand(opts));
+
+program
+  .command('flush')
+  .description('Flush daily logs → wiki: extract concepts, rebuild connections (Karpathy compile)')
+  .action(() => flushCommand());
 
 program
   .command('lint')

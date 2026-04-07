@@ -21,6 +21,14 @@
     "./intelligence/draft-generator": {
       "import": "./dist/intelligence/draft-generator.js",
       "types": "./dist/intelligence/draft-generator.d.ts"
+    },
+    "./intelligence/wiki-compiler": {
+      "import": "./dist/intelligence/wiki-compiler.js",
+      "types": "./dist/intelligence/wiki-compiler.d.ts"
+    },
+    "./intelligence/knowledge-lint": {
+      "import": "./dist/intelligence/knowledge-lint.js",
+      "types": "./dist/intelligence/knowledge-lint.d.ts"
     }
   },
   "scripts": {

@@ -1,6 +1,6 @@
 {
   "name": "stellavault",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Self-compiling knowledge MCP server — ingest anything, auto-organize into Zettelkasten wiki, search with AI, and let Claude access your entire knowledge base.",
   "repository": {
     "type": "git",

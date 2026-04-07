@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.2] - 2026-04-07
+
+### Features — Karpathy Architecture Complete
+- **Session Hooks** — `stellavault session-save`: auto-capture session summaries to daily logs
+  - Pipe via stdin or --summary flag
+  - Creates `raw/_daily-logs/daily-log-YYYY-MM-DD.md`
+  - Auto-compiles wiki after save
+  - Works with Claude Code hooks (PreCompact, Stop)
+- **Flush Process** — `stellavault flush`: daily logs → wiki compilation
+  - Extracts concepts and connections from all daily logs
+  - Rebuilds wiki index with backlinks
+  - Karpathy's "source code → executable" compilation
+- **Wikilink Auto-Connect** — Auto-insert [[wikilinks]] matching existing note titles on ingest
+- **Hooks Setup Guide** — `docs/hooks-setup.md` with Claude Code settings.json config
+
+### The Compounding Loop
+```
+Session → session-save → daily-log → flush → wiki
+  ↑                                            ↓
+  └── Claude reads wiki via MCP for better answers ←┘
+```
+
 ## [0.4.1] - 2026-04-07
 
 ### Features
