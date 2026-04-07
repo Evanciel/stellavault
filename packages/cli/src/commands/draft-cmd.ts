@@ -36,8 +36,11 @@ export async function draftCommand(topic: string | undefined, options: { format?
       console.log(chalk.dim(`  Concepts: ${result.concepts.join(', ')}`));
     }
     console.log('');
+    console.log(chalk.dim(`Next steps:`));
+    console.log(chalk.dim(`  Edit in Obsidian, then promote:`));
+    console.log(chalk.cyan(`  stellavault promote ${result.filePath} --to literature`));
     if (!options.ai) {
-      console.log(chalk.dim('Tip: Use --ai to generate with Claude API, or use MCP generate-draft tool in Claude Code.'));
+      console.log(chalk.dim(`  Or use --ai for Claude-enhanced draft, or MCP generate-draft in Claude Code.`));
     }
   } catch (err) {
     console.error(chalk.red(err instanceof Error ? err.message : 'Draft generation failed'));

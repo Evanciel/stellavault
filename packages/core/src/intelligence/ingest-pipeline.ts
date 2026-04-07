@@ -8,6 +8,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, resolve, extname, basename } from 'node:path';
 import { scanFrontmatter, assignIndexCodes, archiveFile, type FrontmatterEntry } from './zettelkasten.js';
 import { compileWiki } from './wiki-compiler.js';
+import { autoLink } from './auto-linker.js';
 import { DEFAULT_FOLDERS, type FolderNames } from '../config.js';
 
 /** YAML 값에서 위험한 문자를 이스케이프 */
@@ -90,7 +91,7 @@ export function ingest(
   } catch { /* index code is optional */ }
 
   // Stellavault 표준 포맷으로 저장
-  const md = buildStandardNote({
+  let md = buildStandardNote({
     title,
     body,
     tags,
@@ -100,6 +101,11 @@ export function ingest(
     created: now.toISOString(),
     inputType: input.type,
   });
+
+  // wikilink 자동 삽입: 기존 노트 제목과 매칭
+  try {
+    md = autoLink(md, vaultPath, title, folders);
+  } catch { /* autoLink 실패해도 저장은 진행 */ }
 
   writeFileSync(fullPath, md, 'utf-8');
 
