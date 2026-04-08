@@ -42,6 +42,12 @@ export async function extractFileContent(filePath: string): Promise<ExtractedCon
     case '.pptx': return extractPptx(buffer, filePath);
     case '.xlsx': return extractXlsx(buffer, filePath);
     case '.xls': return extractXlsx(buffer, filePath);
+    case '.json': return extractJson(filePath);
+    case '.csv': return extractCsv(filePath);
+    case '.xml': return extractXml(filePath);
+    case '.html': case '.htm': return extractHtml(filePath);
+    case '.yaml': case '.yml': return extractYaml(filePath);
+    case '.rtf': return extractRtf(filePath);
     default: return extractText(filePath);
   }
 }
@@ -163,6 +169,62 @@ function extractText(filePath: string): ExtractedContent {
     },
     sourceFormat: 'text',
   };
+}
+
+function extractJson(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  let text: string;
+  try {
+    const parsed = JSON.parse(raw);
+    text = '```json\n' + JSON.stringify(parsed, null, 2).slice(0, 50000) + '\n```';
+  } catch {
+    text = raw.slice(0, 50000);
+  }
+  return { text, metadata: { title: basename(filePath, '.json'), wordCount: text.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
+}
+
+function extractCsv(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  const lines = raw.split('\n').filter(l => l.trim());
+  const headers = lines[0]?.split(',').map(h => h.trim()) ?? [];
+  const mdLines = [`| ${headers.join(' | ')} |`, `| ${headers.map(() => '---').join(' | ')} |`];
+  for (const line of lines.slice(1, 200)) {
+    const cells = line.split(',').map(c => c.trim());
+    mdLines.push(`| ${cells.join(' | ')} |`);
+  }
+  const text = mdLines.join('\n');
+  return { text, metadata: { title: basename(filePath, '.csv'), wordCount: text.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
+}
+
+function extractXml(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50000);
+  return { text, metadata: { title: basename(filePath, '.xml'), wordCount: text.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
+}
+
+function extractHtml(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  const text = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 50000);
+  return { text, metadata: { title: basename(filePath, extname(filePath)), wordCount: text.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
+}
+
+function extractYaml(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  const text = '```yaml\n' + raw.slice(0, 50000) + '\n```';
+  return { text, metadata: { title: basename(filePath, extname(filePath)), wordCount: raw.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
+}
+
+function extractRtf(filePath: string): ExtractedContent {
+  const raw = readFileSync(filePath, 'utf-8');
+  const text = raw.replace(/\{\\[^}]*\}/g, '').replace(/\\[a-z]+\d*\s?/gi, '').replace(/[{}]/g, '').trim().slice(0, 50000);
+  return { text, metadata: { title: basename(filePath, '.rtf'), wordCount: text.split(/\s+/).filter(Boolean).length }, sourceFormat: 'text' };
 }
 
 function fallback(filePath: string, format: ExtractedContent['sourceFormat']): ExtractedContent {

@@ -4,7 +4,7 @@ import { useGraphStore } from '../stores/graph-store.js';
 import { getTheme } from '../lib/theme.js';
 import { t } from '../lib/i18n.js';
 
-const ACCEPT_EXTS = '.pdf,.docx,.pptx,.xlsx,.xls,.md,.txt,.csv';
+const ACCEPT_EXTS = '.pdf,.docx,.pptx,.xlsx,.xls,.md,.txt,.csv,.json,.xml,.html,.htm,.yaml,.yml,.rtf';
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
 export function IngestPanel() {

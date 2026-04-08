@@ -15,7 +15,7 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
   // 배치 모드: 폴더 경로이면 내부 파일 전부 처리
   if (existsSync(input) && statSync(input).isDirectory()) {
     const files = readdirSync(input)
-      .filter(f => /\.(md|txt|pdf|docx|pptx|xlsx|xls|csv)$/i.test(f))
+      .filter(f => /\.(md|txt|pdf|docx|pptx|xlsx|xls|csv|json|xml|html|htm|yaml|yml|rtf)$/i.test(f))
       .map(f => join(input, f));
 
     if (files.length === 0) {
@@ -133,6 +133,7 @@ async function ingestSingleFile(input: string, options: { tags?: string; stage?:
     // 파일
     const ext = extname(input).toLowerCase();
     const binaryExts = new Set(['.pdf', '.docx', '.pptx', '.xlsx', '.xls']);
+    const structuredExts = new Set(['.json', '.csv', '.xml', '.html', '.htm', '.yaml', '.yml', '.rtf']);
 
     if (binaryExts.has(ext)) {
       // 바이너리 파일: 전용 파서로 텍스트 추출
@@ -158,6 +159,24 @@ async function ingestSingleFile(input: string, options: { tags?: string; stage?:
           title: options.title,
           source: input,
         };
+      }
+    } else if (structuredExts.has(ext)) {
+      // 구조화 파일: 전용 파서로 포맷 보존
+      try {
+        const { extractFileContent } = await import('@stellavault/core/intelligence/file-extractors');
+        const extracted = await extractFileContent(resolve(input));
+        console.log(chalk.dim(`  Extracted ${extracted.metadata.wordCount} words from ${ext} file`));
+        ingestInput = {
+          type: 'file' as IngestInput['type'],
+          content: extracted.text,
+          tags: [...tags, ext.slice(1)],
+          stage,
+          title: options.title ?? extracted.metadata.title,
+          source: input,
+        };
+      } catch (err) {
+        const fileContent = readFileSync(input, 'utf-8');
+        ingestInput = { type: 'file', content: fileContent, tags, stage, title: options.title, source: input };
       }
     } else {
       // 텍스트 파일: 기존 동작

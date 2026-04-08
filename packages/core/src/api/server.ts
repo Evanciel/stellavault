@@ -530,6 +530,11 @@ export function createApiServer(options: ApiServerOptions) {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'application/vnd.ms-excel',
           'text/plain', 'text/markdown', 'text/csv',
+          'application/json', 'text/json',
+          'text/xml', 'application/xml',
+          'text/html',
+          'text/yaml', 'application/x-yaml',
+          'application/rtf', 'text/rtf',
         ]);
         if (!allowedMimes.has(file.mimetype)) {
           res.status(400).json({ error: `Unsupported file type: ${file.mimetype}` });
