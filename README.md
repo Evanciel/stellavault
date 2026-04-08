@@ -1,27 +1,27 @@
 # Stellavault
 
-> **Self-compiling knowledge MCP server** — ingest anything, auto-organize into Zettelkasten wiki, and let Claude access your entire knowledge base.
+> **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
 
-Drop a PDF, paste a YouTube link, type a thought — Stellavault compiles it into structured knowledge, connects the dots, and gives your AI agent full access through 21 MCP tools.
+Self-compiling Zettelkasten MCP server. Ingest PDFs, YouTube, documents — auto-organized into linked wiki. Claude accesses your entire knowledge base. **Your vault files are never modified.**
 
 <p align="center">
-  <img src="images/screenshots/graph-dark-full.png" alt="3D Knowledge Graph" width="800" />
-  <br><em>Your vault as a neural network. Clusters form constellations.</em>
+  <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="800" />
+  <br><em>Your vault as a neural network. Local-first, no cloud required.</em>
 </p>
 
 ## Two Core Ideas
 
-**1. "Drop it and forget it"** (Karpathy's Self-Compiling Knowledge)
+**1. "Drop it and forget it"** (Inspired by Karpathy's Self-Compiling Knowledge)
 ```
 Any input → auto-classify → raw/ → compile → wiki → connected knowledge
 ```
-PDF, DOCX, YouTube, URL, text — everything goes through the same pipeline. You never manually organize.
+PDF, DOCX, PPTX, XLSX, YouTube (with transcript), URL, text — everything goes through the same pipeline. You never manually organize.
 
-**2. "Claude knows what you know"** (MCP Integration)
+**2. "Claude remembers what you know"** (MCP Integration)
 ```bash
 claude mcp add stellavault -- stellavault serve
 ```
-21 MCP tools give Claude direct access to search, ask, draft, and navigate your entire knowledge base.
+Claude searches, asks, drafts from your vault directly. Local-first — no data leaves your machine.
 
 ## 5-Minute Setup
 
@@ -200,19 +200,28 @@ stellavault autopilot                          # Full cycle: inbox → compile �
 | **Capture** | ingest (URL/YouTube/PDF/DOCX/PPTX/XLSX/text), fleeting, web drag & drop, mobile PWA |
 | **Organize** | Zettelkasten 3-stage, auto index codes, wikilink auto-connect, configurable folders |
 | **Distill** | compile (raw→wiki), lint (health score), gaps, contradictions, duplicates |
-| **Express** | draft (blog/report/outline), --ai (Claude API), MCP generate-draft (free) |
-| **Memory** | FSRS decay tracking, session-save (daily logs), flush (logs→wiki), compounding loop |
-| **Search** | hybrid (BM25+vector+RRF), multilingual (50+ langs), ask Q&A |
-| **Visualize** | 3D graph, constellation, heatmap, timeline, decay overlay, dark/light |
-| **AI Integration** | 21 MCP tools, Claude Code hooks, Anthropic SDK, generate-draft |
-| **CLI** | 39+ commands, `sv` alias |
+| **Express** | draft (blog/report/outline/instagram/thread/script), blueprint, --ai, MCP generate-draft |
+| **Memory** | FSRS decay, session-save, flush, compounding loop, ADR templates |
+| **Search** | hybrid (BM25+vector+RRF), multilingual 50+, ask Q&A, quotes mode |
+| **Visualize** | 3D graph, heatmap, timeline, right-click context menu, TipTap WYSIWYG editor |
+| **AI Integration** | 21 MCP tools, Claude Code hooks, Anthropic SDK |
+| **Security** | DOMPurify, YAML sanitize, 50MB guard, SSRF protection |
+| **CLI** | 40+ commands, `sv` alias, batch ingest |
+
+## Security
+
+Your vault files are never modified. Stellavault is local-first — no data leaves your machine unless you explicitly use `--ai` (Anthropic API).
+
+See [SECURITY.md](SECURITY.md) for full details.
 
 ## License
 
-MIT
+MIT — full source code available for audit.
 
 ## Links
 
+- [Landing Page](https://evanciel.github.io/stellavault/)
 - [Obsidian Plugin](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
 - [GitHub Releases](https://github.com/Evanciel/stellavault/releases)
+- [Security Policy](SECURITY.md)
