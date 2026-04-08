@@ -103,12 +103,36 @@ async function extractXlsx(buffer: Buffer, filePath: string): Promise<ExtractedC
   try {
     const XLSX = await import('xlsx');
     const workbook = XLSX.read(buffer);
-    const text = workbook.SheetNames
-      .map((name: string) => {
-        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
-        return `## ${name}\n\n${csv}`;
-      })
-      .join('\n\n');
+    const parts: string[] = [];
+    for (const name of workbook.SheetNames) {
+      const sheet = workbook.Sheets[name];
+      // 마크다운 테이블 형식 (헤더-값 구조 보존)
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as string[][];
+      if (rows.length === 0) continue;
+
+      parts.push(`## ${name}\n`);
+      const headers = rows[0].map((h: any) => String(h ?? ''));
+      parts.push(`| ${headers.join(' | ')} |`);
+      parts.push(`| ${headers.map(() => '---').join(' | ')} |`);
+      for (const row of rows.slice(1)) {
+        const cells = headers.map((_, i) => String(row[i] ?? ''));
+        parts.push(`| ${cells.join(' | ')} |`);
+      }
+      parts.push('');
+
+      // JSON 구조도 포함 (AI 검색/ask에서 수치 활용 가능)
+      if (rows.length <= 100) {
+        const jsonRows = XLSX.utils.sheet_to_json(sheet);
+        if (jsonRows.length > 0) {
+          parts.push(`<details><summary>Structured Data (${jsonRows.length} rows)</summary>\n`);
+          parts.push('```json');
+          parts.push(JSON.stringify(jsonRows.slice(0, 50), null, 2));
+          parts.push('```');
+          parts.push('</details>\n');
+        }
+      }
+    }
+    const text = parts.join('\n');
     return {
       text,
       metadata: {

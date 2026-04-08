@@ -6,7 +6,7 @@ import chalk from 'chalk';
 import { loadConfig } from '@stellavault/core';
 import { generateDraft } from '@stellavault/core/intelligence/draft-generator';
 
-export async function draftCommand(topic: string | undefined, options: { format?: string; ai?: boolean }) {
+export async function draftCommand(topic: string | undefined, options: { format?: string; ai?: boolean; blueprint?: string }) {
   const config = loadConfig();
 
   if (!config.vaultPath) {
@@ -18,7 +18,15 @@ export async function draftCommand(topic: string | undefined, options: { format?
 
   try {
     // Step 1: rule-based 초안 생성 (스캐폴딩 + 소스 수집)
-    const result = generateDraft(config.vaultPath, { topic, format }, config.folders);
+    // Blueprint 파싱: "Chapter 1:tag1,tag2; Chapter 2:tag3" 형식
+    let blueprint;
+    if (options.blueprint) {
+      blueprint = options.blueprint.split(';').map(s => {
+        const [title, tagsStr] = s.split(':').map(p => p.trim());
+        return { title, tags: tagsStr?.split(',').map(t => t.trim()) };
+      });
+    }
+    const result = generateDraft(config.vaultPath, { topic, format, blueprint }, config.folders);
 
     if (options.ai) {
       // Step 2: --ai 모드 → Claude API로 실제 글 생성

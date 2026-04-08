@@ -3,7 +3,7 @@
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, askVault } from '@stellavault/core';
 
-export async function askCommand(question: string, options: { save?: boolean }) {
+export async function askCommand(question: string, options: { save?: boolean; quotes?: boolean }) {
   if (!question || question.trim().length < 2) {
     console.error(chalk.yellow('Usage: stellavault ask "your question here" [--save]'));
     console.error(chalk.dim('\nSearch Mode: finds relevant notes from your vault.'));
@@ -22,6 +22,7 @@ export async function askCommand(question: string, options: { save?: boolean }) 
     limit: 10,
     save: options.save ?? false,
     vaultPath: config.vaultPath,
+    mode: options.quotes ? 'quotes' : 'default',
   });
 
   // 출력

@@ -23,17 +23,27 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
       process.exit(1);
     }
 
-    console.log(chalk.dim(`Batch ingest: ${files.length} files from ${input}`));
+    console.log(chalk.dim(`Batch ingest: ${files.length} files from ${input}\n`));
     let success = 0;
-    for (const file of files) {
+    const failed: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const name = file.split(/[/\\]/).pop() ?? file;
+      const progress = `[${i + 1}/${files.length}]`;
+      process.stderr.write(`\r${chalk.dim(progress)} ${name}...`);
       try {
         await ingestCommand(file, { ...options, title: undefined });
         success++;
       } catch (err) {
-        console.error(chalk.yellow(`  Failed: ${file} — ${err instanceof Error ? err.message : 'error'}`));
+        failed.push(`${name}: ${err instanceof Error ? err.message : 'error'}`);
       }
     }
-    console.log(chalk.green(`\nBatch complete: ${success}/${files.length} files ingested`));
+    process.stderr.write('\r' + ' '.repeat(80) + '\r');
+    console.log(chalk.green(`Batch complete: ${success}/${files.length} files ingested`));
+    if (failed.length > 0) {
+      console.log(chalk.yellow(`\nFailed (${failed.length}):`));
+      for (const f of failed) console.log(chalk.yellow(`  - ${f}`));
+    }
     return;
   }
 

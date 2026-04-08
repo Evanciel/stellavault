@@ -25,9 +25,10 @@ export async function askVault(
     save?: boolean;
     vaultPath?: string;
     outputDir?: string;
+    mode?: 'default' | 'quotes';
   } = {},
 ): Promise<AskResult> {
-  const { limit = 10, save = false, vaultPath, outputDir = '_stellavault/answers' } = options;
+  const { limit = 10, save = false, vaultPath, outputDir = '_stellavault/answers', mode = 'default' } = options;
 
   // 1. 검색
   const results = await searchEngine.search({ query: question, limit });
@@ -41,7 +42,9 @@ export async function askVault(
   }));
 
   // 3. 답변 구성 (검색 결과 기반 구조화)
-  const answer = composeAnswer(question, results);
+  const answer = mode === 'quotes'
+    ? composeQuotes(question, results)
+    : composeAnswer(question, results);
 
   // 4. vault에 저장 (선택)
   let savedTo: string | null = null;
@@ -95,6 +98,41 @@ function composeAnswer(question: string, results: SearchResult[]): string {
   lines.push(`- Dig deeper: \`stellavault ask "${question} advanced"\``);
   lines.push(`- Find knowledge gaps: \`stellavault gaps\``);
 
+  return lines.join('\n');
+}
+
+/**
+ * Quotes 모드: 원문 인용을 카드 형태로 나열.
+ */
+function composeQuotes(question: string, results: SearchResult[]): string {
+  if (results.length === 0) {
+    return `No quotes found for "${question}".`;
+  }
+  const lines: string[] = [];
+  lines.push(`## Quotes: "${question}"\n`);
+  lines.push(`*${results.length} sources found. Each quote is a direct excerpt.*\n`);
+
+  for (let i = 0; i < Math.min(8, results.length); i++) {
+    const r = results[i];
+    const quote = r.chunk?.content
+      ?.replace(/^---[\s\S]*?---\n?/, '')
+      ?.replace(/^#+\s+.+\n/m, '')
+      ?.trim()
+      ?.substring(0, 300) ?? '';
+    if (!quote) continue;
+
+    const score = Math.round(r.score * 100);
+    lines.push(`---`);
+    lines.push(`**[${i + 1}] ${r.document.title}** (${score}% match)`);
+    lines.push(`> ${quote.replace(/\n/g, '\n> ')}`);
+    if (r.document.tags.length > 0) {
+      lines.push(`Tags: ${r.document.tags.slice(0, 5).map(t => `#${t}`).join(' ')}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push(`*Use \`stellavault ask "${question}" --save\` to save these quotes as a note.*`);
   return lines.join('\n');
 }
 

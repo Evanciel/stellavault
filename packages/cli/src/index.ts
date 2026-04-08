@@ -26,6 +26,7 @@ import { compileCommand } from './commands/compile-cmd.js';
 import { draftCommand } from './commands/draft-cmd.js';
 import { sessionSaveCommand } from './commands/session-cmd.js';
 import { flushCommand } from './commands/flush-cmd.js';
+import { adrCommand } from './commands/adr-cmd.js';
 import { lintCommand } from './commands/lint-cmd.js';
 import { fleetingCommand } from './commands/fleeting-cmd.js';
 import { ingestCommand, promoteCommand } from './commands/ingest-cmd.js';
@@ -158,7 +159,8 @@ program
   .command('ask <question>')
   .description('Ask a question about your knowledge base — search, compose answer, optionally save')
   .option('-s, --save', 'Save answer as a new note in your vault')
-  .action((question: string, opts: { save?: boolean }) => askCommand(question, opts));
+  .option('-q, --quotes', 'Show direct quotes from sources (Insight Extraction mode)')
+  .action((question: string, opts: { save?: boolean; quotes?: boolean }) => askCommand(question, opts));
 
 program
   .command('compile')
@@ -170,9 +172,10 @@ program
 
 program
   .command('draft [topic]')
-  .description('Express: Generate a blog post, report, or outline draft from your knowledge')
-  .option('--format <type>', 'Output format: blog, report, outline (default: blog)')
+  .description('Express: Generate draft from knowledge (blog/report/outline/instagram/thread/script)')
+  .option('--format <type>', 'Output format: blog, report, outline, instagram, thread, script')
   .option('--ai', 'Use Claude API for AI-enhanced draft (requires ANTHROPIC_API_KEY)')
+  .option('--blueprint <spec>', 'Chapter structure: "Ch1:tag1,tag2; Ch2:tag3"')
   .action((topic, opts) => draftCommand(topic, opts));
 
 program
@@ -188,6 +191,15 @@ program
   .command('flush')
   .description('Flush daily logs → wiki: extract concepts, rebuild connections (Karpathy compile)')
   .action(() => flushCommand());
+
+program
+  .command('adr <title>')
+  .description('Create an Architecture Decision Record (structured decision log)')
+  .option('--context <text>', 'Why is this decision needed?')
+  .option('--options <text>', 'What alternatives were considered?')
+  .option('--decision <text>', 'What was decided and why?')
+  .option('--consequences <text>', 'What are the implications?')
+  .action((title, opts) => adrCommand(title, opts));
 
 program
   .command('lint')
