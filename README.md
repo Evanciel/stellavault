@@ -177,8 +177,32 @@ stellavault autopilot                          # Full cycle: inbox → compile �
 - Heatmap overlay (activity score)
 - Timeline slider (creation/modification filter)
 - Decay overlay (fading knowledge)
+- **Multiverse view** — your vault as a universe in a P2P network
 - Dark/Light theme
 - Mobile responsive + PWA installable
+
+## Multiverse — P2P Knowledge Federation
+
+<p align="center">
+  <img src="images/screenshots/multiverse-view.png" alt="Multiverse View" width="800" />
+  <br><em>"Your universe floats alone — for now."</em>
+</p>
+
+Your vault is a universe. Connect with others through P2P federation.
+
+```bash
+stellavault federate join    # Connect to the Stella Network
+stellavault federate status  # See connected peers
+```
+
+**How it works:**
+- **Hyperswarm P2P** — NAT-traversal mesh networking, no central server
+- **Embeddings only** — your original text never leaves your machine
+- **Differential privacy** — mathematical privacy guarantees
+- **Trust & reputation** — good knowledge earns credits
+- **Federated search** — search across connected vaults via MCP
+
+The Multiverse view shows your universe and connected peers as neighboring constellations in 3D. Click to explore their shared knowledge.
 
 ## Tech Stack
 
