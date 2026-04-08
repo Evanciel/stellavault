@@ -50,9 +50,12 @@ stellavault ingest <anything>     # PDF, DOCX, URL, YouTube, text
 | Input | How |
 |-------|-----|
 | PDF, DOCX, PPTX, XLSX | `stellavault ingest report.pdf` — auto text extraction |
+| JSON, CSV, XML, YAML | `stellavault ingest data.json` — structured format preserved |
+| HTML, RTF | `stellavault ingest page.html` — clean text extraction |
 | YouTube | `stellavault ingest https://youtu.be/...` — transcript + timestamps |
 | URL | `stellavault ingest https://...` — HTML → clean text |
 | Text | `stellavault ingest "quick thought"` |
+| Folder | `stellavault ingest ./papers/` — batch all files |
 | Web UI | Drag & drop files in browser (mobile too) |
 
 ### Express: Get Knowledge Out
@@ -221,7 +224,7 @@ The Multiverse view shows your universe and connected peers as neighboring const
 
 | Category | Features |
 |----------|----------|
-| **Capture** | ingest (URL/YouTube/PDF/DOCX/PPTX/XLSX/text), fleeting, web drag & drop, mobile PWA |
+| **Capture** | ingest 14 formats (PDF/DOCX/PPTX/XLSX/JSON/CSV/XML/HTML/YAML/RTF/YouTube/URL/text), batch folders, web drag & drop, Quick Capture, mobile PWA |
 | **Organize** | Zettelkasten 3-stage, auto index codes, wikilink auto-connect, configurable folders |
 | **Distill** | compile (raw→wiki), lint (health score), gaps, contradictions, duplicates |
 | **Express** | draft (blog/report/outline/instagram/thread/script), blueprint, --ai, MCP generate-draft |
