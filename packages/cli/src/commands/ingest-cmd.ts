@@ -50,9 +50,13 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
   await ingestSingleFile(input, options);
 }
 
+/** 캐시된 config (배치 시 반복 로드 방지) */
+let _configCache: ReturnType<typeof loadConfig> | null = null;
+function getConfig() { return _configCache ?? (_configCache = loadConfig()); }
+
 /** 단일 파일/URL/텍스트 인제스트 (배치에서 재사용) */
 async function ingestSingleFile(input: string, options: { tags?: string; stage?: string; title?: string }) {
-  const config = loadConfig();
+  const config = getConfig();
   const tags = options.tags?.split(',').map(t => t.trim()) ?? [];
   const stage = (options.stage ?? 'fleeting') as 'fleeting' | 'literature' | 'permanent';
 

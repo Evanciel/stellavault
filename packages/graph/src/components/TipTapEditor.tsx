@@ -9,7 +9,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import DOMPurify from 'dompurify';
+import { markdownToHtml, htmlToMarkdown } from '../lib/markdown-utils.js';
 
 interface TipTapEditorProps {
   content: string;        // markdown 원문
@@ -17,74 +17,6 @@ interface TipTapEditorProps {
   onSave?: (markdown: string) => void;
   editable?: boolean;
   onWikilinkClick?: (target: string) => void;
-}
-
-/** 간단한 markdown → HTML 변환 (TipTap이 이해하는 수준) */
-function markdownToHtml(md: string): string {
-  const result = md
-    // frontmatter 제거
-    .replace(/^---[\s\S]*?---\n?/, '')
-    // wikilinks → 일반 링크
-    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) =>
-      `<a href="wikilink:${encodeURIComponent(target)}" class="wikilink">${display ?? target}</a>`)
-    // headings
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    // bold, italic
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // inline code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // youtube embeds
-    .replace(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)(?:\S*)/g,
-      '<div class="sv-youtube" data-id="$1"><iframe src="https://www.youtube.com/embed/$1" frameborder="0" allowfullscreen></iframe></div>')
-    // images
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
-    // code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
-    // blockquotes
-    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    // lists
-    .replace(/^- \[x\] (.+)$/gm, '<ul data-type="taskList"><li data-type="taskItem" data-checked="true">$1</li></ul>')
-    .replace(/^- \[ \] (.+)$/gm, '<ul data-type="taskList"><li data-type="taskItem" data-checked="false">$1</li></ul>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
-    // hr
-    .replace(/^---$/gm, '<hr>')
-    // paragraphs (lines that aren't already wrapped)
-    .replace(/^(?!<[a-z])((?!^\s*$).+)$/gm, '<p>$1</p>')
-    // cleanup empty paragraphs
-    .replace(/<p>\s*<\/p>/g, '');
-  return DOMPurify.sanitize(result, { ADD_TAGS: ['iframe'], ADD_ATTR: ['allowfullscreen', 'frameborder', 'data-id', 'data-type', 'data-checked'] });
-}
-
-/** HTML → 간단한 markdown 변환 */
-function htmlToMarkdown(html: string): string {
-  return html
-    .replace(/<h1>(.*?)<\/h1>/g, '# $1\n')
-    .replace(/<h2>(.*?)<\/h2>/g, '## $1\n')
-    .replace(/<h3>(.*?)<\/h3>/g, '### $1\n')
-    .replace(/<strong>(.*?)<\/strong>/g, '**$1**')
-    .replace(/<em>(.*?)<\/em>/g, '*$1*')
-    .replace(/<code>(.*?)<\/code>/g, '`$1`')
-    .replace(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g, '```\n$1```\n')
-    .replace(/<blockquote>(.*?)<\/blockquote>/g, '> $1\n')
-    .replace(/<a[^>]*href="wikilink:([^"]*)"[^>]*>(.*?)<\/a>/g, (_, target, display) =>
-      `[[${decodeURIComponent(target)}|${display}]]`)
-    .replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*\/?>/g, '![$2]($1)')
-    .replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/g, '![]($1)')
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g, '[$2]($1)')
-    .replace(/<li data-type="taskItem" data-checked="true">(.*?)<\/li>/g, '- [x] $1')
-    .replace(/<li data-type="taskItem" data-checked="false">(.*?)<\/li>/g, '- [ ] $1')
-    .replace(/<li>(.*?)<\/li>/g, '- $1')
-    .replace(/<ul[^>]*>|<\/ul>/g, '')
-    .replace(/<hr\s*\/?>/g, '---\n')
-    .replace(/<p>(.*?)<\/p>/g, '$1\n')
-    .replace(/<br\s*\/?>/g, '\n')
-    .replace(/<[^>]+>/g, '') // strip remaining tags
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 export function TipTapEditor({ content, isDark, onSave, editable = true, onWikilinkClick }: TipTapEditorProps) {
