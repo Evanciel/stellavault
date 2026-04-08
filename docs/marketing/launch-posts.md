@@ -4,24 +4,20 @@
 
 **Title:** Stellavault — Self-compiling knowledge MCP server
 
-**Tagline:** Drop anything. It compiles itself into knowledge. Claude knows what you know.
+**Tagline:** Drop anything. It compiles itself into knowledge. Claude remembers what you know.
 
 **Description:**
-Stellavault turns your Obsidian vault into a self-compiling knowledge system.
+Drop PDFs, YouTube links, documents — Stellavault auto-organizes into a linked wiki. Claude accesses everything via MCP.
 
-Drop a PDF, paste a YouTube link, drag a DOCX — it auto-organizes into a Zettelkasten wiki with linked concepts and backlinks. No manual organizing ever.
+1. Ingest anything (PDF, YouTube transcript, DOCX, XLSX, URL)
+2. Auto-compile into wiki with concepts + backlinks
+3. Claude searches, asks, and drafts from your vault
 
-Then Claude accesses everything through MCP tools. Ask questions, generate drafts, track fading memories — all from your local knowledge base.
+Vault files never modified. 100% local-first.
 
-**Key features:**
-- Ingest anything: PDF, YouTube (with transcript), DOCX, PPTX, XLSX, URLs
-- Auto-compile: raw notes → linked wiki in <100ms
-- MCP tools for Claude Code integration
-- 3D neural knowledge graph in your browser
-- TipTap WYSIWYG editor with YouTube embed
-- Session hooks + daily log flush (Karpathy's compounding loop)
-- Draft generation: blog, report, Instagram, X thread, video script
-- Local-first: SQLite-vec, no cloud, 50+ language search
+Next: P2P Knowledge Federation — connect vaults across users. Only embeddings shared, never original text.
+
+Free, MIT, open source.
 
 **Pricing:** Free & open source (MIT)
 
@@ -29,7 +25,7 @@ Then Claude accesses everything through MCP tools. Ask questions, generate draft
 
 ## Reddit r/ObsidianMD
 
-**Title:** I built a self-compiling knowledge system for Obsidian — drops any file, auto-organizes into wiki, Claude accesses via MCP tools
+**Title:** I built a self-compiling knowledge system for Obsidian — drops any file, auto-wiki, Claude MCP, and a Multiverse view for P2P knowledge sharing
 
 **Body:**
 Hey everyone,
@@ -43,14 +39,20 @@ I've been working on Stellavault — it turns your Obsidian vault into a self-co
 4. Compiles into a structured wiki with concepts + backlinks
 5. Makes everything searchable via hybrid AI search (BM25 + vector)
 
-**The killer feature:** MCP tools for Claude Code. One command (`claude mcp add stellavault -- stellavault serve`) and Claude can search, ask, draft, and navigate your entire vault.
+**Claude integration:** One command (`claude mcp add stellavault -- stellavault serve`) and Claude can search, ask, draft, and navigate your entire vault. Your vault files are never modified.
 
-**Other cool stuff:**
+**The vision — Multiverse:**
+Stellavault already has a P2P federation layer built in (Hyperswarm). The "Multiverse view" shows your vault as a universe — and connected peers as neighboring constellations. Only embeddings are shared, never your original text (differential privacy). Trust builds through a reputation system.
+
+Right now your universe floats alone. Soon, knowledge networks connect.
+
+**Other features:**
 - 3D neural knowledge graph (Three.js)
-- TipTap WYSIWYG editor in the browser
-- Draft generator (blog, Instagram, X thread, video script formats)
+- TipTap WYSIWYG editor with YouTube embed
+- Draft generator (blog, Instagram, X thread, video script)
 - Session hooks → daily logs → flush → wiki (Karpathy's compounding loop)
 - FSRS memory decay tracking
+- Batch ingest (whole folders), Quick Capture (N key)
 - 50+ language search (multilingual embeddings)
 
 ```bash
@@ -59,7 +61,7 @@ stellavault init
 stellavault graph
 ```
 
-It's MIT licensed, 100% free, local-first (no cloud needed).
+100% free, MIT, local-first. Your vault files are never modified.
 
 GitHub: https://github.com/Evanciel/stellavault
 Landing: https://evanciel.github.io/stellavault/
@@ -70,7 +72,7 @@ Would love your feedback! Especially from people with large vaults (1000+ notes)
 
 ## Reddit r/ClaudeAI
 
-**Title:** Made an MCP server with 21 tools that gives Claude full access to your Obsidian knowledge base
+**Title:** Built an MCP server that gives Claude long-term memory from your Obsidian vault — with a P2P knowledge federation vision
 
 **Body:**
 Built Stellavault — a self-compiling knowledge MCP server. One command to connect:
@@ -86,11 +88,18 @@ Now Claude can:
 - `detect-gaps` in your knowledge
 - `get-decay-status` to see what you're forgetting (FSRS)
 - `link-code` to connect code files to knowledge notes
-- ... 21 tools total
+- `federated-search` across connected peer vaults
 
-The compounding loop: every session summary auto-saves to your vault → flush compiles into wiki → Claude reads the wiki next time → gets smarter about your project.
+**The compounding loop:** every session summary auto-saves to your vault → flush compiles into wiki → Claude reads the wiki next time → gets smarter about your project.
+
+**What's next — Multiverse:**
+The P2P federation layer is already built (Hyperswarm, trust/reputation system, differential privacy). Your vault becomes a "universe" in a larger knowledge network. Only embeddings are shared — your original text never leaves your machine.
+
+The Multiverse view shows your universe and connected peers as neighboring constellations in 3D. Right now it says "Your universe floats alone — for now."
 
 Free, MIT, local-first. `npm install -g stellavault`
+
+GitHub: https://github.com/Evanciel/stellavault
 
 ---
 
@@ -100,9 +109,9 @@ Free, MIT, local-first. `npm install -g stellavault`
 
 Drop a PDF, paste a YouTube link, type a thought → it auto-organizes into a Zettelkasten wiki.
 
-Claude accesses everything via MCP tools.
+Claude accesses everything via MCP.
 
-Here's how it works: 🧵
+And there's a P2P Multiverse coming. 🧵
 
 **2/** The pipeline (inspired by @kaborpa):
 
@@ -116,16 +125,17 @@ Every input goes through the same flow. You never manually organize. Auto-wikili
 - DOCX/PPTX/XLSX
 - URLs
 - Drag & drop in browser
+- Batch ingest (whole folders)
 
 One command: `stellavault ingest <anything>`
 
-**4/** Claude integration (MCP tools):
+**4/** Claude integration (MCP):
 
 `claude mcp add stellavault -- stellavault serve`
 
-Now Claude can search, ask, draft, detect gaps, track memories — from YOUR vault.
+Claude searches, asks, drafts, detects gaps, tracks memories — from YOUR vault.
 
-The generate-draft tool is free (no API key). Claude writes blog posts from your notes.
+generate-draft is free (no API key). Claude writes blog posts from your notes.
 
 **5/** The compounding loop:
 
@@ -139,20 +149,21 @@ Right-click to add/connect/delete nodes.
 TipTap WYSIWYG editor with YouTube embed.
 Dark/light mode. Mobile PWA.
 
-**7/** Draft anything:
-- Blog post
-- Report
-- Instagram carousel
-- X thread
-- Video script
-- Custom blueprint
+**7/** The Multiverse 🌌
 
-All from your accumulated knowledge.
+Your vault = your universe. P2P federation connects universes.
+
+Only embeddings shared — your text never leaves.
+Trust + reputation system. Differential privacy.
+
+"Your universe floats alone — for now."
+
+The code is already built. Hyperswarm P2P ready.
 
 **8/** Free. MIT. Local-first.
 No cloud, no API key for core features.
 50+ language search.
-127 tests passing.
+Vault files never modified.
 
 ```
 npm install -g stellavault
@@ -162,7 +173,34 @@ GitHub: github.com/Evanciel/stellavault
 
 ---
 
+## Hacker News
+
+**Title:** Show HN: Stellavault – Local MCP server that gives Claude long-term memory, with P2P knowledge federation
+
+**Body:**
+Stellavault is a self-compiling knowledge system inspired by Andrej Karpathy's LLM knowledge base architecture.
+
+Drop any file (PDF, YouTube, DOCX, XLSX) → auto-extracts text → compiles into Zettelkasten wiki with concepts and backlinks → Claude accesses via MCP.
+
+The interesting part: there's a P2P federation layer (Hyperswarm) where vaults can connect as a "Multiverse." Only embeddings are shared, never original text (differential privacy). Each vault is a "universe" — the Multiverse view shows connected peers as neighboring constellations.
+
+Tech: Node.js 20+, SQLite-vec, paraphrase-multilingual-MiniLM-L12-v2, Three.js, TipTap, FSRS.
+
+Local-first, MIT, vault files never modified. 127 tests, code review 98/100.
+
+npm install -g stellavault
+
+https://github.com/Evanciel/stellavault
+
+---
+
 ## Discord (Obsidian / Claude / PKM communities)
 
 **Short version:**
-Built Stellavault — self-compiling Obsidian knowledge system with MCP tools for Claude. Drop PDFs, YouTube, docs → auto-wiki. Claude accesses everything. Free, MIT. `npm install -g stellavault` | https://github.com/Evanciel/stellavault
+Built Stellavault — self-compiling Obsidian knowledge system with MCP for Claude. Drop PDFs, YouTube, docs → auto-wiki → Claude accesses everything.
+
+Vision: P2P Knowledge Multiverse — your vault becomes a universe, connecting with peers. Only embeddings shared. Hyperswarm P2P ready.
+
+Free, MIT, local-first. Vault files never modified.
+
+`npm install -g stellavault` | https://github.com/Evanciel/stellavault
