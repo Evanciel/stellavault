@@ -56,24 +56,35 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
+  // GET /api/reindex/status — 인덱싱 진행률 조회
+  let reindexProgress = { active: false, current: 0, total: 0, phase: '' };
+  app.get('/api/reindex/status', (_req, res) => {
+    res.json(reindexProgress);
+  });
+
   // POST /api/reindex — 웹에서 인덱싱 트리거
   let isReindexing = false;
   app.post('/api/reindex', async (_req, res) => {
     if (isReindexing) {
-      res.json({ success: false, error: '인덱싱이 이미 진행 중입니다' });
+      res.json({ success: false, error: 'Reindexing already in progress', progress: reindexProgress });
       return;
     }
     isReindexing = true;
+    reindexProgress = { active: true, current: 0, total: 0, phase: 'initializing' };
     try {
       const indexer = await import('../indexer/index.js');
 
+      reindexProgress.phase = 'loading embedder';
       const embedder = indexer.createLocalEmbedder('all-MiniLM-L6-v2');
       await embedder.initialize();
 
+      reindexProgress.phase = 'indexing';
       const result = await indexer.indexVault(vaultPath, {
         store,
         embedder,
         onProgress: (current: number, total: number) => {
+          reindexProgress.current = current;
+          reindexProgress.total = total;
           if (current % 50 === 0) console.error(`[reindex] ${current}/${total}`);
         },
       });
@@ -92,6 +103,7 @@ export function createApiServer(options: ApiServerOptions) {
       res.status(500).json({ error: `Reindex failed: ${err?.message ?? String(err)}` });
     } finally {
       isReindexing = false;
+      reindexProgress = { active: false, current: 0, total: 0, phase: 'done' };
     }
   });
 

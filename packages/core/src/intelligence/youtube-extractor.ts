@@ -80,7 +80,15 @@ export function formatYouTubeNote(content: YouTubeContent): string {
   lines.push(`> ${content.url}`, '');
 
   if (content.summary) {
-    lines.push(`## ${nt('summary')}`, '', content.summary, '');
+    // 핵심 포인트를 bullet list로 포맷
+    const points = content.summary.split(/[.。!?]\s+/).filter(s => s.length > 15).slice(0, 5);
+    if (points.length > 1) {
+      lines.push(`## Key Points`, '');
+      for (const p of points) lines.push(`- ${p.trim()}`);
+      lines.push('');
+    } else {
+      lines.push(`## ${nt('summary')}`, '', content.summary, '');
+    }
   }
 
   if (content.description.length > 30) {

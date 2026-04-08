@@ -61,9 +61,21 @@ function parseDocument(vaultPath: string, filePath: string): Document {
 
   const tags = extractTags(frontmatter, content);
 
+  // Obsidian frontmatter 호환: aliases를 tags에 추가
+  if (frontmatter.aliases) {
+    const aliases = Array.isArray(frontmatter.aliases) ? frontmatter.aliases : [frontmatter.aliases];
+    for (const alias of aliases) {
+      if (typeof alias === 'string' && alias.length > 1) tags.push(alias);
+    }
+  }
+
   // source/type 자동 추출 (원본 파일 수정 없이 DB에만 저장)
   const source = inferSource(frontmatter, relativePath);
   const type = inferType(frontmatter, relativePath);
+
+  // Obsidian frontmatter 호환: date/created 우선 사용
+  const fmDate = frontmatter.date ?? frontmatter.created ?? frontmatter.created_at;
+  const lastModified = fmDate ? new Date(fmDate as string).toISOString() : stat.mtime.toISOString();
 
   return {
     id,
@@ -72,7 +84,7 @@ function parseDocument(vaultPath: string, filePath: string): Document {
     content,
     frontmatter,
     tags,
-    lastModified: stat.mtime.toISOString(),
+    lastModified,
     contentHash,
     source,
     type,

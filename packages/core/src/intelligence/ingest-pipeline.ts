@@ -226,7 +226,18 @@ function extractAutoTags(content: string, type: string): string[] {
   const inline = content.match(/#([a-zA-Z가-힣][a-zA-Z0-9가-힣_-]{2,})/g) ?? [];
   inline.forEach(t => tags.add(t.slice(1)));
 
-  return [...tags].slice(0, 10);
+  // 스마트 자동 태깅: 문서 내용 분석 → 카테고리 분류
+  const lc = content.toLowerCase();
+  if (/회의|meeting|minutes|참석자|agenda/.test(lc)) tags.add('meeting-notes');
+  if (/기획|prd|요구사항|spec|feature|유저\s*스토리/.test(lc)) tags.add('planning');
+  if (/api|endpoint|서버|backend|database|쿼리/.test(lc)) tags.add('technical');
+  if (/디자인|design|ui|ux|figma|wireframe|mockup/.test(lc)) tags.add('design');
+  if (/논문|paper|abstract|methodology|conclusion|참고문헌/.test(lc)) tags.add('research');
+  if (/tutorial|강의|강좌|배우|learn|course/.test(lc)) tags.add('learning');
+  if (/경쟁|competitor|시장|market|swot|분석/.test(lc)) tags.add('analysis');
+  if (/일기|diary|journal|오늘|today|daily/.test(lc)) tags.add('journal');
+
+  return [...tags].slice(0, 15);
 }
 
 function cleanContent(content: string, type: string): string {
