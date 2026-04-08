@@ -11,12 +11,12 @@ Stellavault turns your Obsidian vault into a self-compiling knowledge system.
 
 Drop a PDF, paste a YouTube link, drag a DOCX — it auto-organizes into a Zettelkasten wiki with linked concepts and backlinks. No manual organizing ever.
 
-Then Claude accesses everything through 21 MCP tools. Ask questions, generate drafts, track fading memories — all from your local knowledge base.
+Then Claude accesses everything through MCP tools. Ask questions, generate drafts, track fading memories — all from your local knowledge base.
 
 **Key features:**
 - Ingest anything: PDF, YouTube (with transcript), DOCX, PPTX, XLSX, URLs
 - Auto-compile: raw notes → linked wiki in <100ms
-- 21 MCP tools for Claude Code integration
+- MCP tools for Claude Code integration
 - 3D neural knowledge graph in your browser
 - TipTap WYSIWYG editor with YouTube embed
 - Session hooks + daily log flush (Karpathy's compounding loop)
@@ -29,7 +29,7 @@ Then Claude accesses everything through 21 MCP tools. Ask questions, generate dr
 
 ## Reddit r/ObsidianMD
 
-**Title:** I built a self-compiling knowledge system for Obsidian — drops any file, auto-organizes into wiki, Claude accesses via 21 MCP tools
+**Title:** I built a self-compiling knowledge system for Obsidian — drops any file, auto-organizes into wiki, Claude accesses via MCP tools
 
 **Body:**
 Hey everyone,
@@ -43,7 +43,7 @@ I've been working on Stellavault — it turns your Obsidian vault into a self-co
 4. Compiles into a structured wiki with concepts + backlinks
 5. Makes everything searchable via hybrid AI search (BM25 + vector)
 
-**The killer feature:** 21 MCP tools for Claude Code. One command (`claude mcp add stellavault -- stellavault serve`) and Claude can search, ask, draft, and navigate your entire vault.
+**The killer feature:** MCP tools for Claude Code. One command (`claude mcp add stellavault -- stellavault serve`) and Claude can search, ask, draft, and navigate your entire vault.
 
 **Other cool stuff:**
 - 3D neural knowledge graph (Three.js)
@@ -100,7 +100,7 @@ Free, MIT, local-first. `npm install -g stellavault`
 
 Drop a PDF, paste a YouTube link, type a thought → it auto-organizes into a Zettelkasten wiki.
 
-Claude accesses everything via 21 MCP tools.
+Claude accesses everything via MCP tools.
 
 Here's how it works: 🧵
 
@@ -119,7 +119,7 @@ Every input goes through the same flow. You never manually organize. Auto-wikili
 
 One command: `stellavault ingest <anything>`
 
-**4/** Claude integration (21 MCP tools):
+**4/** Claude integration (MCP tools):
 
 `claude mcp add stellavault -- stellavault serve`
 
@@ -165,4 +165,4 @@ GitHub: github.com/Evanciel/stellavault
 ## Discord (Obsidian / Claude / PKM communities)
 
 **Short version:**
-Built Stellavault — self-compiling Obsidian knowledge system with 21 MCP tools for Claude. Drop PDFs, YouTube, docs → auto-wiki. Claude accesses everything. Free, MIT. `npm install -g stellavault` | https://github.com/Evanciel/stellavault
+Built Stellavault — self-compiling Obsidian knowledge system with MCP tools for Claude. Drop PDFs, YouTube, docs → auto-wiki. Claude accesses everything. Free, MIT. `npm install -g stellavault` | https://github.com/Evanciel/stellavault
