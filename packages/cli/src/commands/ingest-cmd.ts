@@ -32,7 +32,7 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
       const progress = `[${i + 1}/${files.length}]`;
       process.stderr.write(`\r${chalk.dim(progress)} ${name}...`);
       try {
-        await ingestCommand(file, { ...options, title: undefined });
+        await ingestSingleFile(file, options);
         success++;
       } catch (err) {
         failed.push(`${name}: ${err instanceof Error ? err.message : 'error'}`);
@@ -47,6 +47,11 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
     return;
   }
 
+  await ingestSingleFile(input, options);
+}
+
+/** 단일 파일/URL/텍스트 인제스트 (배치에서 재사용) */
+async function ingestSingleFile(input: string, options: { tags?: string; stage?: string; title?: string }) {
   const config = loadConfig();
   const tags = options.tags?.split(',').map(t => t.trim()) ?? [];
   const stage = (options.stage ?? 'fleeting') as 'fleeting' | 'literature' | 'permanent';
@@ -97,8 +102,8 @@ export async function ingestCommand(input: string, options: { tags?: string; sta
       // 일반 URL: HTML → 텍스트 변환
       let content = input + '\n';
       try {
-        const resp = await fetch(input);
-        const html = await resp.text();
+        const resp = await fetch(input, { signal: AbortSignal.timeout(15000) });
+        const html = (await resp.text()).slice(0, 500000); // 500KB max
         const text = html
           .replace(/<script[\s\S]*?<\/script>/gi, '')
           .replace(/<style[\s\S]*?<\/style>/gi, '')

@@ -67,6 +67,7 @@ export function SearchBar() {
       // 카메라 이동
       if (node.position) {
         const controls = (window as any).__sv_controls?.current;
+        if (!controls) { console.warn('[search] Camera controls not available'); }
         if (controls) {
           const target = new THREE.Vector3(...node.position);
           const startTarget = controls.target.clone();

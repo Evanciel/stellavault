@@ -125,7 +125,7 @@ export function ingest(
     if (existsSync(rawDir)) {
       compileWiki(rawDir, wikiDir);
     }
-  } catch { /* compile 실패해도 ingest 성공 */ }
+  } catch (err) { console.warn('[ingest] Auto-compile skipped:', err instanceof Error ? err.message : err); }
 
   return {
     savedTo: filePath,
