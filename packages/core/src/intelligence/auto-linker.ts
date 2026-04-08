@@ -101,9 +101,13 @@ export function insertWikilinks(body: string, vaultTitles: string[], selfTitle?:
   const sortedPhrases = [...phraseToTitle.keys()].sort((a, b) => b.length - a.length);
   const linkedPhrases = new Set<string>(); // 이미 링크된 구문 (중복 방지)
 
+  const contentLower = content.toLowerCase();
   for (const phrase of sortedPhrases) {
     const targetTitle = phraseToTitle.get(phrase)!;
-    if (linkedPhrases.has(targetTitle)) continue; // 같은 노트에 여러 구문 매칭 방지
+    if (linkedPhrases.has(targetTitle)) continue;
+
+    // 사전 필터: 본문에 포함되지 않으면 regex 생성 스킵 (성능 최적화)
+    if (!contentLower.includes(phrase.toLowerCase())) continue;
 
     const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(

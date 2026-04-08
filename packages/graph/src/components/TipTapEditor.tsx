@@ -9,6 +9,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
 
 interface TipTapEditorProps {
   content: string;        // markdown 원문
@@ -20,7 +21,7 @@ interface TipTapEditorProps {
 
 /** 간단한 markdown → HTML 변환 (TipTap이 이해하는 수준) */
 function markdownToHtml(md: string): string {
-  return md
+  const result = md
     // frontmatter 제거
     .replace(/^---[\s\S]*?---\n?/, '')
     // wikilinks → 일반 링크
@@ -55,6 +56,7 @@ function markdownToHtml(md: string): string {
     .replace(/^(?!<[a-z])((?!^\s*$).+)$/gm, '<p>$1</p>')
     // cleanup empty paragraphs
     .replace(/<p>\s*<\/p>/g, '');
+  return DOMPurify.sanitize(result, { ADD_TAGS: ['iframe'], ADD_ATTR: ['allowfullscreen', 'frameborder', 'data-id', 'data-type', 'data-checked'] });
 }
 
 /** HTML → 간단한 markdown 변환 */
@@ -146,7 +148,7 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
         const files = event.dataTransfer?.files;
         if (!files?.length) return false;
         const file = files[0];
-        if (!file.type.startsWith('image/')) return false;
+        if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) return false;
         event.preventDefault();
         const reader = new FileReader();
         reader.onload = () => {
@@ -263,7 +265,7 @@ export function TipTapEditor({ content, isDark, onSave, editable = true, onWikil
           />
           <button
             onClick={() => {
-              if (imageUrl) { editor.chain().focus().setImage({ src: imageUrl }).run(); setImageUrl(''); setShowImageInput(false); }
+              if (imageUrl && /^https?:\/\//.test(imageUrl)) { editor.chain().focus().setImage({ src: imageUrl }).run(); setImageUrl(''); setShowImageInput(false); }
             }}
             style={{ padding: '3px 10px', background: isDark ? '#6366f1' : '#e0e7ff', border: 'none', borderRadius: '4px', color: isDark ? '#fff' : '#6366f1', fontSize: '11px', cursor: 'pointer' }}
           >

@@ -1,7 +1,7 @@
 // Design Ref: §file-ingest-v2 — Binary file text extraction dispatchers
 // Plan SC: SC1-SC5 (format-specific extraction + fallback)
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { extname, basename } from 'node:path';
 
 export interface ExtractedContent {
@@ -26,8 +26,14 @@ export function isBinaryFormat(filePath: string): boolean {
  * 지원: .pdf, .docx, .pptx, .xlsx, .xls
  * 미지원 확장자: utf-8 텍스트로 읽기
  */
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
 export async function extractFileContent(filePath: string): Promise<ExtractedContent> {
   const ext = extname(filePath).toLowerCase();
+  const { size } = statSync(filePath);
+  if (size > MAX_FILE_SIZE) {
+    throw new Error(`File too large (${Math.round(size / 1024 / 1024)}MB > 50MB limit)`);
+  }
   const buffer = readFileSync(filePath);
 
   switch (ext) {

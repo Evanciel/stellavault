@@ -73,7 +73,7 @@ export function ContextMenu() {
         setShowAddForm(false);
         setPos(null);
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.error(err); alert('Operation failed. Please try again.'); }
   }, [newTitle]);
 
   const handleConnect = useCallback(async (fromId: string, toId: string) => {
@@ -103,7 +103,7 @@ export function ContextMenu() {
           useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
         }
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.error(err); alert('Operation failed. Please try again.'); }
     setPos(null);
   }, [nodes]);
 
@@ -119,7 +119,7 @@ export function ContextMenu() {
       if (graphData.data?.nodes) {
         useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.error(err); alert('Operation failed. Please try again.'); }
     setPos(null);
   }, [selectedNodeId, nodes]);
 

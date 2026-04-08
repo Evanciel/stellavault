@@ -97,7 +97,7 @@ export function ingest(
       filePath, title, tags, connections: [], wordCount,
     }]);
     indexCode = assignments.get(filePath);
-  } catch { /* index code is optional */ }
+  } catch (err) { console.warn('[ingest] Index code skipped:', err instanceof Error ? err.message : err); }
 
   // Stellavault 표준 포맷으로 저장
   let md = buildStandardNote({
@@ -114,7 +114,7 @@ export function ingest(
   // wikilink 자동 삽입: 기존 노트 제목과 매칭
   try {
     md = autoLink(md, vaultPath, title, folders);
-  } catch { /* autoLink 실패해도 저장은 진행 */ }
+  } catch (err) { console.warn('[ingest] Auto-link skipped:', err instanceof Error ? err.message : err); }
 
   writeFileSync(fullPath, md, 'utf-8');
 
@@ -277,10 +277,10 @@ function buildStandardNote(params: {
     '---',
     `title: "${sanitizeYaml(params.title)}"`,
     `type: ${params.stage}`,
-    `source: ${params.source}`,
+    `source: "${sanitizeYaml(params.source)}"`,
     `input_type: ${params.inputType}`,
     params.indexCode ? `zettel_id: "${params.indexCode}"` : null,
-    `tags: [${params.tags.map(t => `"${t}"`).join(', ')}]`,
+    `tags: [${params.tags.map(t => `"${sanitizeYaml(t)}"`).join(', ')}]`,
     `created: ${params.created}`,
     `summary: "${sanitizeYaml(params.body.slice(0, 100))}"`,
     '---',
