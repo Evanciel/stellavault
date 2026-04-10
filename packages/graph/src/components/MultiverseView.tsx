@@ -278,15 +278,19 @@ export function MultiverseView() {
           <button
             onClick={async () => {
               try {
-                const resp = await fetch('/api/federate/join', { method: 'POST' });
+                const resp = await fetch('/api/federate/join', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                });
                 const data = await resp.json();
                 if (data.success) {
-                  alert('Connected to Stella Network! Peers will appear as they join.');
+                  alert(`Connected to Stella Network as ${data.displayName ?? 'Stella'}. Peers will appear as they join.`);
                 } else {
-                  alert('Federation not yet available in this build. Run: stellavault federate join');
+                  alert(data.message || data.error || 'Federation unavailable in this build.');
                 }
               } catch {
-                alert('Federation API not available. Run in terminal: stellavault federate join');
+                alert('Federation API not reachable. Is the graph server running?');
               }
             }}
             style={{

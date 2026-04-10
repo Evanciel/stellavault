@@ -34,10 +34,15 @@ import { autopilotCommand } from './commands/autopilot-cmd.js';
 
 const program = new Command();
 
+// __SV_VERSION__ is replaced at bundle time by scripts/bundle-cli.mjs (esbuild define).
+// Fallback used only during raw `tsc` + direct node runs (dev).
+declare const __SV_VERSION__: string | undefined;
+const SV_VERSION = typeof __SV_VERSION__ !== 'undefined' ? __SV_VERSION__ : '0.0.0-dev';
+
 program
   .name('stellavault')
   .description('Stellavault — Turn your Obsidian vault into a 3D neural knowledge graph')
-  .version('0.5.0')
+  .version(SV_VERSION)
   .option('--json', 'Output in JSON format (for scripting)')
   .option('--quiet', 'Suppress non-essential output');
 

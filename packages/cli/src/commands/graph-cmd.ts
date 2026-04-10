@@ -4,8 +4,47 @@
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, createApiServer } from '@stellavault/core';
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Locate the bundled graph UI (produced by scripts/bundle-cli.mjs).
+ *
+ * Looks in two places, in order:
+ *   1. `dist/graph-ui/` — this is where the published npm package puts it,
+ *      sibling to the single-file bundle `dist/stellavault.js`.
+ *   2. `packages/graph/dist/` — dev source tree layout, when running without
+ *      a published bundle.
+ *
+ * Returns absolute path to the directory containing `index.html`, or null
+ * if neither location is populated.
+ */
+function locateBundledGraphUi(): string | null {
+  // At runtime, `import.meta.url` resolves to the ACTUALLY EXECUTING file.
+  // - Published package: .../node_modules/stellavault/dist/stellavault.js
+  // - Dev source tree:   .../packages/cli/dist/commands/graph-cmd.js
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    // Path 1: bundled install — sibling directory
+    const bundled = resolve(here, 'graph-ui');
+    if (existsSync(resolve(bundled, 'index.html'))) return bundled;
+
+    // Path 2: walk up from dev dist toward monorepo root
+    // packages/cli/dist/commands → ../../../graph/dist
+    const monorepoGraphDist = resolve(here, '..', '..', '..', 'graph', 'dist');
+    if (existsSync(resolve(monorepoGraphDist, 'index.html'))) return monorepoGraphDist;
+
+    // Path 3: walk up further for the bundled single-file case that lives at
+    // <pkg>/dist/stellavault.js (graph-ui is literal sibling)
+    const singleFileBundle = resolve(here, '..', 'dist', 'graph-ui');
+    if (existsSync(resolve(singleFileBundle, 'index.html'))) return singleFileBundle;
+  } catch {
+    // fileURLToPath can throw under unusual loaders — fall through to null
+  }
+  return null;
+}
 
 export async function graphCommand() {
   const config = loadConfig();
@@ -21,19 +60,24 @@ export async function graphCommand() {
     process.exit(1);
   }
 
-  // API 서버 시작
   const port = config.mcp.port || 3333;
-  // vault 이름 추출 (경로의 마지막 디렉토리명)
   const vaultName = config.vaultPath
     ? config.vaultPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? ''
     : '';
+
+  // Resolve bundled graph UI BEFORE starting the API server so the server
+  // can register static-file routes.
+  const graphUiPath = locateBundledGraphUi();
+
   const api = createApiServer({
     store: hub.store,
     searchEngine: hub.searchEngine,
     port,
     vaultName,
     vaultPath: config.vaultPath,
+    graphUiPath: graphUiPath ?? undefined,
   });
+
   try {
     await api.start();
   } catch (err: any) {
@@ -50,22 +94,34 @@ export async function graphCommand() {
   console.error(`   📚 ${stats.documentCount} documents | ${stats.chunkCount} chunks`);
   console.error(`   🌐 API: http://127.0.0.1:${port}`);
 
-  // Vite dev 서버 시작 시도
-  const graphDir = resolve(process.cwd(), 'packages/graph');
-  const hasGraph = existsSync(resolve(graphDir, 'package.json'));
+  if (graphUiPath) {
+    // Bundled UI is served directly by the API server on the same port.
+    const url = `http://127.0.0.1:${port}/`;
+    console.error(chalk.green(`   🔮 Graph: ${url}`));
+    console.error(chalk.dim(`   Press Ctrl+C to stop`));
+    openBrowser(url);
 
-  if (hasGraph) {
+    process.on('SIGINT', () => process.exit(0));
+    return;
+  }
+
+  // Dev fallback: no bundled UI → try to spawn Vite from packages/graph/ in the cwd.
+  // This is the path used when running `node dist/stellavault.js graph` from the
+  // monorepo root during development.
+  const devGraphDir = resolve(process.cwd(), 'packages/graph');
+  const hasDevGraph = existsSync(resolve(devGraphDir, 'package.json'));
+
+  if (hasDevGraph) {
     console.error(chalk.dim('   🚀 Starting Vite dev server...'));
 
     const vite = spawn('npx', ['vite', '--host'], {
-      cwd: graphDir,
+      cwd: devGraphDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: true,
     });
 
     vite.stderr.on('data', (data: Buffer) => {
       const line = data.toString();
-      // Vite ready 메시지 감지 → 브라우저 열기
       if (line.includes('Local:')) {
         const match = line.match(/http:\/\/localhost:\d+/);
         const url = match?.[0] ?? 'http://localhost:5173';
@@ -83,7 +139,7 @@ export async function graphCommand() {
       process.exit(0);
     });
   } else {
-    console.error(chalk.dim('   💡 Graph UI not found. Open http://127.0.0.1:' + port + '/api/graph'));
+    console.error(chalk.yellow('   ⚠ Bundled graph UI missing. Reinstall stellavault: npm i -g stellavault@latest'));
   }
 
   console.error(chalk.dim('   Press Ctrl+C to stop'));
@@ -94,6 +150,6 @@ async function openBrowser(url: string) {
     const open = await import('open');
     await open.default(url);
   } catch {
-    // open 패키지 없으면 무시
+    // open package absent — ignore
   }
 }

@@ -17,14 +17,22 @@ export interface ApiServerOptions {
   vaultName?: string;
   vaultPath?: string;
   decayEngine?: DecayEngine;
+  /** Absolute path to the pre-built graph UI (vite dist). If set, `/` serves index.html and /assets/* is static. */
+  graphUiPath?: string;
 }
 
 export function createApiServer(options: ApiServerOptions) {
-  const { store, searchEngine, port = 3333, vaultName = '', vaultPath = '', decayEngine } = options;
+  const { store, searchEngine, port = 3333, vaultName = '', vaultPath = '', decayEngine, graphUiPath } = options;
   const app = express();
 
   app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }));
   app.use(express.json());
+
+  // Serve bundled graph UI when present (installed-from-npm path).
+  // In dev mode graphUiPath is undefined and CLI spawns Vite instead.
+  if (graphUiPath) {
+    app.use(express.static(graphUiPath, { index: 'index.html', extensions: ['html'] }));
+  }
 
   // GET /api/graph?mode=semantic|folder — 전체 그래프 데이터
   const graphCaches = new Map<string, { data: any; generatedAt: string }>();
@@ -1140,6 +1148,122 @@ export function createApiServer(options: ApiServerOptions) {
       console.error(err); res.status(500).json({ error: 'Clip failed' });
     }
   });
+
+  // ───── Federation ─────────────────────────────────────────
+  // Design Ref: §4 — Federation (Hyperswarm P2P, embedding-only sharing)
+  // State lives inside closure so routes share it across requests.
+  // hyperswarm is an optionalDependency — if it's missing we return
+  // { available: false } rather than throwing, so UI degrades gracefully.
+  let federationNode: any = null;
+  let federationAvailable: boolean | null = null; // null = unknown until probed
+
+  async function probeFederationAvailable(): Promise<boolean> {
+    if (federationAvailable !== null) return federationAvailable;
+    try {
+      // Dynamic import so a missing optionalDependency doesn't crash the server
+      await import('hyperswarm');
+      federationAvailable = true;
+    } catch {
+      federationAvailable = false;
+    }
+    return federationAvailable;
+  }
+
+  app.get('/api/federate/status', async (_req, res) => {
+    const available = await probeFederationAvailable();
+    if (!available) {
+      return res.json({ available: false, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
+    }
+    if (!federationNode || !federationNode.isRunning) {
+      return res.json({ available: true, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
+    }
+    try {
+      const peers = (federationNode.getPeers() as any[]).map((p: any) => ({
+        peerId: p.peerId || '',
+        displayName: p.displayName || 'Peer',
+        documentCount: p.documentCount ?? 0,
+        topTopics: p.topTopics ?? [],
+      }));
+      res.json({
+        available: true,
+        active: true,
+        peerCount: peers.length,
+        peers,
+        displayName: federationNode.displayName,
+        peerId: federationNode.peerId,
+      });
+    } catch (err) {
+      console.error(err);
+      res.json({ available: true, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
+    }
+  });
+
+  app.post('/api/federate/join', async (req, res) => {
+    const available = await probeFederationAvailable();
+    if (!available) {
+      return res.status(501).json({
+        success: false,
+        error: 'federation-unavailable',
+        message: 'Federation requires optional dependency "hyperswarm". Reinstall stellavault with hyperswarm enabled.',
+      });
+    }
+    if (federationNode && federationNode.isRunning) {
+      return res.json({
+        success: true,
+        active: true,
+        displayName: federationNode.displayName,
+        peerId: federationNode.peerId,
+        peerCount: federationNode.peerCount,
+        message: 'Already joined',
+      });
+    }
+    try {
+      const { FederationNode } = await import('../federation/index.js');
+      const displayName = (req.body?.displayName as string) || undefined;
+      federationNode = new FederationNode(displayName);
+
+      // Announce our local stats so peers see our doc count
+      try {
+        const stats = await store.getStats();
+        federationNode.setLocalStats(stats.documentCount ?? 0, []);
+      } catch { /* non-fatal */ }
+
+      await federationNode.join();
+      res.json({
+        success: true,
+        active: true,
+        displayName: federationNode.displayName,
+        peerId: federationNode.peerId,
+        peerCount: federationNode.peerCount,
+      });
+    } catch (err: any) {
+      console.error('Federation join failed:', err);
+      federationNode = null;
+      res.status(500).json({ success: false, error: err?.message || 'Federation join failed' });
+    }
+  });
+
+  app.post('/api/federate/leave', async (_req, res) => {
+    if (!federationNode || !federationNode.isRunning) {
+      return res.json({ success: true, active: false, message: 'Not active' });
+    }
+    try {
+      await federationNode.leave();
+      federationNode = null;
+      res.json({ success: true, active: false });
+    } catch (err: any) {
+      console.error('Federation leave failed:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Federation leave failed' });
+    }
+  });
+
+  // SPA fallback — any non-/api route serves the built index.html.
+  // Registered AFTER all /api routes so it can't shadow them.
+  if (graphUiPath) {
+    app.get(/^(?!\/api\/).*/, (_req, res) => {
+      res.sendFile(`${graphUiPath}/index.html`);
+    });
+  }
 
   return {
     async start() {

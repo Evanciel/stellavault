@@ -1,6 +1,6 @@
 {
   "name": "stellavault",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "description": "Drop anything. It compiles itself into knowledge. Claude remembers everything you know. Local-first MCP server, vault files never modified.",
   "repository": {
     "type": "git",
@@ -19,6 +19,7 @@
   },
   "files": [
     "dist/stellavault.js",
+    "dist/graph-ui/**",
     "README.md",
     "LICENSE",
     "SECURITY.md"
@@ -34,7 +35,9 @@
     "bundle": "node scripts/bundle-cli.mjs",
     "test": "npm run test --workspaces --if-present",
     "sync": "npm run sync --workspace=@stellavault/sync",
-    "dev:core": "npm run dev --workspace=@stellavault/core"
+    "dev:core": "npm run dev --workspace=@stellavault/core",
+    "prepack": "node scripts/prepack.mjs",
+    "postpack": "node scripts/postpack.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

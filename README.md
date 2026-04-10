@@ -32,6 +32,8 @@ stellavault graph         # Launch 3D graph + API server
 ```
 
 > **Prerequisites**: Node.js 20+
+>
+> **Upgrading from 0.4.x / 0.5.0 / 0.5.1 / 0.5.2?** Earlier releases had two showstopper packaging bugs: the `stellavault` bin shim wasn't being created after install (0.4.x–0.5.1), and the 3D graph UI wasn't bundled at all so `stellavault graph` had nothing to serve (0.4.x–0.5.2). **v0.5.3 fixes both** — the graph UI is now bundled into the npm package and served directly by the API server on the same port. Reinstall: `npm i -g stellavault@latest`.
 
 ## The Pipeline
 
@@ -193,6 +195,9 @@ stellavault autopilot                          # Full cycle: inbox → compile �
 
 Your vault is a universe. Connect with others through P2P federation.
 
+**From the web UI** (easiest): open `stellavault graph`, then click the **Offline · Join** badge in the top-left header. Live peer count, one-click disconnect, and a popover showing connected peers.
+
+**From the CLI**:
 ```bash
 stellavault federate join    # Connect to the Stella Network
 stellavault federate status  # See connected peers
