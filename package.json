@@ -1,6 +1,6 @@
 {
   "name": "stellavault",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Drop anything. It compiles itself into knowledge. Claude remembers everything you know. Local-first MCP server, vault files never modified.",
   "repository": {
     "type": "git",
