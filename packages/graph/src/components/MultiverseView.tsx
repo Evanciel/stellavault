@@ -267,16 +267,40 @@ export function MultiverseView() {
         <div style={{
           position: 'absolute', bottom: '60px', left: '50%', transform: 'translateX(-50%)',
           color: isDark ? '#667' : '#999', fontSize: '12px', textAlign: 'center',
-          background: isDark ? 'rgba(10,10,30,0.8)' : 'rgba(255,255,255,0.9)',
-          padding: '12px 20px', borderRadius: '8px',
-          border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.1)'}`,
-          maxWidth: '320px',
+          background: isDark ? 'rgba(10,10,30,0.85)' : 'rgba(255,255,255,0.95)',
+          padding: '14px 20px', borderRadius: '10px',
+          border: `1px solid ${isDark ? 'rgba(100,120,255,0.2)' : 'rgba(0,0,0,0.1)'}`,
+          maxWidth: '380px',
         }}>
-          <div style={{ marginBottom: '6px', color: isDark ? '#aab' : '#555' }}>
+          <div style={{ marginBottom: '10px', color: isDark ? '#aab' : '#555', fontSize: '13px' }}>
             Your universe floats alone — for now.
           </div>
-          <div style={{ fontSize: '11px' }}>
-            Run <code style={{ background: isDark ? 'rgba(100,120,255,0.1)' : 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: '3px' }}>stellavault federate join</code> to connect to the P2P network.
+          <button
+            onClick={async () => {
+              try {
+                const resp = await fetch('/api/federate/join', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                  alert('Connected to Stella Network! Peers will appear as they join.');
+                } else {
+                  alert('Federation not yet available in this build. Run: stellavault federate join');
+                }
+              } catch {
+                alert('Federation API not available. Run in terminal: stellavault federate join');
+              }
+            }}
+            style={{
+              padding: '8px 20px', fontSize: '12px',
+              background: isDark ? '#6366f1' : '#e0e7ff',
+              border: 'none', borderRadius: '6px',
+              color: isDark ? '#fff' : '#6366f1',
+              cursor: 'pointer', fontWeight: 600, marginBottom: '8px',
+            }}
+          >
+            Connect to Stella Network
+          </button>
+          <div style={{ fontSize: '10px', color: isDark ? '#556' : '#aaa' }}>
+            Only embeddings shared — never original text.
           </div>
         </div>
       )}

@@ -96,20 +96,23 @@ export function Graph3D() {
       // 클릭 시 항상 pulse 중단
       (window as any).__sv_stopPulse?.();
 
-      if (state.hoveredNodeId) {
-        if (state.selectedNodeId === state.hoveredNodeId) {
-          state.selectNode(null);
-        } else {
-          state.selectNode(state.hoveredNodeId);
+      // 약간의 지연을 둬서 R3F onClick이 먼저 처리되도록
+      setTimeout(() => {
+        const currentState = useGraphStore.getState();
+        if (currentState.hoveredNodeId) {
+          if (currentState.selectedNodeId === currentState.hoveredNodeId) {
+            currentState.selectNode(null);
+          } else {
+            currentState.selectNode(currentState.hoveredNodeId);
+          }
+        } else if (!currentState.selectedNodeId) {
+          // 빈 곳 클릭이고 선택된 것도 없음 → 하이라이트 해제
+          if (currentState.highlightedNodeIds.size > 0) {
+            currentState.setHighlightedNodes([]);
+            (window as any).__sv_resetCamera?.();
+          }
         }
-      } else {
-        // 빈 곳 클릭 → 전부 해제 + 카메라 원점
-        state.selectNode(null);
-        if (state.highlightedNodeIds.size > 0) {
-          state.setHighlightedNodes([]);
-          (window as any).__sv_resetCamera?.();
-        }
-      }
+      }, 10);
     }
 
     function resetCamera() {
@@ -228,7 +231,7 @@ export function Graph3D() {
     <>
     <Canvas
       camera={{ position: [0, 100, 600], fov: 55, near: 1, far: 5000 }}
-      raycaster={{ params: { Points: { threshold: 8 } } } as any}
+      raycaster={{ params: { Points: { threshold: 15 } } } as any}
       style={{ background: bgStyle }}
       gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
     >
