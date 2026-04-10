@@ -33,7 +33,7 @@ stellavault graph         # Launch 3D graph + API server
 
 > **Prerequisites**: Node.js 20+
 >
-> **Upgrading from 0.4.x / 0.5.0 / 0.5.1 / 0.5.2?** Earlier releases had two showstopper packaging bugs: the `stellavault` bin shim wasn't being created after install (0.4.x–0.5.1), and the 3D graph UI wasn't bundled at all so `stellavault graph` had nothing to serve (0.4.x–0.5.2). **v0.5.3 fixes both** — the graph UI is now bundled into the npm package and served directly by the API server on the same port. Reinstall: `npm i -g stellavault@latest`.
+> **Upgrading from 0.4.x / 0.5.0 / 0.5.1 / 0.5.2 / 0.5.3?** Earlier releases had three showstopper packaging bugs: the `stellavault` bin shim wasn't created after install (0.4.x–0.5.1), the 3D graph UI wasn't bundled (0.4.x–0.5.2), and the SPA fallback was hijacking `/sw.js` and `/manifest.json` causing PWA install errors (0.5.3). **v0.5.4 fixes all of these and is verified end-to-end with Playwright (9/9 checks)** — install, bin link, graph UI, node click, federation toggle, PWA assets, zero console errors. Reinstall: `npm i -g stellavault@latest`.
 
 ## The Pipeline
 

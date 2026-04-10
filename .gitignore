@@ -56,3 +56,4 @@ packages/graph/*.png
 # Stray files (not part of project)
 unnamed*.png
 Autonomous_Knowledge_Foundry.pdf
+tmp-pw/

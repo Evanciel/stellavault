@@ -1257,10 +1257,13 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
-  // SPA fallback — any non-/api route serves the built index.html.
-  // Registered AFTER all /api routes so it can't shadow them.
+  // SPA fallback — any non-/api route without a file extension serves
+  // the built index.html. URLs that look like static file requests
+  // (e.g. /manifest.json, /sw.js, /favicon.ico) are 404'd by static
+  // middleware above instead of being shadowed by index.html — otherwise
+  // the browser warns about wrong MIME types and PWA installs break.
   if (graphUiPath) {
-    app.get(/^(?!\/api\/).*/, (_req, res) => {
+    app.get(/^(?!\/api\/)(?!.*\.[a-z0-9]+$).*$/i, (_req, res) => {
       res.sendFile(`${graphUiPath}/index.html`);
     });
   }

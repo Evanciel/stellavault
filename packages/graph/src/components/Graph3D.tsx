@@ -1,6 +1,6 @@
 // R3F Canvas — 클릭 = mousedown/up 거리 판정 (R3F 이벤트 회피)
 
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
@@ -22,6 +22,17 @@ function Scene() {
   useDecay(); // 감쇠 데이터 로딩
   useKeyboardNav(); // 키보드 그래프 탐색
   const { startPulse, stopPulse } = usePulse();
+
+  // Expose Three.js scene + camera for E2E tests (scripts/pw-verify.mjs).
+  // useThree() lives in the R3F Canvas context, so this is the only place
+  // we can cleanly grab the root scene reference.
+  const { scene, camera, gl } = useThree();
+  useEffect(() => {
+    (window as any).__sv_scene = scene;
+    (window as any).__sv_camera = camera;
+    (window as any).__sv_gl = gl;
+    (window as any).__sv_store = useGraphStore;
+  }, [scene, camera, gl]);
   const hoveredNodeId = useGraphStore((s) => s.hoveredNodeId);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const highlightedNodeIds = useGraphStore((s) => s.highlightedNodeIds);

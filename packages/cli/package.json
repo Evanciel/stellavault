@@ -14,6 +14,7 @@
     "@stellavault/core": "*",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
+    "esbuild": "^0.28.0",
     "open": "^11.0.0",
     "ora": "^9.3.0"
   },

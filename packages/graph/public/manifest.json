@@ -1,0 +1,11 @@
+{
+  "name": "Stellavault",
+  "short_name": "Stellavault",
+  "description": "3D neural knowledge graph for your Obsidian vault",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050510",
+  "theme_color": "#6366f1",
+  "orientation": "any",
+  "icons": []
+}
