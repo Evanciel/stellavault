@@ -15,11 +15,11 @@ export async function duplicatesCommand(options: { threshold?: string }) {
   const pairs = await detectDuplicates(hub.store, threshold, 20);
 
   if (pairs.length === 0) {
-    console.log(chalk.green('\n✨ 중복 노트가 없습니다!'));
+    console.log(chalk.green('\n✨ No duplicate notes found!'));
     return;
   }
 
-  console.log(chalk.yellow(`\n🔍 유사 노트 ${pairs.length}쌍 발견 (threshold: ${threshold})`));
+  console.log(chalk.yellow(`\n🔍 Found ${pairs.length} similar note pairs (threshold: ${threshold})`));
   console.log(chalk.dim('─'.repeat(60)));
 
   for (let i = 0; i < pairs.length; i++) {
@@ -27,12 +27,12 @@ export async function duplicatesCommand(options: { threshold?: string }) {
     const pct = Math.round(p.similarity * 100);
     const color = pct >= 95 ? chalk.red : chalk.yellow;
 
-    console.log(`\n${chalk.bold(`[${i + 1}]`)} ${color(`${pct}% 유사`)}`);
+    console.log(`\n${chalk.bold(`[${i + 1}]`)} ${color(`${pct}% similar`)}`);
     console.log(`  A: ${chalk.cyan(p.docA.title)}`);
     console.log(`     ${chalk.dim(p.docA.filePath)}`);
     console.log(`  B: ${chalk.cyan(p.docB.title)}`);
     console.log(`     ${chalk.dim(p.docB.filePath)}`);
   }
 
-  console.log(chalk.dim('\n💡 Obsidian에서 직접 병합하거나 삭제하세요'));
+  console.log(chalk.dim('\n💡 Merge or delete duplicates in Obsidian'));
 }

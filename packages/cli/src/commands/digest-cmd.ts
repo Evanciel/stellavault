@@ -10,9 +10,9 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
 
   await hub.store.initialize();
   const db = hub.store.getDb() as any;
-  if (!db) { console.error(chalk.red('❌ DB 접근 불가')); process.exit(1); }
+  if (!db) { console.error(chalk.red('❌ Cannot access database')); process.exit(1); }
 
-  console.log(chalk.green(`\n📊 지식 활동 리포트 (최근 ${days}일)`));
+  console.log(chalk.green(`\n📊 Knowledge activity report (last ${days} days)`));
   console.log(chalk.dim('─'.repeat(50)));
 
   // 1. 접근 통계
@@ -23,10 +23,10 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
   `).all() as any[];
 
   const totalAccess = accessStats.reduce((s: number, r: any) => s + r.cnt, 0);
-  console.log(`\n🔍 총 접근: ${chalk.bold(String(totalAccess))}회`);
+  console.log(`\n🔍 Total access: ${chalk.bold(String(totalAccess))} times`);
   for (const r of accessStats) {
     const icon = r.access_type === 'view' ? '👁️' : r.access_type === 'search' ? '🔍' : '🤖';
-    console.log(`  ${icon} ${r.access_type}: ${r.cnt}회`);
+    console.log(`  ${icon} ${r.access_type}: ${r.cnt} times`);
   }
 
   // 2. 가장 많이 본 노트
@@ -40,10 +40,10 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
   `).all() as any[];
 
   if (topDocs.length > 0) {
-    console.log(chalk.dim(`\n📄 가장 많이 접근한 노트:`));
+    console.log(chalk.dim(`\n📄 Most accessed notes:`));
     for (const d of topDocs) {
       const bar = '█'.repeat(Math.min(d.cnt, 20));
-      console.log(`  ${chalk.cyan(bar)} ${d.cnt}회 ${d.title}`);
+      console.log(`  ${chalk.cyan(bar)} ${d.cnt} views ${d.title}`);
     }
   }
 
@@ -55,7 +55,7 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
   `).all() as any[];
 
   if (dailyActivity.length > 0) {
-    console.log(chalk.dim('\n📅 일별 활동:'));
+    console.log(chalk.dim('\n📅 Daily activity:'));
     const maxCnt = Math.max(...dailyActivity.map((d: any) => d.cnt));
     for (const d of dailyActivity) {
       const barLen = Math.round((d.cnt / maxCnt) * 20);
@@ -74,16 +74,16 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
   `).all() as any[];
 
   if (typeStats.length > 0) {
-    console.log(chalk.dim('\n📊 접근한 노트 유형:'));
+    console.log(chalk.dim('\n📊 Note types accessed:'));
     for (const t of typeStats) {
-      console.log(`  ${t.type}: ${t.cnt}개`);
+      console.log(`  ${t.type}: ${t.cnt}`);
     }
   }
 
   // 5. 감쇠 변화
   const decayEngine = new DecayEngine(db);
   const report = await decayEngine.computeAll();
-  console.log(`\n🧠 건강도: R=${report.averageR} | 감쇠 ${report.decayingCount}개 | 위험 ${report.criticalCount}개`);
+  console.log(`\n🧠 Health: R=${report.averageR} | Decaying ${report.decayingCount} | Critical ${report.criticalCount}`);
 
   console.log(chalk.dim('\n═'.repeat(50)));
 

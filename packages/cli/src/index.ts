@@ -31,20 +31,35 @@ import { lintCommand } from './commands/lint-cmd.js';
 import { fleetingCommand } from './commands/fleeting-cmd.js';
 import { ingestCommand, promoteCommand } from './commands/ingest-cmd.js';
 import { autopilotCommand } from './commands/autopilot-cmd.js';
+import { doctorCommand } from './commands/doctor-cmd.js';
+
+// ─── Node.js version gate ────────────────────────────────────
+// Must run before ANY import that touches native modules so the
+// user gets a clear message instead of a cryptic SyntaxError.
+const nodeVersion = parseInt(process.versions.node.split('.')[0], 10);
+if (nodeVersion < 20) {
+  console.error(
+    `\n  Stellavault requires Node.js 20 or later.\n` +
+    `  You are running Node.js ${process.versions.node}.\n\n` +
+    `  Download the latest LTS: https://nodejs.org\n`,
+  );
+  process.exit(1);
+}
 
 const program = new Command();
 
 // __SV_VERSION__ is replaced at bundle time by scripts/bundle-cli.mjs (esbuild define).
-// Fallback used only during raw `tsc` + direct node runs (dev).
 declare const __SV_VERSION__: string | undefined;
 const SV_VERSION = typeof __SV_VERSION__ !== 'undefined' ? __SV_VERSION__ : '0.0.0-dev';
 
 program
   .name('stellavault')
-  .description('Stellavault — Turn your Obsidian vault into a 3D neural knowledge graph')
+  .description('Stellavault — Self-compiling knowledge base for your Obsidian vault')
   .version(SV_VERSION)
   .option('--json', 'Output in JSON format (for scripting)')
   .option('--quiet', 'Suppress non-essential output');
+
+// ─── Getting started ─────────────────────────────────────────
 
 program
   .command('init')
@@ -52,41 +67,88 @@ program
   .action(initCommand);
 
 program
+  .command('doctor')
+  .description('Diagnose setup issues (config, vault, DB, model, Node version)')
+  .action(doctorCommand);
+
+program
   .command('index [vault-path]')
-  .description('Obsidian vault를 벡터화하여 인덱싱합니다')
+  .description('Index your vault (vectorize all documents for search)')
   .action(indexCommand);
 
 program
+  .command('status')
+  .description('Show index status (document count, last indexed, DB size)')
+  .action(statusCommand);
+
+// ─── Core features ───────────────────────────────────────────
+
+program
   .command('search <query>')
-  .description('지식 베이스에서 검색합니다')
-  .option('-l, --limit <n>', '결과 수', '5')
+  .description('Search your knowledge base (hybrid BM25 + vector)')
+  .option('-l, --limit <n>', 'Max results', '5')
   .action(searchCommand);
 
 program
-  .command('serve')
-  .description('MCP 서버를 시작합니다 (Claude Code 연동)')
-  .action(serveCommand);
+  .command('ask <question>')
+  .description('Ask a question — search, compose answer, optionally save')
+  .option('-s, --save', 'Save answer as a new note in your vault')
+  .option('-q, --quotes', 'Show direct quotes from sources')
+  .action((question: string, opts: { save?: boolean; quotes?: boolean }) => askCommand(question, opts));
 
 program
-  .command('status')
-  .description('인덱스 상태를 확인합니다')
-  .action(statusCommand);
+  .command('ingest <input>')
+  .description('Ingest any input (URL, file, text, PDF, YouTube) into your vault')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .option('-s, --stage <stage>', 'Note stage: fleeting, literature, permanent', 'fleeting')
+  .option('--title <title>', 'Override title')
+  .action((input: string, opts) => ingestCommand(input, opts));
+
+program
+  .command('clip <url>')
+  .description('Clip a web page or YouTube video into your vault')
+  .option('-f, --folder <path>', 'Vault subfolder for clips', '06_Research/clips')
+  .action(clipCommand);
 
 program
   .command('graph')
-  .description('3D Knowledge Graph API 서버를 시작합니다')
+  .description('Launch the 3D knowledge graph in your browser')
   .action(graphCommand);
 
 program
-  .command('card')
-  .description('SVG 프로필 카드를 생성합니다')
-  .option('-o, --output <path>', '출력 파일 경로', 'knowledge-card.svg')
-  .action(cardCommand);
+  .command('serve')
+  .description('Start MCP server (for Claude Code / Claude Desktop)')
+  .action(serveCommand);
+
+// ─── Intelligence ────────────────────────────────────────────
 
 program
-  .command('learn')
-  .description('AI learning path — personalized recommendations based on decay + gaps')
-  .action(learnCommand);
+  .command('decay')
+  .description('Memory decay report — find notes you are forgetting')
+  .action(decayCommand);
+
+program
+  .command('brief')
+  .description('Daily knowledge briefing (decay + gaps + activity)')
+  .action(briefCommand);
+
+program
+  .command('digest')
+  .description('Weekly knowledge activity report')
+  .option('-d, --days <n>', 'Period in days', '7')
+  .option('-v, --visual', 'Save as .md with Mermaid charts for Obsidian')
+  .action(digestCommand);
+
+program
+  .command('gaps')
+  .description('Detect knowledge gaps (weak connections between clusters)')
+  .action(gapsCommand);
+
+program
+  .command('duplicates')
+  .description('Find duplicate or near-identical notes')
+  .option('-t, --threshold <n>', 'Similarity threshold (0–1)', '0.88')
+  .action(duplicatesCommand);
 
 program
   .command('contradictions')
@@ -94,78 +156,30 @@ program
   .action(contradictionsCommand);
 
 program
-  .command('decay')
-  .description('지식 감쇠 리포트를 출력합니다 (잊어가는 노트 확인)')
-  .action(decayCommand);
-
-program
-  .command('brief')
-  .description('오늘의 지식 브리핑 (감쇠 + 갭 + 활동 요약)')
-  .action(briefCommand);
-
-program
-  .command('digest')
-  .description('주간 지식 활동 리포트')
-  .option('-d, --days <n>', '기간 (일)', '7')
-  .option('-v, --visual', 'Save as .md with Mermaid charts for Obsidian')
-  .action(digestCommand);
-
-program
-  .command('clip <url>')
-  .description('웹 페이지/YouTube를 Obsidian에 클리핑')
-  .option('-f, --folder <path>', 'vault 내 저장 폴더', '06_Research/clips')
-  .action(clipCommand);
-
-program
-  .command('gaps')
-  .description('지식 갭을 탐지합니다 (클러스터 간 연결 부족 영역)')
-  .action(gapsCommand);
-
-program
-  .command('duplicates')
-  .description('중복/유사 노트를 탐지합니다')
-  .option('-t, --threshold <n>', '유사도 임계값 (0~1)', '0.88')
-  .action(duplicatesCommand);
-
-program
   .command('review')
-  .description('일일 지식 리뷰 — 잊어가는 노트를 Obsidian에서 열어 리뷰')
-  .option('-n, --count <n>', '리뷰할 노트 수', '5')
+  .description('Daily review — resurface fading notes for spaced repetition')
+  .option('-n, --count <n>', 'Number of notes to review', '5')
   .action(reviewCommand);
 
 program
-  .command('sync')
-  .description('Notion → Obsidian 동기화')
-  .option('--upload', 'PDCA 문서를 Notion에 업로드')
-  .option('--watch', '5분 간격 자동 동기화')
-  .action(syncCommand);
-
-const federate = program.command('federate').description('Federation — P2P knowledge network');
-
-federate.command('join')
-  .description('Join the federation network (interactive mode)')
-  .option('-n, --name <name>', 'Display name for this node')
-  .action(federateJoinCommand);
-
-federate.command('status')
-  .description('Show federation identity and status')
-  .action(federateStatusCommand);
+  .command('learn')
+  .description('AI learning path — personalized recommendations based on decay + gaps')
+  .action(learnCommand);
 
 program
-  .command('capture <audio-file>')
-  .description('Voice capture — transcribe audio to knowledge note (requires Whisper)')
-  .option('-m, --model <model>', 'Whisper model (tiny/base/small/medium/large)', 'base')
-  .option('-l, --language <lang>', 'Language (auto-detect if omitted)')
-  .option('-t, --tags <tags>', 'Comma-separated tags')
-  .option('-f, --folder <folder>', 'Vault subfolder', '01_Knowledge/voice')
-  .action(captureCommand);
+  .command('lint')
+  .description('Knowledge health check — gaps, duplicates, contradictions, stale notes')
+  .action(() => lintCommand());
+
+// ─── Writing & expression ────────────────────────────────────
 
 program
-  .command('ask <question>')
-  .description('Ask a question about your knowledge base — search, compose answer, optionally save')
-  .option('-s, --save', 'Save answer as a new note in your vault')
-  .option('-q, --quotes', 'Show direct quotes from sources (Insight Extraction mode)')
-  .action((question: string, opts: { save?: boolean; quotes?: boolean }) => askCommand(question, opts));
+  .command('draft [topic]')
+  .description('Generate a draft from your knowledge (blog/report/outline/instagram/thread/script)')
+  .option('--format <type>', 'Output format: blog, report, outline, instagram, thread, script')
+  .option('--ai', 'Use Claude API for AI-enhanced draft (requires ANTHROPIC_API_KEY)')
+  .option('--blueprint <spec>', 'Chapter structure: "Ch1:tag1,tag2; Ch2:tag3"')
+  .action((topic, opts) => draftCommand(topic, opts));
 
 program
   .command('compile')
@@ -176,12 +190,40 @@ program
   .action((opts) => compileCommand(opts));
 
 program
-  .command('draft [topic]')
-  .description('Express: Generate draft from knowledge (blog/report/outline/instagram/thread/script)')
-  .option('--format <type>', 'Output format: blog, report, outline, instagram, thread, script')
-  .option('--ai', 'Use Claude API for AI-enhanced draft (requires ANTHROPIC_API_KEY)')
-  .option('--blueprint <spec>', 'Chapter structure: "Ch1:tag1,tag2; Ch2:tag3"')
-  .action((topic, opts) => draftCommand(topic, opts));
+  .command('card')
+  .description('Generate an SVG knowledge profile card')
+  .option('-o, --output <path>', 'Output file path', 'knowledge-card.svg')
+  .action(cardCommand);
+
+// ─── Capture ─────────────────────────────────────────────────
+
+program
+  .command('fleeting <text>')
+  .description('Capture a fleeting idea instantly to raw/ folder')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .action((text: string, opts) => fleetingCommand(text, opts));
+
+program
+  .command('capture <audio-file>')
+  .description('Voice capture — transcribe audio to a knowledge note (requires Whisper)')
+  .option('-m, --model <model>', 'Whisper model (tiny/base/small/medium/large)', 'base')
+  .option('-l, --language <lang>', 'Language (auto-detect if omitted)')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .option('-f, --folder <folder>', 'Vault subfolder', '01_Knowledge/voice')
+  .action(captureCommand);
+
+// ─── Zettelkasten workflow ───────────────────────────────────
+
+program
+  .command('promote <file>')
+  .description('Promote a note: fleeting → literature → permanent')
+  .requiredOption('--to <stage>', 'Target stage: literature or permanent')
+  .action((file: string, opts) => promoteCommand(file, opts));
+
+program
+  .command('flush')
+  .description('Flush daily logs → wiki: extract concepts, rebuild connections')
+  .action(() => flushCommand());
 
 program
   .command('session-save')
@@ -193,11 +235,6 @@ program
   .action((opts) => sessionSaveCommand(opts));
 
 program
-  .command('flush')
-  .description('Flush daily logs → wiki: extract concepts, rebuild connections (Karpathy compile)')
-  .action(() => flushCommand());
-
-program
   .command('adr <title>')
   .description('Create an Architecture Decision Record (structured decision log)')
   .option('--context <text>', 'Why is this decision needed?')
@@ -207,35 +244,21 @@ program
   .action((title, opts) => adrCommand(title, opts));
 
 program
-  .command('lint')
-  .description('Knowledge health check — find gaps, duplicates, contradictions, stale notes')
-  .action(() => lintCommand());
-
-program
-  .command('fleeting <text>')
-  .description('Capture a fleeting idea instantly to raw/ folder')
-  .option('-t, --tags <tags>', 'Comma-separated tags')
-  .action((text: string, opts) => fleetingCommand(text, opts));
-
-program
-  .command('ingest <input>')
-  .description('Ingest any input (URL, file, text) into your knowledge base')
-  .option('-t, --tags <tags>', 'Comma-separated tags')
-  .option('-s, --stage <stage>', 'Note stage: fleeting, literature, permanent', 'fleeting')
-  .option('--title <title>', 'Override title')
-  .action((input: string, opts) => ingestCommand(input, opts));
-
-program
-  .command('promote <file>')
-  .description('Promote a note: fleeting → literature → permanent')
-  .requiredOption('--to <stage>', 'Target stage: literature or permanent')
-  .action((file: string, opts) => promoteCommand(file, opts));
-
-program
   .command('autopilot')
   .description('Run the full knowledge flywheel: inbox → compile → lint')
   .option('--once', 'Run once (default)')
   .action((opts) => autopilotCommand(opts));
+
+// ─── Sync ────────────────────────────────────────────────────
+
+program
+  .command('sync')
+  .description('Sync Notion → Obsidian')
+  .option('--upload', 'Upload PDCA documents to Notion')
+  .option('--watch', 'Auto-sync every 5 minutes')
+  .action(syncCommand);
+
+// ─── Multi-Vault ─────────────────────────────────────────────
 
 const vault = program.command('vault').description('Multi-Vault — manage and search across vaults');
 vault.command('add <id> <path>').description('Register a vault').option('-n, --name <name>', 'Display name').option('-s, --shared', 'Allow federation sharing').action(vaultAddCommand);
@@ -243,38 +266,48 @@ vault.command('list').description('List registered vaults').action(vaultListComm
 vault.command('remove <id>').description('Unregister a vault').action(vaultRemoveCommand);
 vault.command('search-all <query>').description('Search across all registered vaults').option('-l, --limit <n>', 'Max results', '10').action(vaultSearchAllCommand);
 
+// ─── Federation ──────────────────────────────────────────────
+
+const federate = program.command('federate').description('Federation — P2P knowledge network');
+federate.command('join').description('Join the Stella Network (interactive mode)').option('-n, --name <name>', 'Display name for this node').action(federateJoinCommand);
+federate.command('status').description('Show federation identity and status').action(federateStatusCommand);
+
+// ─── Cloud ───────────────────────────────────────────────────
+
 const cloud = program.command('cloud').description('Cloud — E2E encrypted backup');
 cloud.command('sync').description('Upload encrypted DB to cloud').action(cloudSyncCommand);
 cloud.command('restore').description('Download and decrypt DB from cloud').action(cloudRestoreCommand);
 cloud.command('status').description('Show last sync status').action(cloudStatusCommand);
 
-const pack = program.command('pack').description('Knowledge Pack 관리');
+// ─── Knowledge Packs ─────────────────────────────────────────
+
+const pack = program.command('pack').description('Knowledge Packs — create, share, and import curated bundles');
 
 pack.command('create <name>')
-  .description('검색/클러스터 기반 Knowledge Pack 생성')
-  .option('--from-search <query>', '검색 쿼리에서 생성')
-  .option('--from-cluster <id>', '클러스터 ID에서 생성')
-  .option('--author <name>', '작성자', 'anonymous')
-  .option('--license <license>', '라이선스', 'CC-BY-4.0')
-  .option('--description <desc>', '설명')
-  .option('--limit <n>', '최대 청크 수', '100')
+  .description('Create a Knowledge Pack from search results or clusters')
+  .option('--from-search <query>', 'Build from a search query')
+  .option('--from-cluster <id>', 'Build from a cluster ID')
+  .option('--author <name>', 'Author name', 'anonymous')
+  .option('--license <license>', 'License', 'CC-BY-4.0')
+  .option('--description <desc>', 'Pack description')
+  .option('--limit <n>', 'Max chunks to include', '100')
   .action(packCreateCommand);
 
 pack.command('export <name>')
-  .description('.sv-pack 파일로 내보내기')
-  .option('-o, --output <path>', '출력 경로')
+  .description('Export a pack as a .sv-pack file')
+  .option('-o, --output <path>', 'Output path')
   .action(packExportCommand);
 
 pack.command('import <file>')
-  .description('.sv-pack 파일 가져오기 → 벡터 DB 병합')
+  .description('Import a .sv-pack file into your vector DB')
   .action(packImportCommand);
 
 pack.command('list')
-  .description('설치된 팩 목록')
+  .description('List installed packs')
   .action(packListCommand);
 
 pack.command('info <name>')
-  .description('팩 상세 정보')
+  .description('Show pack details')
   .action(packInfoCommand);
 
 program.parse();

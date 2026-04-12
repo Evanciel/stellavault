@@ -37,7 +37,7 @@ export async function decayCommand(_opts: any, cmd: any) {
   console.log(chalk.dim('─'.repeat(50)));
 
   if (report.topDecaying.length > 0) {
-    console.log(chalk.yellow('\n📋 Top Decaying Notes (리마인드 필요):'));
+    console.log(chalk.yellow('\n📋 Top Decaying Notes (need review):'));
     for (const d of report.topDecaying.slice(0, 20)) {
       const rBar = '█'.repeat(Math.round(d.retrievability * 10)) + '░'.repeat(10 - Math.round(d.retrievability * 10));
       const color = d.retrievability < 0.3 ? chalk.red : chalk.yellow;

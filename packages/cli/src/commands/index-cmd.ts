@@ -18,7 +18,7 @@ export async function indexCommand(vaultPath?: string) {
   const config = loadConfig();
   const vault = vaultPath ?? config.vaultPath;
   if (!vault) {
-    console.error(chalk.red('Error: vault 경로가 필요합니다. stellavault index <path> 또는 .stellavault.json에 vaultPath 설정'));
+    console.error(chalk.red('Error: vault path required. Use stellavault index <path> or set vaultPath in .stellavault.json'));
     process.exit(1);
   }
 
@@ -35,16 +35,16 @@ export async function indexCommand(vaultPath?: string) {
     } catch { /* 이미 등록됨 */ }
   }
 
-  const spinner = ora('초기화 중...').start();
+  const spinner = ora('Initializing...').start();
 
   const store = createSqliteVecStore(dbPath);
   await store.initialize();
 
-  spinner.text = '임베딩 모델 로딩 중...';
+  spinner.text = 'Loading embedding model...';
   const embedder = createLocalEmbedder(config.embedding.localModel);
   await embedder.initialize();
 
-  spinner.text = '인덱싱 시작...';
+  spinner.text = 'Starting indexing...';
   const result = await indexVault(vault, {
     store,
     embedder,
@@ -58,8 +58,8 @@ export async function indexCommand(vaultPath?: string) {
   spinner.stop();
 
   console.log('');
-  console.log(chalk.green('✅ 인덱싱 완료'));
-  console.log(`  📄 인덱싱: ${result.indexed}건 | ⏭️ 스킵: ${result.skipped}건 | 🗑️ 삭제: ${result.deleted}건${result.failed ? ` | ❌ 실패: ${result.failed}건` : ''}`);
-  console.log(`  🧩 청크: ${result.totalChunks}개 | ⏱ ${(result.elapsedMs / 1000).toFixed(1)}초`);
+  console.log(chalk.green('✅ Indexing complete'));
+  console.log(`  📄 Indexed: ${result.indexed} | ⏭️ Skipped: ${result.skipped} | 🗑️ Deleted: ${result.deleted}${result.failed ? ` | ❌ Failed: ${result.failed}` : ''}`);
+  console.log(`  🧩 Chunks: ${result.totalChunks} | ⏱ ${(result.elapsedMs / 1000).toFixed(1)}s`);
   console.log(`  💾 DB: ${dbPath}`);
 }

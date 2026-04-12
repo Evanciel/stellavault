@@ -7,7 +7,7 @@ import { loadConfig } from '@stellavault/core';
 
 export async function clipCommand(url: string, options: { folder?: string }) {
   if (!url) {
-    console.error(chalk.red('❌ URL을 입력하세요: stellavault clip <url>'));
+    console.error(chalk.red('❌ Please provide a URL: stellavault clip <url>'));
     process.exit(1);
   }
 
@@ -75,7 +75,7 @@ export async function clipCommand(url: string, options: { folder?: string }) {
 
     console.log(chalk.green(`✅ Saved: ${fileName}`));
     console.log(chalk.dim(`   → ${filePath}`));
-    console.log(chalk.dim('   💡 stellavault index로 재인덱싱하면 검색 가능'));
+    console.log(chalk.dim('   💡 Run stellavault index to make it searchable'));
   } catch (err) {
     console.error(chalk.red(`❌ Clip failed: ${(err as Error).message}`));
     process.exit(1);
@@ -151,18 +151,18 @@ async function clipYouTube(url: string): Promise<{ title: string; content: strin
   const descMatch = html.match(/"shortDescription":"([\s\S]*?)"/);
   const description = descMatch
     ? descMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').slice(0, 3000)
-    : '(설명 없음)';
+    : '(No description)';
 
   const videoId = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]+)/)?.[1] ?? '';
 
   const content = [
     `![thumbnail](https://img.youtube.com/vi/${videoId}/maxresdefault.jpg)`,
     '',
-    '## 설명',
+    '## Description',
     '',
     description,
     '',
-    `## 링크`,
+    `## Links`,
     '',
     `- [YouTube](${url})`,
     videoId ? `- [Embed](https://www.youtube.com/embed/${videoId})` : '',

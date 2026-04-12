@@ -89,6 +89,42 @@ export async function initCommand() {
 
     spinner.succeed(chalk.green(`  Indexed ${result.indexed} docs, ${result.totalChunks} chunks (${(result.elapsedMs / 1000).toFixed(1)}s)`));
 
+    // If vault was empty, seed 3 sample notes so the first search and graph aren't blank.
+    if (result.indexed === 0) {
+      console.log(chalk.yellow('\n  Your vault is empty — creating 3 starter notes so you can explore.\n'));
+
+      const rawDir = join(vaultPath, 'raw');
+      mkdirSync(rawDir, { recursive: true });
+
+      const samples = [
+        {
+          file: 'welcome-to-stellavault.md',
+          content: `---\ntitle: "Welcome to Stellavault"\ntags: [getting-started]\n---\n\n# Welcome to Stellavault\n\nThis is your self-compiling knowledge base. Drop any note, URL, or file here and Stellavault will organize, index, and connect it automatically.\n\n## How it works\n\n1. **Capture** — Write notes, clip URLs, ingest PDFs\n2. **Organize** — Auto-classify, tag, and link\n3. **Distill** — Find gaps, duplicates, contradictions\n4. **Express** — Draft blog posts, reports from your knowledge\n\nTry: \`stellavault graph\` to see your notes as a 3D neural network.`,
+        },
+        {
+          file: 'spaced-repetition.md',
+          content: `---\ntitle: "Spaced Repetition & Memory Decay"\ntags: [learning, memory]\n---\n\n# Spaced Repetition\n\nForgetting is natural. The **Ebbinghaus forgetting curve** shows we lose ~70% of new information within 24 hours.\n\n## FSRS Algorithm\n\nStellavault uses the **Free Spaced Repetition Scheduler** to track which notes are fading from your memory.\n\n- Run \`stellavault decay\` to see what you're forgetting\n- Run \`stellavault review\` for a daily review session\n- Each review strengthens the memory trace\n\n## Why it matters\n\nKnowledge you don't revisit becomes invisible. Spaced repetition surfaces the right note at the right time.`,
+        },
+        {
+          file: 'zettelkasten-method.md',
+          content: `---\ntitle: "The Zettelkasten Method"\ntags: [knowledge-management, zettelkasten]\n---\n\n# Zettelkasten\n\nNiklas Luhmann's note-taking system that produced 70+ books and 400+ papers.\n\n## Three stages\n\n1. **Fleeting notes** — Quick ideas captured in raw/\n2. **Literature notes** — Processed from sources\n3. **Permanent notes** — Refined, atomic, interconnected\n\nStellavault follows this flow:\n- \`stellavault fleeting "idea"\` → captures to raw/\n- \`stellavault compile\` → promotes and links\n- \`stellavault promote note.md --to permanent\` → finalizes\n\n## Connection to Karpathy's self-compiling knowledge\n\nAndrej Karpathy's approach: every session auto-compiles into structured knowledge. Stellavault automates this: session-save → flush → wiki.`,
+        },
+      ];
+
+      for (const s of samples) {
+        writeFileSync(join(rawDir, s.file), s.content, 'utf-8');
+      }
+
+      // Re-index with the sample notes
+      const reSpinner = ora({ text: '  Indexing sample notes...', indent: 2 }).start();
+      const reResult = await indexVault(vaultPath, {
+        store,
+        embedder,
+        chunkOptions: { maxTokens: 300, overlap: 50, minTokens: 50 },
+      });
+      reSpinner.succeed(chalk.green(`  Indexed ${reResult.indexed} sample notes, ${reResult.totalChunks} chunks`));
+    }
+
     // Step 3: First Search
     console.log('');
     console.log(chalk.cyan('  Step 3/3') + ' — Try your first search');

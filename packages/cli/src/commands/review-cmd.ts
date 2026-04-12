@@ -23,11 +23,11 @@ export async function reviewCommand(options: { count?: string }) {
   const decaying = await decayEngine.getDecaying(0.6, count);
 
   if (decaying.length === 0) {
-    console.log(chalk.green('\n✨ 모든 지식이 건강합니다! 리뷰할 노트가 없습니다.'));
+    console.log(chalk.green('\n✨ All knowledge is healthy! No notes to review.'));
     return;
   }
 
-  console.log(chalk.green(`\n🧠 오늘의 리뷰 (${decaying.length}개)`));
+  console.log(chalk.green(`\n🧠 Today's review (${decaying.length})`));
   console.log(chalk.dim('─'.repeat(50)));
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -45,12 +45,12 @@ export async function reviewCommand(options: { count?: string }) {
     const color = d.retrievability < 0.3 ? chalk.red : chalk.yellow;
 
     console.log(`\n${chalk.bold(`[${i + 1}/${decaying.length}]`)} ${chalk.cyan(d.title)}`);
-    console.log(`  ${color(rBar)} R=${d.retrievability.toFixed(2)} | ${elapsed}일 전`);
+    console.log(`  ${color(rBar)} R=${d.retrievability.toFixed(2)} | ${elapsed} days ago`);
 
-    const answer = await ask(chalk.dim('  → [y]열기 [n]스킵 [s]내일 다시 [q]종료: '));
+    const answer = await ask(chalk.dim('  → [y]open [n]skip [s]snooze [q]quit: '));
 
     if (answer.toLowerCase() === 'q') {
-      console.log(chalk.dim('\n리뷰 중단.'));
+      console.log(chalk.dim('\nReview stopped.'));
       break;
     }
 
@@ -61,7 +61,7 @@ export async function reviewCommand(options: { count?: string }) {
         type: 'view',
         timestamp: new Date(Date.now() - 23 * 3600000).toISOString(), // 23시간 전으로 기록
       });
-      console.log(chalk.dim('  ⏰ 내일 다시 리마인드'));
+      console.log(chalk.dim('  ⏰ Reminder set for tomorrow'));
       continue;
     }
 
@@ -92,16 +92,16 @@ export async function reviewCommand(options: { count?: string }) {
         timestamp: new Date().toISOString(),
       });
       reviewed++;
-      console.log(chalk.green('  ✅ 열기 + 기억 강도 업데이트'));
+      console.log(chalk.green('  ✅ Opened + memory strength updated'));
     } else {
-      console.log(chalk.dim('  ⏭️ 스킵'));
+      console.log(chalk.dim('  ⏭️ Skipped'));
     }
   }
 
   rl.close();
 
   console.log(chalk.dim('\n─'.repeat(50)));
-  console.log(chalk.green(`리뷰 완료! ${reviewed}/${decaying.length}개 열람`));
+  console.log(chalk.green(`Review complete! ${reviewed}/${decaying.length} reviewed`));
 
   // streak 계산 (access_log에서 연속 일수)
   try {
@@ -119,7 +119,7 @@ export async function reviewCommand(options: { count?: string }) {
       else break;
     }
     if (streak > 1) {
-      console.log(chalk.yellow(`🔥 ${streak}일 연속 리뷰!`));
+      console.log(chalk.yellow(`🔥 ${streak}-day review streak!`));
     }
   } catch { /* streak 실패해도 무시 */ }
 }

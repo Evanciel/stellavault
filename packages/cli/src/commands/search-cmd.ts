@@ -31,7 +31,7 @@ export async function searchCommand(query: string, options: { limit?: string }, 
   }
 
   if (results.length === 0) {
-    console.log(chalk.yellow('검색 결과가 없습니다.'));
+    console.log(chalk.yellow('No search results found.'));
     return;
   }
 

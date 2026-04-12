@@ -15,26 +15,26 @@ export async function gapsCommand() {
 
   console.log(chalk.green('\n🕳️ Knowledge Gap Report'));
   console.log(chalk.dim('─'.repeat(50)));
-  console.log(`  클러스터: ${report.totalClusters}개`);
-  console.log(`  갭: ${chalk.yellow(String(report.totalGaps))}개 (High+Medium)`);
-  console.log(`  고립 노드: ${report.isolatedNodes.length}개`);
+  console.log(`  Clusters: ${report.totalClusters}`);
+  console.log(`  Gaps: ${chalk.yellow(String(report.totalGaps))} (High+Medium)`);
+  console.log(`  Isolated nodes: ${report.isolatedNodes.length}`);
   console.log(chalk.dim('─'.repeat(50)));
 
   if (report.gaps.length > 0) {
-    console.log(chalk.yellow('\n📊 클러스터 간 갭:'));
+    console.log(chalk.yellow('\n📊 Inter-cluster gaps:'));
     for (const gap of report.gaps) {
       const icon = gap.severity === 'high' ? '🔴' : gap.severity === 'medium' ? '🟡' : '🟢';
       console.log(`  ${icon} ${gap.clusterA} ↔ ${gap.clusterB}`);
-      console.log(`     연결: ${gap.bridgeCount}개 | 제안: ${chalk.cyan(gap.suggestedTopic)}`);
+      console.log(`     Bridges: ${gap.bridgeCount} | Suggestion: ${chalk.cyan(gap.suggestedTopic)}`);
     }
   }
 
   if (report.isolatedNodes.length > 0) {
-    console.log(chalk.dim('\n🏝️ 고립된 노트 (연결 ≤1):'));
+    console.log(chalk.dim('\n🏝️ Isolated notes (≤1 connections):'));
     for (const n of report.isolatedNodes.slice(0, 10)) {
-      console.log(`  • ${n.title} (${n.connections}개 연결)`);
+      console.log(`  • ${n.title} (${n.connections} connections)`);
     }
   }
 
-  console.log(chalk.dim('\n💡 갭 영역의 지식을 보강하면 지식 그래프가 더 촘촘해집니다'));
+  console.log(chalk.dim('\n💡 Filling knowledge gaps strengthens your graph'));
 }
