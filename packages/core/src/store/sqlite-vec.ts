@@ -111,19 +111,19 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     },
 
     async getDocument(documentId: string): Promise<Document | null> {
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(documentId) as any;
+      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(documentId) as DocumentRow | undefined;
       if (!row) return null;
       return rowToDocument(row);
     },
 
     async getChunk(chunkId: string): Promise<Chunk | null> {
-      const row = db.prepare('SELECT * FROM chunks WHERE id = ?').get(chunkId) as any;
+      const row = db.prepare('SELECT * FROM chunks WHERE id = ?').get(chunkId) as ChunkRow | undefined;
       if (!row) return null;
       return rowToChunk(row);
     },
 
     async getAllDocuments(): Promise<Document[]> {
-      const rows = db.prepare('SELECT * FROM documents ORDER BY last_modified DESC').all() as any[];
+      const rows = db.prepare('SELECT * FROM documents ORDER BY last_modified DESC').all() as DocumentRow[];
       return rows.map(rowToDocument);
     },
 
@@ -143,9 +143,9 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     },
 
     async getStats(): Promise<StoreStats> {
-      const docCount = (db.prepare('SELECT COUNT(*) as c FROM documents').get() as any).c;
-      const chunkCount = (db.prepare('SELECT COUNT(*) as c FROM chunks').get() as any).c;
-      const lastRow = db.prepare('SELECT indexed_at FROM documents ORDER BY indexed_at DESC LIMIT 1').get() as any;
+      const docCount = (db.prepare('SELECT COUNT(*) as c FROM documents').get() as CountRow).c;
+      const chunkCount = (db.prepare('SELECT COUNT(*) as c FROM chunks').get() as CountRow).c;
+      const lastRow = db.prepare('SELECT indexed_at FROM documents ORDER BY indexed_at DESC LIMIT 1').get() as IndexedAtRow | undefined;
       return {
         documentCount: docCount,
         chunkCount: chunkCount,
@@ -260,7 +260,21 @@ export function upsertDocument(db: Database.Database, doc: Document) {
   );
 }
 
-function rowToDocument(row: any): Document {
+interface DocumentRow {
+  id: string; file_path: string; title: string; content: string;
+  frontmatter: string; tags: string; last_modified: string; content_hash: string;
+  indexed_at?: string;
+}
+
+interface ChunkRow {
+  id: string; document_id: string; content: string; heading?: string;
+  start_line: number; end_line: number; token_count: number;
+}
+
+interface CountRow { c: number }
+interface IndexedAtRow { indexed_at?: string }
+
+function rowToDocument(row: DocumentRow): Document {
   return {
     id: row.id,
     filePath: row.file_path,
@@ -273,7 +287,7 @@ function rowToDocument(row: any): Document {
   };
 }
 
-function rowToChunk(row: any): Chunk {
+function rowToChunk(row: ChunkRow): Chunk {
   return {
     id: row.id,
     documentId: row.document_id,

@@ -3,14 +3,24 @@
 
 import { Router } from 'express';
 import type { VectorStore } from '../../store/types.js';
+import type { PeerInfo } from '../../federation/types.js';
+
+/** Minimal FederationNode shape (actual class is dynamically imported) */
+interface FederationNodeLike {
+  isRunning: boolean;
+  displayName: string;
+  peerId: string;
+  peerCount: number;
+  getPeers(): PeerInfo[];
+  setLocalStats(count: number, topics: string[]): void;
+  join(): Promise<void>;
+  leave(): Promise<void>;
+}
 
 export function createFederationRouter(store: VectorStore): Router {
   const router = Router();
 
-  // State lives inside closure so routes share it across requests.
-  // hyperswarm is an optionalDependency — if it's missing we return
-  // { available: false } rather than throwing, so UI degrades gracefully.
-  let federationNode: any = null;
+  let federationNode: FederationNodeLike | null = null;
   let federationAvailable: boolean | null = null;
 
   async function probeFederationAvailable(): Promise<boolean> {
@@ -33,7 +43,7 @@ export function createFederationRouter(store: VectorStore): Router {
       return res.json({ available: true, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
     }
     try {
-      const peers = (federationNode.getPeers() as any[]).map((p: any) => ({
+      const peers = federationNode.getPeers().map(p => ({
         peerId: p.peerId || '',
         displayName: p.displayName || 'Peer',
         documentCount: p.documentCount ?? 0,

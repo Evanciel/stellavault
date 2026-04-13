@@ -49,7 +49,7 @@ export class FederatedSearch {
       return new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, timeout);
 
-        const handler = (data: { queryId: string; results: any[]; peerId: string }) => {
+        const handler = (data: { queryId: string; results: Array<{ title: string; similarity: number; snippet: string }>; peerId: string }) => {
           if (data.queryId !== queryId) return;
 
           for (const r of data.results) {

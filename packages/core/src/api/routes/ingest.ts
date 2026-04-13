@@ -2,12 +2,13 @@
 // Extracted from server.ts for modular architecture.
 
 import { Router } from 'express';
+import type express from 'express';
 import type { VectorStore } from '../../store/types.js';
 
 interface IngestRouterOptions {
   store: VectorStore;
   vaultPath: string;
-  requireAuth: (req: any, res: any, next: any) => void;
+  requireAuth: (req: express.Request, res: express.Response, next: express.NextFunction) => void;
   assertNotPrivateUrl: (url: string) => void;
 }
 

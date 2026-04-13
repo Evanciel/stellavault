@@ -22,7 +22,7 @@ export async function searchMarketplace(query: string, limit = 10): Promise<Pack
     const npmUrl = `https://registry.npmjs.org/-/v1/search?text=stellavault-pack+${encodeURIComponent(query)}&size=${safeLimit}`;
     const res = await fetch(npmUrl, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
-      const data = await res.json() as any;
+      const data = await res.json() as { objects?: Array<{ package: { name: string; version: string; description?: string; author?: { name: string }; publisher?: { username: string }; keywords?: string[] }; downloads?: { weekly: number } }> };
       for (const pkg of data.objects ?? []) {
         results.push({
           name: pkg.package.name,
@@ -46,7 +46,7 @@ export async function searchMarketplace(query: string, limit = 10): Promise<Pack
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
-      const data = await res.json() as any;
+      const data = await res.json() as { items?: Array<{ name: string; full_name: string; description?: string; owner?: { login: string }; stargazers_count: number; topics?: string[]; html_url: string }> };
       for (const repo of data.items ?? []) {
         // npm과 중복 방지
         if (results.some(r => r.name === repo.name)) continue;

@@ -2,6 +2,7 @@
 // Extracted from server.ts for modular architecture.
 
 import { Router } from 'express';
+import type express from 'express';
 import type { VectorStore } from '../../store/types.js';
 import type { SearchEngine } from '../../search/index.js';
 import { detectDuplicates } from '../../intelligence/duplicate-detector.js';
@@ -11,7 +12,7 @@ interface KnowledgeRouterOptions {
   store: VectorStore;
   searchEngine: SearchEngine;
   vaultPath: string;
-  requireAuth: (req: any, res: any, next: any) => void;
+  requireAuth: (req: express.Request, res: express.Response, next: express.NextFunction) => void;
 }
 
 export function createKnowledgeRouter(opts: KnowledgeRouterOptions): Router {

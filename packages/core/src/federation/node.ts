@@ -8,10 +8,26 @@ import type { PeerInfo, FederationMessage } from './types.js';
 
 const FEDERATION_TOPIC = createHash('sha256').update('stellavault-federation-v1').digest();
 
+/** Minimal Duplex stream interface shared by Hyperswarm and net.Socket */
+interface PeerConnection {
+  write(data: string): boolean;
+  end(): void;
+  on(event: 'data', listener: (data: Buffer) => void): this;
+  on(event: 'close' | 'error', listener: () => void): this;
+  on(event: string, listener: (...args: unknown[]) => void): this;
+}
+
+/** Hyperswarm instance (optionalDependency, dynamically imported) */
+interface HyperswarmInstance {
+  on(event: string, listener: (...args: unknown[]) => void): this;
+  join(topic: Buffer, opts: { server: boolean; client: boolean }): { flushed(): Promise<void> };
+  destroy(): Promise<void>;
+}
+
 export class FederationNode extends EventEmitter {
-  private swarm: any = null;
+  private swarm: HyperswarmInstance | null = null;
   private identity: NodeIdentity;
-  private peers = new Map<string, { info: PeerInfo; conn: any }>();
+  private peers = new Map<string, { info: PeerInfo; conn: PeerConnection }>();
   private running = false;
   private documentCount = 0;
   private topTopics: string[] = [];
@@ -38,8 +54,8 @@ export class FederationNode extends EventEmitter {
     const Hyperswarm = (await import('hyperswarm')).default;
     this.swarm = new Hyperswarm({ maxPeers: 50 });
 
-    this.swarm.on('connection', (conn: any, _info: any) => {
-      this.handleConnection(conn);
+    this.swarm.on('connection', (conn: unknown) => {
+      this.handleConnection(conn as PeerConnection);
     });
 
     const discovery = this.swarm.join(FEDERATION_TOPIC, { server: true, client: true });
@@ -103,7 +119,7 @@ export class FederationNode extends EventEmitter {
 
   // --- Private ---
 
-  private handleConnection(conn: any) {
+  private handleConnection(conn: PeerConnection) {
     // 핸드셰이크 전송
     this.sendMessage(conn, {
       type: 'handshake',
@@ -156,15 +172,17 @@ export class FederationNode extends EventEmitter {
   }
 
   // MED: 메시지 스키마 기본 검증
-  private validateMessage(msg: any): boolean {
-    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return false;
-    if (msg.type === 'handshake' && (typeof msg.peerId !== 'string' || typeof msg.displayName !== 'string')) return false;
-    if (msg.type === 'search_query' && (!Array.isArray(msg.embedding) || msg.embedding.length !== 384)) return false;
-    if (msg.type === 'search_result' && !Array.isArray(msg.results)) return false;
+  private validateMessage(msg: unknown): msg is FederationMessage {
+    if (!msg || typeof msg !== 'object') return false;
+    const m = msg as Record<string, unknown>;
+    if (typeof m.type !== 'string') return false;
+    if (m.type === 'handshake' && (typeof m.peerId !== 'string' || typeof m.displayName !== 'string')) return false;
+    if (m.type === 'search_query' && (!Array.isArray(m.embedding) || (m.embedding as unknown[]).length !== 384)) return false;
+    if (m.type === 'search_result' && !Array.isArray(m.results)) return false;
     return true;
   }
 
-  private handleMessage(conn: any, msg: FederationMessage) {
+  private handleMessage(conn: PeerConnection, msg: FederationMessage) {
     if (!this.validateMessage(msg)) return; // 스키마 불일치 메시지 무시
 
     switch (msg.type) {
@@ -232,7 +250,7 @@ export class FederationNode extends EventEmitter {
   }
 
   // Design Ref: §7 — JSON + newline delimiter
-  private sendMessage(conn: any, msg: FederationMessage) {
+  private sendMessage(conn: PeerConnection, msg: FederationMessage) {
     try {
       conn.write(JSON.stringify(msg) + '\n');
     } catch { /* connection may be closed */ }

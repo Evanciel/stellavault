@@ -1,9 +1,11 @@
 // MCP Tool: get-learning-path (F-A11)
 
 import type { VectorStore } from '../../store/types.js';
+import type { KnowledgeGap } from '../../intelligence/gap-detector.js';
 import { DecayEngine } from '../../intelligence/decay-engine.js';
 import { detectKnowledgeGaps } from '../../intelligence/gap-detector.js';
 import { generateLearningPath } from '../../intelligence/learning-path.js';
+import type { Database } from 'better-sqlite3';
 
 export function createLearningPathTool(store: VectorStore) {
   return {
@@ -17,13 +19,13 @@ export function createLearningPathTool(store: VectorStore) {
     },
     async handler(args: { limit?: number }) {
       const limit = args.limit ?? 10;
-      const db = store.getDb() as any;
+      const db = store.getDb() as Database | undefined;
       if (!db) return { content: [{ type: 'text' as const, text: 'Database not available' }] };
 
       const decayEngine = new DecayEngine(db);
       const decayReport = await decayEngine.computeAll();
 
-      let gaps: any[] = [];
+      let gaps: KnowledgeGap[] = [];
       try {
         const gapReport = await detectKnowledgeGaps(store);
         gaps = gapReport.gaps ?? [];

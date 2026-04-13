@@ -102,6 +102,7 @@ export function removeMember(displayName: string): boolean {
 
 // Express 미들웨어: Bearer 토큰 인증
 export function createAuthMiddleware() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Express middleware requires broad compatibility
   return (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {

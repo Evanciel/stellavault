@@ -123,7 +123,7 @@ async function extractXlsx(buffer: Buffer, filePath: string): Promise<ExtractedC
       if (rows.length === 0) continue;
 
       parts.push(`## ${name}\n`);
-      const headers = rows[0].map((h: any) => String(h ?? ''));
+      const headers = (rows[0] as unknown[]).map(h => String(h ?? ''));
       parts.push(`| ${headers.join(' | ')} |`);
       parts.push(`| ${headers.map(() => '---').join(' | ')} |`);
       for (const row of rows.slice(1)) {
