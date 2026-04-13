@@ -28,6 +28,7 @@
     "packages/sync",
     "packages/core",
     "packages/cli",
+    "packages/desktop",
     "packages/graph"
   ],
   "scripts": {
