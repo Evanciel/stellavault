@@ -1,6 +1,6 @@
 {
   "name": "@stellavault/graph",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Stellavault — 3D Neural Knowledge Graph Visualization",
   "type": "module",
   "private": true,

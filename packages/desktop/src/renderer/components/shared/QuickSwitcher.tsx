@@ -110,6 +110,11 @@ export function QuickSwitcher() {
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-label="Quick switcher"
+            aria-expanded={true}
+            aria-controls="sv-qs-list"
+            aria-activedescendant={results[selectedIdx] ? `sv-qs-${selectedIdx}` : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -125,10 +130,13 @@ export function QuickSwitcher() {
           />
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '4px' }}>
+        <div id="sv-qs-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: '4px' }}>
           {results.map((title, i) => (
             <div
               key={title}
+              id={`sv-qs-${i}`}
+              role="option"
+              aria-selected={i === selectedIdx}
               onClick={() => void handleSelect(title)}
               onMouseEnter={() => setSelectedIdx(i)}
               style={{

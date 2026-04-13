@@ -26,8 +26,8 @@ export function TitleBar() {
       fontSize: '12px',
       userSelect: 'none' as const,
     }}>
-      <button onClick={toggleSidebar} style={btnStyle(isDark)} title="Toggle sidebar">
-        <span style={{ fontSize: 14, lineHeight: 1 }}>&#9776;</span>
+      <button onClick={toggleSidebar} style={btnStyle(isDark)} title="Toggle sidebar" aria-label="Toggle sidebar">
+        <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>&#9776;</span>
       </button>
 
       <span style={{
@@ -44,33 +44,33 @@ export function TitleBar() {
       <button
         onClick={() => setRightPanel(rightPanel === 'graph' ? 'none' : 'graph')}
         style={{ ...btnStyle(isDark), color: rightPanel === 'graph' ? 'var(--accent-2)' : undefined }}
-        title="3D Graph"
+        title="3D Graph" aria-label="Toggle 3D graph panel"
       >
         &#x25C9;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}
         style={{ ...btnStyle(isDark), color: rightPanel === 'ai' ? 'var(--accent-2)' : undefined }}
-        title="AI panel"
+        title="AI panel" aria-label="Toggle AI panel"
       >
         &#x2726;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'backlinks' ? 'none' : 'backlinks')}
         style={{ ...btnStyle(isDark), color: rightPanel === 'backlinks' ? 'var(--accent-2)' : undefined }}
-        title="Backlinks"
+        title="Backlinks" aria-label="Toggle backlinks panel"
       >
         &#x21C4;
       </button>
-      <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme">
+      <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme" aria-label="Toggle dark/light theme">
         {isDark ? '\u263C' : '\u263E'}
       </button>
 
       {!isMac && (
         <>
-          <button onClick={() => void ipc('window:minimize')} style={btnStyle(isDark)} title="Minimize">&#x2014;</button>
-          <button onClick={() => void ipc('window:maximize')} style={btnStyle(isDark)} title="Maximize">&#x25A1;</button>
-          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(isDark), color: '#ef4444' }} title="Close">&#x2715;</button>
+          <button onClick={() => void ipc('window:minimize')} style={btnStyle(isDark)} title="Minimize" aria-label="Minimize window">&#x2014;</button>
+          <button onClick={() => void ipc('window:maximize')} style={btnStyle(isDark)} title="Maximize" aria-label="Maximize window">&#x25A1;</button>
+          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(isDark), color: '#ef4444' }} title="Close" aria-label="Close window">&#x2715;</button>
         </>
       )}
     </div>

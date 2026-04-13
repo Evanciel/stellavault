@@ -110,6 +110,11 @@ export function CommandPalette() {
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-label="Command palette"
+            aria-expanded={true}
+            aria-controls="sv-cmd-list"
+            aria-activedescendant={filtered[selectedIdx] ? `sv-cmd-${filtered[selectedIdx].id}` : undefined}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIdx(0); }}
             onKeyDown={handleKeyDown}
@@ -120,10 +125,13 @@ export function CommandPalette() {
             }}
           />
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
+        <div id="sv-cmd-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
           {filtered.map((cmd, i) => (
             <div
               key={cmd.id}
+              id={`sv-cmd-${cmd.id}`}
+              role="option"
+              aria-selected={i === selectedIdx}
               onClick={() => handleSelect(cmd)}
               onMouseEnter={() => setSelectedIdx(i)}
               style={{
