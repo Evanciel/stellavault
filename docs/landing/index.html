@@ -943,7 +943,7 @@ footer .base {
     <div>
       <div class="meta rise-1">
         <span>v0.6.0 · MIT</span>
-        <span>Local-first</span>
+        <span>Desktop + CLI + Obsidian</span>
         <span>21 MCP tools</span>
       </div>
 
@@ -958,7 +958,19 @@ footer .base {
         distills, and connects it into a 3D neural graph that Claude can read through MCP.
       </p>
 
-      <div class="install rise-4" role="region" aria-label="Install command">
+      <div class="rise-4" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <a href="https://github.com/Evanciel/stellavault/releases/latest" target="_blank" rel="noopener"
+          style="display:inline-flex;align-items:center;gap:8px;padding:12px 24px;
+                 background:var(--violet);color:#fff;border-radius:var(--radius);
+                 font-family:var(--mono);font-size:13px;font-weight:600;
+                 text-decoration:none;letter-spacing:0.02em;
+                 box-shadow:0 4px 20px rgba(99,102,241,0.4);transition:all 0.2s;">
+          Download Desktop App
+        </a>
+        <span style="color:var(--ink-faint);font-size:11px;">Windows x64 &middot; 116MB</span>
+      </div>
+
+      <div class="install rise-4" role="region" aria-label="Install command" style="margin-top:16px;">
         <span class="prompt">$</span>
         <span class="cmd" id="install-cmd">npm install -g stellavault</span>
         <button type="button" id="copy-btn" aria-label="Copy install command">Copy</button>
@@ -966,6 +978,7 @@ footer .base {
 
       <div class="hero-cta-row rise-5">
         <a href="#setup">5-min setup</a>
+        <a href="https://github.com/Evanciel/stellavault-obsidian/releases/latest" target="_blank" rel="noopener">Obsidian plugin</a>
         <a href="https://github.com/Evanciel/stellavault" target="_blank" rel="noopener">Star on GitHub</a>
       </div>
     </div>
@@ -1195,18 +1208,21 @@ footer .base {
 
     <div class="setup">
       <div class="step">
-        <h3>Install</h3>
-        <p>One command. Node 20+. Works on macOS, Linux, and Windows.</p>
-        <div class="shellbox"><span class="p">$</span> npm i -g stellavault</div>
+        <h3>Download</h3>
+        <p>Grab the desktop app or install via npm. No server needed.</p>
+        <div class="shellbox" style="display:flex;flex-direction:column;gap:6px;">
+          <div><strong style="color:var(--violet-2)">Desktop:</strong> <a href="https://github.com/Evanciel/stellavault/releases/latest" style="color:var(--ink);text-decoration:underline">Download ZIP</a></div>
+          <div><span class="p">$</span> npm i -g stellavault</div>
+        </div>
       </div>
       <div class="step">
-        <h3>Initialize</h3>
-        <p>Interactive wizard points Stellavault at your Obsidian vault and builds the first index.</p>
+        <h3>Point</h3>
+        <p>Desktop: pick your folder on first launch. CLI: run the interactive wizard.</p>
         <div class="shellbox"><span class="p">$</span> stellavault init</div>
       </div>
       <div class="step">
         <h3>Explore</h3>
-        <p>Launch the 3D graph in your browser. Click any node to travel, search, or drop new notes.</p>
+        <p>Desktop: open the 3D graph panel. CLI: launch in browser. Notes, search, and AI — all ready.</p>
         <div class="shellbox"><span class="p">$</span> stellavault graph</div>
       </div>
     </div>
@@ -1230,8 +1246,8 @@ footer .base {
       </div>
       <div class="tech-item">
         <span class="k">Interface</span>
-        <div class="v">CLI · 3D · PWA</div>
-        <span class="note">React Three Fiber · install to any device</span>
+        <div class="v">Desktop · CLI · Web</div>
+        <span class="note">Electron + React Three Fiber + TipTap</span>
       </div>
       <div class="tech-item">
         <span class="k">i18n</span>

@@ -2,249 +2,297 @@
 
 > **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
 
-Self-compiling Zettelkasten MCP server. Ingest PDFs, YouTube, documents — auto-organized into linked wiki. Claude accesses your entire knowledge base. **Your vault files are never modified.**
+Self-compiling knowledge base with 3D neural graph, AI-powered search, and spaced repetition — available as a **desktop app**, **CLI**, **Obsidian plugin**, and **MCP server**. Your vault files are never modified.
 
 <p align="center">
   <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="800" />
   <br><em>Your vault as a neural network. Local-first, no cloud required.</em>
 </p>
 
-## Two Core Ideas
+## Three Ways to Use Stellavault
 
-**1. "Drop it and forget it"** (Inspired by Karpathy's Self-Compiling Knowledge)
-```
-Any input → auto-classify → raw/ → compile → wiki → connected knowledge
-```
-PDF, DOCX, PPTX, XLSX, YouTube (with transcript), URL, text — everything goes through the same pipeline. You never manually organize.
+### 1. Desktop App (Recommended)
 
-**2. "Claude remembers what you know"** (MCP Integration)
+Download and run — no terminal needed.
+
+| Platform | Download |
+|----------|----------|
+| **Windows** | [Stellavault-win32-x64-0.1.0.zip](https://github.com/Evanciel/stellavault/releases/latest) |
+| macOS | Coming soon |
+| Linux | Coming soon |
+
+**What you get:**
+- Full markdown editor with WYSIWYG toolbar
+- File tree sidebar with search filter
+- `[[wikilink]]` autocomplete as you type
+- Multi-tab editing with Ctrl+S save
+- 3D knowledge graph panel
+- AI panel — semantic search, vault stats, re-index
+- Backlinks panel — see who links to your note
+- Quick Switcher (Ctrl+P) and Command Palette (Ctrl+Shift+P)
+- Dark/light theme
+
+### 2. CLI + Web Graph
+
+For developers and power users.
+
 ```bash
-claude mcp add stellavault -- stellavault serve
-```
-Claude searches, asks, drafts from your vault directly. Local-first — no data leaves your machine.
-
-## 5-Minute Setup
-
-```bash
-npm install -g stellavault
-stellavault init          # Interactive setup + vault indexing
-stellavault graph         # Launch 3D graph + API server
+npm install -g stellavault    # or: npx stellavault
+stellavault init              # Interactive setup wizard
+stellavault graph             # Launch 3D graph in browser
 ```
 
-> **Prerequisites**: Node.js 20+
->
-> **Upgrading from 0.4.x / 0.5.0 / 0.5.1 / 0.5.2 / 0.5.3?** Earlier releases had three showstopper packaging bugs: the `stellavault` bin shim wasn't created after install (0.4.x–0.5.1), the 3D graph UI wasn't bundled (0.4.x–0.5.2), and the SPA fallback was hijacking `/sw.js` and `/manifest.json` causing PWA install errors (0.5.3). **v0.5.4 fixes all of these and is verified end-to-end with Playwright (9/9 checks)** — install, bin link, graph UI, node click, federation toggle, PWA assets, zero console errors. Reinstall: `npm i -g stellavault@latest`.
+> **Prerequisites**: Node.js 20+. Run `stellavault doctor` to diagnose setup issues.
+
+### 3. Obsidian Plugin
+
+Use Stellavault intelligence inside Obsidian.
+
+1. Download from [stellavault-obsidian releases](https://github.com/Evanciel/stellavault-obsidian/releases/latest)
+2. Place `main.js`, `manifest.json`, `styles.css` in `.obsidian/plugins/stellavault/`
+3. Enable in Settings → Community plugins
+4. Start the API server: `npx stellavault graph` in your vault folder
+
+**Features:** Semantic search modal, memory decay sidebar, learning path suggestions, auto-indexing on file changes.
+
+---
 
 ## The Pipeline
 
 ```
 Capture ──→ Organize ──→ Distill ──→ Express
 
-stellavault ingest <anything>     # PDF, DOCX, URL, YouTube, text
-  → auto-extract text             # unpdf, mammoth, yt-dlp
-  → raw/ (fleeting)               # Zettelkasten inbox
-  → compile → _wiki/              # Auto: concepts + backlinks
-  → stellavault draft "topic"     # Blog, report, or outline
+Drop anything → auto-extract → raw/ → compile → _wiki/ → draft
 ```
 
-### Ingest Anything
+Inspired by [Karpathy's self-compiling knowledge](https://karpathy.ai/) architecture. Every input flows through the same four-stage pipeline.
+
+### Ingest Anything (14 formats)
 
 | Input | How |
 |-------|-----|
-| PDF, DOCX, PPTX, XLSX | `stellavault ingest report.pdf` — auto text extraction |
-| JSON, CSV, XML, YAML | `stellavault ingest data.json` — structured format preserved |
-| HTML, RTF | `stellavault ingest page.html` — clean text extraction |
+| PDF, DOCX, PPTX, XLSX | `stellavault ingest report.pdf` |
+| JSON, CSV, XML, YAML, HTML, RTF | `stellavault ingest data.json` |
 | YouTube | `stellavault ingest https://youtu.be/...` — transcript + timestamps |
-| URL | `stellavault ingest https://...` — HTML → clean text |
+| URL | `stellavault ingest https://...` — HTML → markdown |
 | Text | `stellavault ingest "quick thought"` |
 | Folder | `stellavault ingest ./papers/` — batch all files |
-| Web UI | Drag & drop files in browser (mobile too) |
+| Desktop / Web UI | Drag & drop files directly |
 
 ### Express: Get Knowledge Out
 
 ```bash
 stellavault draft "AI"                    # Rule-based scaffold (free)
-stellavault draft "AI" --ai               # Claude API writes full draft ($0.03)
-stellavault draft "AI" --format report    # Formal report format
-stellavault draft --format outline        # All-knowledge outline
+stellavault draft "AI" --ai               # Claude API writes full draft
+stellavault draft "AI" --format report    # Formal report
+stellavault draft --format instagram      # Social media format
 ```
 
-Or in Claude Code: *"Write a blog post about machine learning from my notes"* — Claude uses MCP `generate-draft` tool (free, no API key).
+## MCP Integration (21 Tools)
 
-## Self-Evolving Memory (Karpathy's Compounding Loop)
-
-```
-Session → session-save → daily-log → flush → wiki
-  ↑                                            ↓
-  └──── Claude reads wiki via MCP (20 tools) ←─┘
-```
-
-Every conversation makes your knowledge base smarter:
+Connect Stellavault to Claude Code or Claude Desktop:
 
 ```bash
-# Auto-capture session summary to daily log
-echo "Decided to use JWT. Lesson: never store tokens in localStorage" | stellavault session-save
-
-# Flush daily logs → extract concepts → rebuild wiki
-stellavault flush
-
-# Or set up Claude Code hooks for full automation
-# See: docs/hooks-setup.md
+claude mcp add stellavault -- stellavault serve
 ```
 
-## Daily Commands
-
-```bash
-stellavault ask "What did I learn about X?"   # Q&A from vault
-stellavault brief                              # Morning knowledge briefing
-stellavault decay                              # What's fading from memory?
-stellavault lint                               # Health score (0-100)
-stellavault learn                              # AI learning path
-stellavault flush                              # Daily logs → wiki compilation
-stellavault digest --visual                    # Weekly Mermaid chart report
-```
-
-## MCP Tools (21)
+Claude can now search, ask, draft, lint, and analyze your vault directly.
 
 | Tool | What it does |
 |------|-------------|
-| `search` | Hybrid search (BM25 + vector + RRF) |
-| `ask` | Q&A with optional vault filing |
-| `generate-draft` | Gather vault context for AI draft writing |
-| `get-document` | Full document with metadata |
-| `get-related` | Semantically similar documents |
-| `list-topics` | Topic cloud |
-| `get-decay-status` | Memory decay report |
-| `get-morning-brief` | Daily knowledge briefing |
-| `get-learning-path` | AI learning recommendations |
+| `search` | Hybrid BM25 + vector + RRF search |
+| `ask` | Q&A with vault-grounded answers |
+| `generate-draft` | AI drafts from your knowledge |
+| `get-decay-status` | Memory decay report (FSRS) |
 | `detect-gaps` | Knowledge gap analysis |
-| `get-evolution` | Semantic drift tracking |
-| `link-code` | Code-knowledge connections |
+| `get-learning-path` | Personalized review recommendations |
 | `create-knowledge-node` | AI creates wiki-quality notes |
-| `create-knowledge-link` | AI connects existing notes |
-| `log-decision` / `find-decisions` | Decision journal |
-| `create-snapshot` / `load-snapshot` | Context snapshots |
-| `generate-claude-md` | Auto-generate CLAUDE.md |
-| `export` | JSON/CSV export |
-| `federated-search` | P2P federated search |
-
-## Self-Evolving Commands
-
-```bash
-stellavault session-save              # Capture session summary to daily log
-stellavault flush                     # Daily logs → wiki (Karpathy compile)
-stellavault promote note.md --to lit  # Upgrade note stage
-stellavault autopilot                 # Full cycle: inbox → compile → lint → archive
-```
-
-## Zettelkasten (Luhmann + Karpathy)
-
-```bash
-stellavault fleeting "raw idea"                # → raw/
-stellavault ingest report.pdf                  # → auto text extract → raw/
-stellavault compile                            # → raw/ → _wiki/ (concepts + backlinks)
-stellavault promote note.md --to permanent     # Upgrade stage
-stellavault autopilot                          # Full cycle: inbox → compile → lint → archive
-```
-
-- **3-stage flow**: fleeting → literature → permanent
-- **Luhmann index codes**: auto-assigned (1A → 1A1)
-- **Frontmatter-first scanning**: 10x token reduction
-- **Configurable folders**: override raw/_wiki/_literature/ in `.stellavault.json`
-
-```json
-{
-  "vaultPath": "/path/to/vault",
-  "folders": {
-    "fleeting": "01-Inbox",
-    "literature": "02-Reading",
-    "permanent": "03-Notes",
-    "wiki": "04-Wiki"
-  }
-}
-```
+| `federated-search` | P2P search across connected vaults |
+| + 13 more | Documents, topics, decisions, snapshots, export |
 
 ## Intelligence
 
 | Feature | Command |
 |---------|---------|
-| FSRS Decay | `sv decay` — spaced repetition memory tracking |
-| Gap Detection | `sv gaps` — missing connections between topics |
-| Contradictions | `sv contradictions` — conflicting statements |
-| Duplicates | `sv duplicates` — redundant notes |
-| Learning Path | `sv learn` — AI review recommendations |
-| Code Linker | MCP `link-code` — connect code to knowledge |
+| Memory Decay | `stellavault decay` — what you're forgetting (FSRS) |
+| Gap Detection | `stellavault gaps` — weak connections between topics |
+| Contradictions | `stellavault contradictions` — conflicting statements |
+| Duplicates | `stellavault duplicates` — redundant notes |
+| Learning Path | `stellavault learn` — AI review recommendations |
+| Health Check | `stellavault lint` — overall knowledge score |
+| Daily Brief | `stellavault brief` — morning knowledge briefing |
+| Weekly Digest | `stellavault digest --visual` — Mermaid chart report |
 
-## 3D Visualization
+## Self-Evolving Memory
 
-- Neural graph with cluster coloring
-- Constellation view (MST star patterns)
-- Heatmap overlay (activity score)
-- Timeline slider (creation/modification filter)
-- Decay overlay (fading knowledge)
-- **Multiverse view** — your vault as a universe in a P2P network
-- Dark/Light theme
-- Mobile responsive + PWA installable
+```
+Session → session-save → daily-log → flush → wiki
+  ↑                                            ↓
+  └──── Claude reads wiki via MCP (21 tools) ←─┘
+```
 
-## Multiverse — P2P Knowledge Federation
+Every conversation makes your knowledge base smarter. Set up [Claude Code hooks](docs/hooks-setup.md) for full automation.
 
-<p align="center">
-  <img src="images/screenshots/multiverse-view.png" alt="Multiverse View" width="800" />
-  <br><em>"Your universe floats alone — for now."</em>
-</p>
+## Zettelkasten Workflow
+
+Three-stage flow: **fleeting → literature → permanent** (Luhmann + Karpathy).
+
+```bash
+stellavault fleeting "raw idea"               # → raw/
+stellavault ingest report.pdf                 # → auto-extract → raw/
+stellavault compile                           # → raw/ → _wiki/ (concepts + backlinks)
+stellavault promote note.md --to permanent    # Upgrade stage
+stellavault autopilot                         # Full cycle: inbox → compile → lint
+```
+
+Auto-assigned Luhmann index codes, frontmatter-first scanning, configurable folders.
+
+## P2P Federation (Multiverse)
 
 Your vault is a universe. Connect with others through P2P federation.
 
-**From the web UI** (easiest): open `stellavault graph`, then click the **Offline · Join** badge in the top-left header. Live peer count, one-click disconnect, and a popover showing connected peers.
-
-**From the CLI**:
-```bash
-stellavault federate join    # Connect to the Stella Network
-stellavault federate status  # See connected peers
-```
-
-**How it works:**
-- **Hyperswarm P2P** — NAT-traversal mesh networking, no central server
-- **Embeddings only** — your original text never leaves your machine
+- **Hyperswarm P2P** — NAT-traversal, no central server
+- **Embeddings only** — original text never leaves your machine
 - **Differential privacy** — mathematical privacy guarantees
-- **Trust & reputation** — good knowledge earns credits
-- **Federated search** — search across connected vaults via MCP
 
-The Multiverse view shows your universe and connected peers as neighboring constellations in 3D. Click to explore their shared knowledge.
+In the desktop app or web UI, click the **Federation badge** in the header to join/leave the Stella Network.
 
 ## Tech Stack
 
 | Layer | Tech |
 |-------|------|
+| Desktop | Electron + React + TipTap + Zustand |
 | Runtime | Node.js 20+ (ESM, TypeScript) |
-| Vector Store | SQLite-vec (local, no server) |
-| Embedding | paraphrase-multilingual-MiniLM-L12-v2 (local, 50+ languages) |
+| Vector Store | SQLite-vec (local, zero config) |
+| Embedding | MiniLM-L12-v2 (local, 50+ languages) |
 | Search | BM25 + Cosine + RRF Fusion |
 | File Parsing | unpdf, mammoth, officeparser, SheetJS |
 | Memory | FSRS (Free Spaced Repetition Scheduler) |
 | 3D | React Three Fiber + Three.js |
 | AI | MCP (Model Context Protocol) + Anthropic SDK |
+| P2P | Hyperswarm (optional) |
 
 ## Full Feature List
 
 | Category | Features |
 |----------|----------|
-| **Capture** | ingest 14 formats (PDF/DOCX/PPTX/XLSX/JSON/CSV/XML/HTML/YAML/RTF/YouTube/URL/text), batch folders, web drag & drop, Quick Capture, mobile PWA |
+| **Desktop** | File tree sidebar, multi-tab editor, [[wikilink]] autocomplete, Quick Switcher, Command Palette, 3D graph panel, AI panel, backlinks, dark/light theme |
+| **Capture** | 14 formats (PDF/DOCX/PPTX/XLSX/JSON/CSV/XML/HTML/YAML/RTF/YouTube/URL/text), batch folders, drag & drop, voice capture, Quick Capture |
 | **Organize** | Zettelkasten 3-stage, auto index codes, wikilink auto-connect, configurable folders |
 | **Distill** | compile (raw→wiki), lint (health score), gaps, contradictions, duplicates |
-| **Express** | draft (blog/report/outline/instagram/thread/script), blueprint, --ai, MCP generate-draft |
+| **Express** | draft (blog/report/outline/instagram/thread/script), blueprint, --ai mode |
 | **Memory** | FSRS decay, session-save, flush, compounding loop, ADR templates |
 | **Search** | hybrid (BM25+vector+RRF), multilingual 50+, ask Q&A, quotes mode |
-| **Visualize** | 3D graph, heatmap, timeline, right-click context menu, TipTap WYSIWYG editor |
-| **AI Integration** | 21 MCP tools, Claude Code hooks, Anthropic SDK |
-| **Security** | DOMPurify, YAML sanitize, 50MB guard, SSRF protection |
-| **CLI** | 40+ commands, `sv` alias, batch ingest |
+| **Visualize** | 3D graph, heatmap, timeline, constellation view, decay overlay, multiverse |
+| **AI** | 21 MCP tools, Claude Code hooks, Anthropic SDK |
+| **Federation** | Hyperswarm P2P, embedding-only sharing, differential privacy |
+| **CLI** | 40+ commands, `sv` alias, `stellavault doctor` diagnostics |
+
+## Getting Started Guide
+
+### Desktop App (easiest)
+
+1. **Download** from [Releases](https://github.com/Evanciel/stellavault/releases/latest)
+2. **Unzip** to any folder
+3. **Run** `stellavault.exe` (Windows) — first launch asks you to pick your notes folder
+4. **Explore** — your notes appear in the sidebar, click to open in the editor
+5. **Search** — press `Ctrl+P` to quick-switch between notes, or open the AI panel (✦ button) for semantic search
+
+### CLI (for developers)
+
+```bash
+# Step 1: Install
+npm install -g stellavault
+
+# Step 2: Setup (interactive wizard)
+stellavault init
+# → Asks for vault path → indexes all .md files → tests search
+
+# Step 3: Daily use
+stellavault search "machine learning"     # Find notes
+stellavault ingest paper.pdf              # Add new knowledge
+stellavault graph                         # Open 3D graph in browser
+stellavault brief                         # Morning briefing
+stellavault decay                         # What are you forgetting?
+
+# Step 4: Connect to Claude
+claude mcp add stellavault -- stellavault serve
+# → Claude can now read your vault via MCP
+```
+
+### Obsidian Plugin
+
+```bash
+# Step 1: Start the API server (keep running)
+npx stellavault graph
+
+# Step 2: Install plugin
+#   Download main.js + manifest.json + styles.css from:
+#   https://github.com/Evanciel/stellavault-obsidian/releases/latest
+#   Place in: <vault>/.obsidian/plugins/stellavault/
+
+# Step 3: Enable in Settings → Community Plugins → Stellavault
+
+# Step 4: Use
+#   - Click brain icon (🧠) for semantic search
+#   - Cmd+Shift+D for memory decay panel
+#   - Cmd+Shift+L for learning path suggestions
+```
+
+### Quick Reference
+
+| Action | Desktop | CLI | Obsidian |
+|--------|---------|-----|----------|
+| Search notes | Ctrl+P or AI panel | `stellavault search "query"` | 🧠 icon |
+| Add a note | + Note button | `stellavault ingest "text"` | Normal editing |
+| See 3D graph | ◉ button | `stellavault graph` | N/A |
+| Check memory decay | AI panel → Memory | `stellavault decay` | Decay sidebar |
+| Find duplicates | AI panel → Stats | `stellavault duplicates` | N/A |
+| Generate draft | N/A (v0.2) | `stellavault draft "topic"` | N/A |
+| Connect to Claude | N/A (v0.2) | `claude mcp add stellavault` | N/A |
+
+### Configuration
+
+All settings live in `~/.stellavault.json`:
+
+```json
+{
+  "vaultPath": "/path/to/your/notes",
+  "dbPath": "~/.stellavault/index.db",
+  "embedding": { "model": "local", "localModel": "all-MiniLM-L6-v2" },
+  "mcp": { "mode": "stdio", "port": 3333 }
+}
+```
+
+Run `stellavault doctor` anytime to check your setup.
+
+### Keyboard Shortcuts (Desktop)
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+P` | Quick Switcher (fuzzy file search) |
+| `Ctrl+Shift+P` | Command Palette (all actions) |
+| `Ctrl+S` | Save current note |
+| `Ctrl+B` | Toggle bold |
+| `Ctrl+I` | Toggle italic |
+| `Ctrl+E` | Toggle inline code |
+| `[[` | Wikilink autocomplete |
+
+## Troubleshooting
+
+```bash
+stellavault doctor    # Check config, vault, DB, model, Node version
+```
+
+Common issues:
+- **"Command not found"** → Reinstall: `npm i -g stellavault@latest`
+- **"API server not found"** → Start the server: `npx stellavault graph`
+- **Empty graph** → Run `stellavault index` to re-index your vault
+- **Slow first run** → The AI model downloads ~30MB on first use (one time only)
 
 ## Security
 
-Your vault files are never modified. Stellavault is local-first — no data leaves your machine unless you explicitly use `--ai` (Anthropic API).
-
-See [SECURITY.md](SECURITY.md) for full details.
+Local-first — no data leaves your machine unless you explicitly use `--ai` (Anthropic API). Vault files are never modified. See [SECURITY.md](SECURITY.md).
 
 ## License
 
@@ -252,6 +300,7 @@ MIT — full source code available for audit.
 
 ## Links
 
+- **[Download Desktop App](https://github.com/Evanciel/stellavault/releases/latest)**
 - [Landing Page](https://evanciel.github.io/stellavault/)
 - [Obsidian Plugin](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
