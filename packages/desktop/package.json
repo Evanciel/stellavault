@@ -27,6 +27,7 @@
     "@tiptap/extension-typography": "^3.22.3",
     "@tiptap/extension-underline": "^3.22.3",
     "electron-squirrel-startup": "^1.0.1",
+    "katex": "^0.16.45",
     "lowlight": "^3.3.0"
   },
   "devDependencies": {

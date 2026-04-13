@@ -23,6 +23,8 @@ import Image from '@tiptap/extension-image';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
 import { WikilinkExtension } from './WikilinkSuggestion.js';
+import { SlashCommandExtension } from './SlashCommands.js';
+import { MathExtension } from './MathExtension.js';
 
 const lowlight = createLowlight(common);
 
@@ -55,6 +57,8 @@ export function MarkdownEditor({ content, onChange }: Props) {
       Typography,
       Image.configure({ inline: false, allowBase64: true }),
       WikilinkExtension,
+      SlashCommandExtension,
+      MathExtension,
     ],
     content,
     onUpdate: ({ editor: e }) => {
@@ -191,6 +195,18 @@ export function MarkdownEditor({ content, onChange }: Props) {
         {/* Super/subscript */}
         <ToolBtn active={editor.isActive('superscript')} onClick={() => editor.chain().focus().toggleSuperscript().run()} label="x²" title="Superscript" style={{ fontSize: '10px' }} />
         <ToolBtn active={editor.isActive('subscript')} onClick={() => editor.chain().focus().toggleSubscript().run()} label="x₂" title="Subscript" style={{ fontSize: '10px' }} />
+
+        <Sep />
+
+        {/* Math */}
+        <ToolBtn active={false} onClick={() => {
+          editor.chain().focus().insertContent('$$E = mc^2$$').run();
+        }} label="∑" title="Insert math (KaTeX)" />
+
+        {/* Slash hint */}
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ink-faint)', alignSelf: 'center', paddingRight: 4 }}>
+          Type / for commands
+        </span>
       </div>
 
       <EditorContent editor={editor} />
@@ -301,6 +317,19 @@ export function MarkdownEditor({ content, onChange }: Props) {
         .sv-editor ul[data-type="taskList"] li[data-checked="true"] > div > p {
           text-decoration: line-through;
           color: var(--ink-faint);
+        }
+
+        /* Math (KaTeX) */
+        .sv-math-inline {
+          display: inline;
+          margin: 0 2px;
+        }
+        .sv-math-display {
+          text-align: center;
+          margin: 16px 0;
+          padding: 12px;
+          background: var(--bg-3);
+          border-radius: 6px;
         }
 
         /* Placeholder */
