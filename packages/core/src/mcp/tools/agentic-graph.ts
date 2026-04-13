@@ -7,6 +7,12 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function createAgenticGraphTools(store: VectorStore, embedder: Embedder, vaultPath: string) {
+  // Rate limit: max 50 node creations per hour per session
+  let nodeCreationCount = 0;
+  let nodeCreationWindowStart = Date.now();
+  const NODE_CREATION_LIMIT = 50;
+  const NODE_CREATION_WINDOW = 60 * 60 * 1000; // 1 hour
+
   return [
     {
       name: 'create-knowledge-node',
@@ -24,6 +30,24 @@ export function createAgenticGraphTools(store: VectorStore, embedder: Embedder, 
         required: ['title', 'content'],
       },
       async handler(args: { title: string; content: string; tags?: string[]; type?: string; folder?: string; autoLink?: boolean }) {
+        // Input validation
+        if (!args.title || args.title.length > 200) {
+          return { content: [{ type: 'text' as const, text: 'Error: title is required and must be under 200 characters.' }] };
+        }
+        if (!args.content || args.content.length > 50000) {
+          return { content: [{ type: 'text' as const, text: 'Error: content is required and must be under 50KB.' }] };
+        }
+        // Rate limiting
+        const now = Date.now();
+        if (now - nodeCreationWindowStart > NODE_CREATION_WINDOW) {
+          nodeCreationCount = 0;
+          nodeCreationWindowStart = now;
+        }
+        if (nodeCreationCount >= NODE_CREATION_LIMIT) {
+          return { content: [{ type: 'text' as const, text: `Error: rate limit exceeded (${NODE_CREATION_LIMIT} nodes/hour). Try again later.` }] };
+        }
+        nodeCreationCount++;
+
         const { title, content, tags = [], type = 'note', folder = '01_Knowledge', autoLink = true } = args;
 
         // 관련 문서 자동 탐색

@@ -32,6 +32,9 @@ export function createGenerateDraftTool(searchEngine: SearchEngine, vaultPath: s
     },
 
     handler: async (args: { topic?: string; format?: string; maxSources?: number }) => {
+      if (args.topic && args.topic.length > 2000) {
+        return { content: [{ type: 'text' as const, text: 'Error: topic must be under 2000 characters.' }], isError: true };
+      }
       const { topic, format = 'blog', maxSources = 10 } = args;
       const config = loadConfig();
       const folders = config.folders ?? DEFAULT_FOLDERS;

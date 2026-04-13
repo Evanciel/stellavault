@@ -7,6 +7,9 @@ import { randomBytes } from 'node:crypto';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
 import { buildGraphData, type BuildGraphOptions } from './graph-data.js';
+import type { GraphData } from '../types/graph.js';
+import { createFederationRouter } from './routes/federation.js';
+import { createKnowledgeRouter } from './routes/knowledge.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 import { detectDuplicates } from '../intelligence/duplicate-detector.js';
 import { detectKnowledgeGaps } from '../intelligence/gap-detector.js';
@@ -49,14 +52,30 @@ export function createApiServer(options: ApiServerOptions) {
   app.use(cors({ origin: allowedOrigins }));
   app.use(express.json());
 
-  // MED-02: Simple in-memory rate limiter for mutating endpoints
-  const rateLimiter = new Map<string, number[]>();
+  // MED-02: O(1) sliding window rate limiter with automatic cleanup
+  const rateLimiter = new Map<string, { count: number; windowStart: number }>();
+  const RATE_LIMIT_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 min
+  const RATE_LIMIT_MAX_KEYS = 10000;
+  let lastRateLimitCleanup = Date.now();
+
   function rateLimit(key: string, windowMs = 60000, maxHits = 30): boolean {
     const now = Date.now();
-    const hits = (rateLimiter.get(key) ?? []).filter(t => now - t < windowMs);
-    if (hits.length >= maxHits) return false;
-    hits.push(now);
-    rateLimiter.set(key, hits);
+
+    // Periodic cleanup: evict expired entries to prevent memory leak
+    if (now - lastRateLimitCleanup > RATE_LIMIT_CLEANUP_INTERVAL || rateLimiter.size > RATE_LIMIT_MAX_KEYS) {
+      for (const [k, v] of rateLimiter) {
+        if (now - v.windowStart >= windowMs) rateLimiter.delete(k);
+      }
+      lastRateLimitCleanup = now;
+    }
+
+    const entry = rateLimiter.get(key);
+    if (!entry || now - entry.windowStart >= windowMs) {
+      rateLimiter.set(key, { count: 1, windowStart: now });
+      return true;
+    }
+    if (entry.count >= maxHits) return false;
+    entry.count++;
     return true;
   }
 
@@ -100,17 +119,21 @@ export function createApiServer(options: ApiServerOptions) {
   }
 
   // GET /api/graph?mode=semantic|folder — 전체 그래프 데이터
-  const graphCaches = new Map<string, { data: any; generatedAt: string }>();
+  const GRAPH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  interface GraphCacheEntry { data: GraphData; generatedAt: string; cachedAt: number }
+  const graphCaches = new Map<string, GraphCacheEntry>();
 
   app.get('/api/graph', async (req, res) => {
     try {
       const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
-      if (!graphCaches.has(mode)) {
+      const cached = graphCaches.get(mode);
+      if (!cached || Date.now() - cached.cachedAt > GRAPH_CACHE_TTL) {
         const data = await buildGraphData(store, { mode });
-        graphCaches.set(mode, { data, generatedAt: new Date().toISOString() });
+        const now = new Date().toISOString();
+        graphCaches.set(mode, { data, generatedAt: now, cachedAt: Date.now() });
       }
-      const cached = graphCaches.get(mode)!;
-      res.json({ data: cached.data, generatedAt: cached.generatedAt, mode });
+      const entry = graphCaches.get(mode)!;
+      res.json({ data: entry.data, generatedAt: entry.generatedAt, mode });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
     }
@@ -121,9 +144,9 @@ export function createApiServer(options: ApiServerOptions) {
     try {
       const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
       const data = await buildGraphData(store, { mode });
-      graphCaches.set(mode, { data, generatedAt: new Date().toISOString() });
-      const cached = graphCaches.get(mode)!;
-      res.json({ data: cached.data, generatedAt: cached.generatedAt, mode });
+      const now = new Date().toISOString();
+      graphCaches.set(mode, { data, generatedAt: now, cachedAt: Date.now() });
+      res.json({ data, generatedAt: now, mode });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
     }
@@ -171,7 +194,7 @@ export function createApiServer(options: ApiServerOptions) {
         skipped: result.skipped,
         chunks: result.totalChunks,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[reindex]', err);
       res.status(500).json({ error: 'Reindex failed' });
     } finally {
@@ -252,9 +275,10 @@ export function createApiServer(options: ApiServerOptions) {
   app.get('/api/profile-card', async (_req, res) => {
     try {
       const mode = ((_req as any).query.mode as string) === 'folder' ? 'folder' : 'semantic';
-      if (!graphCaches.has(mode)) {
+      const cachedProfile = graphCaches.get(mode);
+      if (!cachedProfile || Date.now() - cachedProfile.cachedAt > GRAPH_CACHE_TTL) {
         const data = await buildGraphData(store, { mode });
-        graphCaches.set(mode, { data, generatedAt: new Date().toISOString() });
+        graphCaches.set(mode, { data, generatedAt: new Date().toISOString(), cachedAt: Date.now() });
       }
       const graphData = graphCaches.get(mode)!.data;
       const topics = await store.getTopics();
@@ -413,7 +437,7 @@ export function createApiServer(options: ApiServerOptions) {
       });
 
       res.json({ success: true, id, title: title ?? doc.title });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[edit]', err);
       res.status(500).json({ error: 'Edit failed' });
     }
@@ -444,7 +468,7 @@ export function createApiServer(options: ApiServerOptions) {
       await store.deleteByDocumentId(id);
 
       res.json({ success: true, id, deleted: doc.filePath });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[delete]', err);
       res.status(500).json({ error: 'Delete failed' });
     }
@@ -510,7 +534,7 @@ export function createApiServer(options: ApiServerOptions) {
             const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
             if (titleMatch && !autoTitle) autoTitle = titleMatch[1].trim();
             content = input + '\n\n' + html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
-          } catch { /* URL만 저장 */ }
+          } catch (e) { console.error('[ingest] YouTube HTML fallback failed:', e instanceof Error ? e.message : e); }
         }
       } else if (input.startsWith('http')) {
         // HIGH-01: SSRF protection for general URL ingest
@@ -534,7 +558,7 @@ export function createApiServer(options: ApiServerOptions) {
             .trim()
             .slice(0, 5000);
           content = input + '\n\n' + text;
-        } catch { /* URL만 저장 */ }
+        } catch (e) { console.error('[ingest] URL fetch failed:', e instanceof Error ? e.message : e); }
       }
 
       const { ingest } = await import('../intelligence/ingest-pipeline.js');
@@ -697,10 +721,12 @@ export function createApiServer(options: ApiServerOptions) {
             wordCount: result.wordCount,
           });
         } catch (err) {
+          console.error('[ingest/file] Processing failed:', err instanceof Error ? err.message : err);
           res.status(500).json({ error: 'Processing failed' });
         }
       });
     } catch (err) {
+      console.error('[ingest/file] Upload init failed:', err instanceof Error ? err.message : err);
       res.status(500).json({ error: 'File upload initialization failed' });
     }
   });
@@ -745,7 +771,7 @@ export function createApiServer(options: ApiServerOptions) {
           for (const item of report.topDecaying) {
             decayMap[item.documentId] = item.retrievability;
           }
-        } catch { /* ignore */ }
+        } catch (e) { console.error('[trending] Decay computation failed:', e instanceof Error ? e.message : e); }
       }
 
       for (const doc of docs) {
@@ -804,138 +830,9 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
-  // GET /api/duplicates — 중복 노트 탐지
-  app.get('/api/duplicates', async (req, res) => {
-    try {
-      const threshold = parseFloat(String(req.query.threshold ?? '0.88'));
-      const pairs = await detectDuplicates(store, threshold, 20);
-      res.json({ pairs, count: pairs.length, threshold });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // GET /api/gaps — 지식 갭 탐지
-  app.get('/api/gaps', async (_req, res) => {
-    try {
-      const report = await detectKnowledgeGaps(store);
-      res.json(report);
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // POST /api/duplicates/merge — 중복 노트 자동 병합
-  app.post('/api/duplicates/merge', requireAuth, async (req, res) => {
-    try {
-      const { docAId, docBId } = req.body;
-      if (!docAId || !docBId) { res.status(400).json({ error: 'docAId, docBId required' }); return; }
-
-      const docA = await store.getDocument(docAId);
-      const docB = await store.getDocument(docBId);
-      if (!docA || !docB) { res.status(404).json({ error: 'Document not found' }); return; }
-
-      const { readFileSync, writeFileSync, unlinkSync } = await import('node:fs');
-      const { join, resolve, relative } = await import('node:path');
-
-      // 긴 노트를 기준으로 유지, 짧은 노트의 고유 내용을 추가
-      const [keeper, removed] = docA.content.length >= docB.content.length
-        ? [docA, docB] : [docB, docA];
-
-      // HIGH-02: Path Traversal 방어 — vault 외부 접근 차단
-      const keeperPath = resolve(join(vaultPath, keeper.filePath));
-      const removedPath = resolve(join(vaultPath, removed.filePath));
-      const vaultRoot = resolve(vaultPath);
-      if (!keeperPath.startsWith(vaultRoot) || !removedPath.startsWith(vaultRoot)) {
-        res.status(400).json({ error: 'Invalid file path' }); return;
-      }
-
-      // 병합: keeper 끝에 removed 고유 내용 추가
-      const keeperContent = readFileSync(keeperPath, 'utf-8');
-      const appendix = `\n\n---\n\n> Merged from: ${removed.title} (${removed.filePath})\n\n${removed.content}`;
-      writeFileSync(keeperPath, keeperContent + appendix, 'utf-8');
-
-      // 삭제
-      try { unlinkSync(removedPath); } catch { /* 이미 없을 수 있음 */ }
-
-      // DB에서도 삭제
-      await store.deleteByDocumentId(removed.id);
-
-      res.json({
-        success: true,
-        kept: { id: keeper.id, title: keeper.title },
-        removed: { id: removed.id, title: removed.title },
-      });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Merge failed' });
-    }
-  });
-
-  // POST /api/gaps/create-bridge — 갭 브릿지 노트 자동 생성
-  app.post('/api/gaps/create-bridge', requireAuth, async (req, res) => {
-    try {
-      const { clusterA, clusterB } = req.body;
-      if (!clusterA || !clusterB) { res.status(400).json({ error: 'clusterA, clusterB required' }); return; }
-
-      const { writeFileSync, mkdirSync } = await import('node:fs');
-      const { join } = await import('node:path');
-
-      const nameA = clusterA.replace(/\s*\(\d+\)$/, '');
-      const nameB = clusterB.replace(/\s*\(\d+\)$/, '');
-
-      // 양쪽 클러스터의 대표 노트 검색
-      const resultsA = await searchEngine.search({ query: nameA, limit: 3 });
-      const resultsB = await searchEngine.search({ query: nameB, limit: 3 });
-
-      const refsA = resultsA.map(r => `- [[${r.document.title}]]: ${r.document.content.slice(0, 100).replace(/\n/g, ' ')}...`).join('\n');
-      const refsB = resultsB.map(r => `- [[${r.document.title}]]: ${r.document.content.slice(0, 100).replace(/\n/g, ' ')}...`).join('\n');
-
-      const title = `${nameA} × ${nameB}`;
-      const date = new Date().toISOString().slice(0, 10);
-      const content = [
-        '---',
-        `title: "${title}"`,
-        `created: ${date}`,
-        'tags: [bridge, auto-generated]',
-        '---',
-        '',
-        `# ${title}`,
-        '',
-        `> 이 노트는 지식 갭 탐지기에 의해 자동 생성되었습니다.`,
-        `> ${nameA}와 ${nameB} 사이의 연결 지식을 정리하세요.`,
-        '',
-        `## ${nameA} 핵심 노트`,
-        '',
-        refsA || '- (관련 노트 없음)',
-        '',
-        `## ${nameB} 핵심 노트`,
-        '',
-        refsB || '- (관련 노트 없음)',
-        '',
-        '## 연결 포인트',
-        '',
-        `${nameA}와 ${nameB}의 관계:`,
-        '',
-        '- ',
-        '',
-        '## 메모',
-        '',
-        '',
-      ].join('\n');
-
-      const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ');
-      const { resolve } = await import('node:path');
-      const dir = resolve(join(vaultPath, '01_Knowledge'));
-      if (!dir.startsWith(resolve(vaultPath))) { res.status(400).json({ error: 'Invalid path' }); return; }
-      mkdirSync(dir, { recursive: true });
-      const filePath = join(dir, `${safeTitle}.md`);
-      writeFileSync(filePath, content, 'utf-8');
-
-      res.json({ success: true, title: safeTitle, path: filePath });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Bridge creation failed' });
-    }
-  });
+  // ───── Knowledge Management (duplicates, gaps, merge, bridge) ─────
+  // Design Ref: §5 — Extracted to routes/knowledge.ts
+  app.use('/api', createKnowledgeRouter({ store, searchEngine, vaultPath, requireAuth }));
 
   // GET /api/health — 종합 건강도 대시보드
   app.get('/api/health', async (_req, res) => {
@@ -964,14 +861,14 @@ export function createApiServer(options: ApiServerOptions) {
           gapCount: gapReport.gaps?.length ?? 0,
           isolatedCount: gapReport.isolatedNodes?.length ?? 0,
         };
-      } catch { /* gaps may fail if no embeddings */ }
+      } catch (e) { console.error('[health] Gap detection failed:', e instanceof Error ? e.message : e); }
 
       // Duplicates 요약
       let dupCount = 0;
       try {
         const pairs = await detectDuplicates(store, 0.88, 50);
         dupCount = pairs.length;
-      } catch { /* duplicates may fail */ }
+      } catch (e) { console.error('[health] Duplicate detection failed:', e instanceof Error ? e.message : e); }
 
       // Source/Type 분포
       const sourceDist = new Map<string, number>();
@@ -1070,9 +967,10 @@ export function createApiServer(options: ApiServerOptions) {
       const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
       const maxNodes = Math.min(parseInt(String(req.query.max ?? '200'), 10), 500);
 
-      if (!graphCaches.has(mode)) {
+      const cachedConstellation = graphCaches.get(mode);
+      if (!cachedConstellation || Date.now() - cachedConstellation.cachedAt > GRAPH_CACHE_TTL) {
         const data = await buildGraphData(store, { mode });
-        graphCaches.set(mode, { data, generatedAt: new Date().toISOString() });
+        graphCaches.set(mode, { data, generatedAt: new Date().toISOString(), cachedAt: Date.now() });
       }
       const cached = graphCaches.get(mode)!;
       const { nodes, edges, clusters } = cached.data;
@@ -1217,112 +1115,8 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // ───── Federation ─────────────────────────────────────────
-  // Design Ref: §4 — Federation (Hyperswarm P2P, embedding-only sharing)
-  // State lives inside closure so routes share it across requests.
-  // hyperswarm is an optionalDependency — if it's missing we return
-  // { available: false } rather than throwing, so UI degrades gracefully.
-  let federationNode: any = null;
-  let federationAvailable: boolean | null = null; // null = unknown until probed
-
-  async function probeFederationAvailable(): Promise<boolean> {
-    if (federationAvailable !== null) return federationAvailable;
-    try {
-      // Dynamic import so a missing optionalDependency doesn't crash the server
-      await import('hyperswarm');
-      federationAvailable = true;
-    } catch {
-      federationAvailable = false;
-    }
-    return federationAvailable;
-  }
-
-  app.get('/api/federate/status', async (_req, res) => {
-    const available = await probeFederationAvailable();
-    if (!available) {
-      return res.json({ available: false, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
-    }
-    if (!federationNode || !federationNode.isRunning) {
-      return res.json({ available: true, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
-    }
-    try {
-      const peers = (federationNode.getPeers() as any[]).map((p: any) => ({
-        peerId: p.peerId || '',
-        displayName: p.displayName || 'Peer',
-        documentCount: p.documentCount ?? 0,
-        topTopics: p.topTopics ?? [],
-      }));
-      res.json({
-        available: true,
-        active: true,
-        peerCount: peers.length,
-        peers,
-        displayName: federationNode.displayName,
-        peerId: federationNode.peerId,
-      });
-    } catch (err) {
-      console.error(err);
-      res.json({ available: true, active: false, peerCount: 0, peers: [], displayName: null, peerId: null });
-    }
-  });
-
-  app.post('/api/federate/join', async (req, res) => {
-    const available = await probeFederationAvailable();
-    if (!available) {
-      return res.status(501).json({
-        success: false,
-        error: 'federation-unavailable',
-        message: 'Federation requires optional dependency "hyperswarm". Reinstall stellavault with hyperswarm enabled.',
-      });
-    }
-    if (federationNode && federationNode.isRunning) {
-      return res.json({
-        success: true,
-        active: true,
-        displayName: federationNode.displayName,
-        peerId: federationNode.peerId,
-        peerCount: federationNode.peerCount,
-        message: 'Already joined',
-      });
-    }
-    try {
-      const { FederationNode } = await import('../federation/index.js');
-      const displayName = (req.body?.displayName as string) || undefined;
-      federationNode = new FederationNode(displayName);
-
-      // Announce our local stats so peers see our doc count
-      try {
-        const stats = await store.getStats();
-        federationNode.setLocalStats(stats.documentCount ?? 0, []);
-      } catch { /* non-fatal */ }
-
-      await federationNode.join();
-      res.json({
-        success: true,
-        active: true,
-        displayName: federationNode.displayName,
-        peerId: federationNode.peerId,
-        peerCount: federationNode.peerCount,
-      });
-    } catch (err: any) {
-      console.error('Federation join failed:', err);
-      federationNode = null;
-      res.status(500).json({ success: false, error: err?.message || 'Federation join failed' });
-    }
-  });
-
-  app.post('/api/federate/leave', async (_req, res) => {
-    if (!federationNode || !federationNode.isRunning) {
-      return res.json({ success: true, active: false, message: 'Not active' });
-    }
-    try {
-      await federationNode.leave();
-      federationNode = null;
-      res.json({ success: true, active: false });
-    } catch (err: any) {
-      console.error('Federation leave failed:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Federation leave failed' });
-    }
-  });
+  // Design Ref: §4 — Extracted to routes/federation.ts
+  app.use('/api/federate', createFederationRouter(store));
 
   // SPA fallback — any non-/api route without a file extension serves
   // the built index.html. URLs that look like static file requests

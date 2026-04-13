@@ -22,6 +22,9 @@ export function createAskTool(searchEngine: SearchEngine, vaultPath: string) {
       required: ['question'] as const,
     },
     handler: async (args: { question: string; save?: boolean }) => {
+      if (!args.question || args.question.length > 2000) {
+        return { content: [{ type: 'text' as const, text: 'Error: question is required and must be under 2000 characters.' }], isError: true };
+      }
       const result = await askVault(searchEngine, args.question, {
         limit: 10,
         save: args.save ?? false,
