@@ -248,13 +248,19 @@ function kMeans(vectors: number[][], k: number, maxIter: number = 50): number[] 
 
     if (!changed) break;
 
-    // Update centroids
+    // Update centroids — accumulate in-place instead of filter + reduce per cluster
+    const sums = Array.from({ length: k }, () => new Float64Array(dims));
+    const counts = new Uint32Array(k);
+    for (let i = 0; i < vectors.length; i++) {
+      const c = assignments[i];
+      counts[c]++;
+      const s = sums[c], v = vectors[i];
+      for (let d = 0; d < dims; d++) s[d] += v[d];
+    }
     for (let c = 0; c < k; c++) {
-      const members = vectors.filter((_, i) => assignments[i] === c);
-      if (members.length === 0) continue;
-      for (let d = 0; d < dims; d++) {
-        centroids[c][d] = members.reduce((sum, v) => sum + v[d], 0) / members.length;
-      }
+      if (counts[c] === 0) continue;
+      const s = sums[c];
+      for (let d = 0; d < dims; d++) centroids[c][d] = s[d] / counts[c];
     }
   }
 

@@ -154,20 +154,27 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
       };
     },
 
-    async getDocumentEmbeddings(): Promise<Map<string, number[]>> {
+    async getDocumentEmbeddings(maxDocs = 10000): Promise<Map<string, number[]>> {
       // 각 문서의 첫 청크 임베딩을 문서 대표 벡터로 사용
-      const rows = db.prepare(`
+      // maxDocs로 메모리 상한 설정 (10K docs × 384 floats ≈ 15MB)
+      const BATCH_SIZE = 500;
+      const result = new Map<string, number[]>();
+      const stmt = db.prepare(`
         SELECT c.document_id, ce.embedding
         FROM chunks c
         JOIN chunk_embeddings ce ON ce.chunk_id = c.id
         WHERE c.id IN (
           SELECT MIN(id) FROM chunks GROUP BY document_id
         )
-      `).all() as Array<{ document_id: string; embedding: Buffer }>;
+        LIMIT ? OFFSET ?
+      `);
 
-      const result = new Map<string, number[]>();
-      for (const row of rows) {
-        result.set(row.document_id, bufferToFloat32(row.embedding));
+      for (let offset = 0; offset < maxDocs; offset += BATCH_SIZE) {
+        const rows = stmt.all(Math.min(BATCH_SIZE, maxDocs - offset), offset) as Array<{ document_id: string; embedding: Buffer }>;
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          result.set(row.document_id, bufferToFloat32(row.embedding));
+        }
       }
       return result;
     },
