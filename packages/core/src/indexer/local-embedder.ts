@@ -20,11 +20,16 @@ export function createLocalEmbedder(modelName: string = 'nomic-embed-text-v1.5')
       return Array.from(output.data as Float32Array).slice(0, dims);
     },
 
-    async embedBatch(texts: string[]): Promise<number[][]> {
+    async embedBatch(texts: string[], batchSize = 32): Promise<number[][]> {
       const results: number[][] = [];
-      // 순차 처리 (메모리 절약)
-      for (const text of texts) {
-        results.push(await this.embed(text));
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const batch = texts.slice(i, i + batchSize);
+        const output = await pipeline(batch, { pooling: 'mean', normalize: true });
+        // output.data is a flat Float32Array of (batch.length * dims) elements
+        const flat = output.data as Float32Array;
+        for (let j = 0; j < batch.length; j++) {
+          results.push(Array.from(flat.slice(j * dims, (j + 1) * dims)));
+        }
       }
       return results;
     },

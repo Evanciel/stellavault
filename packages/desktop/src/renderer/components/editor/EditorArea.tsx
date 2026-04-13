@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { TabBar } from './TabBar.js';
 import { MarkdownEditor } from './MarkdownEditor.js';
+import { DailyBrief } from '../shared/DailyBrief.js';
 import { ipc } from '../../lib/ipc-client.js';
 
 export function EditorArea() {
@@ -29,23 +30,7 @@ export function EditorArea() {
   }, [handleSave]);
 
   if (tabs.length === 0) {
-    return (
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        gap: 12,
-        color: 'var(--ink-faint)',
-        fontSize: '14px',
-        background: 'var(--editor-bg)',
-      }}>
-        <span style={{ fontSize: 48, opacity: 0.3 }}>&#x2726;</span>
-        <span>Open a note from the sidebar</span>
-        <span style={{ fontSize: '11px', opacity: 0.6 }}>or press Ctrl+P to quick-switch</span>
-      </div>
-    );
+    return <DailyBrief />;
   }
 
   return (

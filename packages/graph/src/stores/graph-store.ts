@@ -125,7 +125,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   hiddenTypes: new Set(),
   showTimeline: false,
   timelineRange: null,
-  searchHistory: JSON.parse(localStorage.getItem('sv_search_history') ?? '[]') as string[],
+  searchHistory: (typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('sv_search_history') ?? '[]') : []) as string[],
   maxVisibleNodes: 5000,
   locale: (typeof localStorage !== 'undefined' ? localStorage.getItem('sv_locale') as any : null) ?? 'en',
   setLocale: (locale) => { localStorage.setItem('sv_locale', locale); set({ locale }); },

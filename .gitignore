@@ -57,3 +57,4 @@ packages/graph/*.png
 unnamed*.png
 Autonomous_Knowledge_Foundry.pdf
 tmp-pw/
+packages/desktop/out/

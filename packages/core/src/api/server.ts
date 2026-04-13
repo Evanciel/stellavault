@@ -383,7 +383,9 @@ export function createApiServer(options: ApiServerOptions) {
         updated = updated.replace(/^title:\s*.+$/m, `title: "${title.replace(/"/g, "''")}"`);
       }
       if (tags) {
-        const tagStr = `tags: [${tags.map((t: string) => `"${t}"`).join(', ')}]`;
+        // MED-06: Sanitize tag values to prevent YAML frontmatter injection
+        const safeTags = tags.map((t: string) => t.replace(/["\\\n\r\]]/g, '').trim()).filter(Boolean);
+        const tagStr = `tags: [${safeTags.map((t: string) => `"${t}"`).join(', ')}]`;
         if (updated.match(/^tags:\s*.+$/m)) {
           updated = updated.replace(/^tags:\s*.+$/m, tagStr);
         }

@@ -5,7 +5,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join, resolve, sep } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import type { FileTreeNode, SearchResult, VaultStats } from '../shared/ipc-types.js';
+import type { FileTreeNode, SearchResult, VaultStats, DecayItem } from '../shared/ipc-types.js';
 
 // ─── Config ──────────────────────────────────────────
 
@@ -34,6 +34,7 @@ let coreReady = false;
 let store: any = null;
 let searchEngine: any = null;
 let embedder: any = null;
+let decayEngine: any = null;
 
 async function initCore(config: AppConfig): Promise<void> {
   if (coreReady) return;
@@ -52,6 +53,18 @@ async function initCore(config: AppConfig): Promise<void> {
     store = hub.store;
     searchEngine = hub.searchEngine;
     embedder = hub.embedder;
+
+    // Initialize decay engine if DB is accessible
+    try {
+      const dbInstance = store.getDb();
+      if (dbInstance) {
+        decayEngine = new core.DecayEngine(dbInstance);
+        await decayEngine.initializeNewDocuments();
+      }
+    } catch (err) {
+      console.error('[main] DecayEngine init skipped:', err);
+    }
+
     coreReady = true;
   } catch (err) {
     console.error('[main] Core init failed:', err);
@@ -191,6 +204,28 @@ function registerIpcHandlers(config: AppConfig) {
     const core = await import('@stellavault/core');
     const result = await core.indexVault(vp, { store, embedder, chunkOptions: { maxTokens: 300, overlap: 50, minTokens: 50 } });
     return { indexed: result.indexed, totalChunks: result.totalChunks };
+  });
+
+  ipcMain.handle('core:decay-top', async (_e, limit?: number) => {
+    if (!coreReady || !decayEngine) return [];
+    try {
+      const items = await decayEngine.getDecaying(0.9, limit ?? 5);
+      return items.map((d: any) => {
+        // Resolve filePath from documents table
+        const db = store.getDb();
+        const doc = db?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(d.documentId) as any;
+        return {
+          documentId: d.documentId,
+          title: d.title || doc?.title || 'Untitled',
+          retrievability: Math.round(d.retrievability * 100) / 100,
+          lastAccess: d.lastAccess,
+          filePath: doc?.file_path ? join(vp, doc.file_path) : '',
+        };
+      }).filter((d: any) => d.filePath);
+    } catch (err) {
+      console.error('[main] core:decay-top failed:', err);
+      return [];
+    }
   });
 
   // Graph

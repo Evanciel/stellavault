@@ -1,53 +1,23 @@
-// 사이드패널: 클릭된 노드의 문서 미리보기
+// Side panel: document preview for the selected node
 
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchDocument } from '../api/client.js';
 import { useGraphStore } from '../stores/graph-store.js';
 import { t } from '../lib/i18n.js';
-import { TipTapEditor } from './TipTapEditor.js';
-
-interface DocData {
-  id: string;
-  title: string;
-  filePath: string;
-  content: string;
-  tags: string[];
-  lastModified: string;
-  related: Array<{ id: string; title: string; score: number }>;
-}
+import { useNodeDetail } from './useNodeDetail.js';
+import { NodeEditForm } from './NodeEditForm.js';
 
 export function NodeDetail() {
-  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
-  const selectNode = useGraphStore((s) => s.selectNode);
-  const theme = useGraphStore((s) => s.theme);
-  const isDark = theme === 'dark';
-  const [doc, setDoc] = useState<DocData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const cacheRef = useRef<Map<string, DocData>>(new Map());
-  const [editing, setEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState('');
-  const [editContent, setEditContent] = useState('');
-  const [editTags, setEditTags] = useState('');
-  const [saveStatus, setSaveStatus] = useState<'' | 'saving' | 'saved' | 'error'>('');
-
-  useEffect(() => {
-    if (!selectedNodeId) { setDoc(null); return; }
-
-    const cached = cacheRef.current.get(selectedNodeId);
-    if (cached) { setDoc(cached); return; }
-
-    let cancelled = false;
-    setLoading(true);
-    fetchDocument(selectedNodeId)
-      .then((data: any) => {
-        if (!cancelled) { setDoc(data); cacheRef.current.set(selectedNodeId, data); }
-      })
-      .catch(() => { if (!cancelled) setDoc(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedNodeId]);
+  const {
+    selectedNodeId, selectNode, isDark,
+    doc, loading, editing,
+    editTitle, setEditTitle,
+    editContent, setEditContent,
+    editTags, setEditTags,
+    saveStatus,
+    toggleEdit, pulseNode, openInObsidian, saveEdit, deleteDoc,
+  } = useNodeDetail();
 
   if (!selectedNodeId) return null;
 
@@ -56,7 +26,6 @@ export function NodeDetail() {
   const border = isDark ? 'rgba(100, 120, 255, 0.15)' : 'rgba(0, 0, 0, 0.08)';
   const textPrimary = isDark ? '#e0e0f0' : '#1a1a2e';
   const textSecondary = isDark ? '#556' : '#888';
-  const textBody = isDark ? '#b0b0c0' : '#444';
   const tagBg = isDark ? 'rgba(100, 120, 255, 0.1)' : 'rgba(80, 100, 200, 0.08)';
   const tagColor = isDark ? '#88aaff' : '#4466aa';
   const btnBg = isDark ? 'rgba(100, 120, 255, 0.1)' : 'rgba(80, 100, 200, 0.06)';
@@ -69,6 +38,7 @@ export function NodeDetail() {
       borderLeft: `1px solid ${border}`,
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
+      {/* Header */}
       <div style={{
         padding: '10px 16px',
         borderBottom: `1px solid ${border}`,
@@ -89,9 +59,12 @@ export function NodeDetail() {
         <div style={{ padding: '24px 16px', color: textSecondary }}>Loading...</div>
       ) : doc ? (
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+          {/* Title */}
           <h2 style={{ fontSize: '16px', fontWeight: 600, color: textPrimary, marginBottom: '6px', lineHeight: 1.3 }}>
             {doc.title}
           </h2>
+
+          {/* Tags */}
           {doc.tags.length > 0 && (
             <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
               {doc.tags.map((tag) => (
@@ -101,13 +74,15 @@ export function NodeDetail() {
               ))}
             </div>
           )}
+
+          {/* Date */}
           <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '12px' }}>
             {new Date(doc.lastModified).toLocaleDateString('ko-KR')}
           </div>
+
+          {/* Action buttons */}
           <button
-            onClick={() => {
-              setTimeout(() => (window as any).__sv_pulse?.(doc.id), 100);
-            }}
+            onClick={pulseNode}
             style={{
               width: '100%', padding: '7px', marginBottom: '8px',
               background: btnBg, border: `1px solid ${btnBorder}`,
@@ -117,17 +92,7 @@ export function NodeDetail() {
             Explore connections
           </button>
           <button
-            onClick={async () => {
-              const relFile = (doc.filePath ?? doc.title).replace(/\\/g, '/').replace(/\.md$/, '');
-              let vault = 'Evan';
-              try {
-                const res = await fetch('http://127.0.0.1:3333/api/stats');
-                const stats = await res.json();
-                if (stats.vaultName) vault = stats.vaultName;
-              } catch { /* fallback */ }
-              const uri = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(relFile)}`;
-              window.location.href = uri;
-            }}
+            onClick={openInObsidian}
             style={{
               width: '100%', padding: '7px', marginBottom: '14px',
               background: isDark ? 'rgba(140, 100, 255, 0.08)' : 'rgba(120, 80, 200, 0.05)',
@@ -138,19 +103,10 @@ export function NodeDetail() {
             Open in Obsidian
           </button>
 
-          {/* 편집/삭제 버튼 */}
+          {/* Edit / Delete buttons */}
           <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
             <button
-              onClick={() => {
-                if (editing) {
-                  setEditing(false);
-                } else {
-                  setEditTitle(doc.title);
-                  setEditContent(doc.content);
-                  setEditTags(doc.tags.join(', '));
-                  setEditing(true);
-                }
-              }}
+              onClick={toggleEdit}
               style={{
                 flex: 1, padding: '7px', background: editing ? btnBg : 'transparent',
                 border: `1px solid ${btnBorder}`, borderRadius: '5px',
@@ -160,22 +116,9 @@ export function NodeDetail() {
               {editing ? t('node.editCancel') : t('node.edit')}
             </button>
             <button
-              onClick={async () => {
+              onClick={() => {
                 if (!confirm(`"${doc.title}"\n${t('node.deleteConfirm')}`)) return;
-                try {
-                  const resp = await fetch(`/api/document/${doc.id}`, { method: 'DELETE' });
-                  const data = await resp.json();
-                  if (data.success) {
-                    cacheRef.current.delete(doc.id);
-                    selectNode(null);
-                    // 그래프 새로고침
-                    const graphResp = await fetch('/api/graph/refresh?mode=semantic');
-                    const graphData = await graphResp.json();
-                    if (graphData.data?.nodes) {
-                      useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
-                    }
-                  }
-                } catch { /* ignore */ }
+                deleteDoc();
               }}
               style={{
                 padding: '7px 12px', background: 'transparent',
@@ -188,93 +131,24 @@ export function NodeDetail() {
             </button>
           </div>
 
-          {/* 편집 모드 */}
+          {/* Edit form or content display */}
           {editing ? (
-            <div style={{ marginBottom: '14px' }}>
-              <input
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="제목"
-                style={{
-                  width: '100%', padding: '6px 8px', marginBottom: '6px',
-                  background: isDark ? 'rgba(100,120,255,0.08)' : 'rgba(0,0,0,0.03)',
-                  border: `1px solid ${border}`, borderRadius: '5px',
-                  color: textPrimary, fontSize: '13px', fontWeight: 600, outline: 'none',
-                }}
-              />
-              <input
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                placeholder="태그 (쉼표 구분)"
-                style={{
-                  width: '100%', padding: '5px 8px', marginBottom: '6px',
-                  background: isDark ? 'rgba(100,120,255,0.08)' : 'rgba(0,0,0,0.03)',
-                  border: `1px solid ${border}`, borderRadius: '5px',
-                  color: tagColor, fontSize: '11px', outline: 'none',
-                }}
-              />
-              <div style={{
-                border: `1px solid ${border}`, borderRadius: '8px',
-                background: isDark ? 'rgba(100,120,255,0.03)' : 'rgba(0,0,0,0.01)',
-                padding: '8px 12px', minHeight: '200px',
-              }}>
-                <TipTapEditor
-                  content={editContent}
-                  isDark={isDark}
-                  editable={true}
-                  onSave={(md) => setEditContent(md)}
-                  onWikilinkClick={(target) => {
-                    const store = useGraphStore.getState();
-                    const node = store.nodes.find(n =>
-                      n.label?.toLowerCase().includes(target.toLowerCase())
-                    );
-                    if (node) { store.selectNode(node.id); store.setHighlightedNodes([node.id]); }
-                  }}
-                />
-              </div>
-              <button
-                onClick={async () => {
-                  setSaveStatus('saving');
-                  try {
-                    const resp = await fetch(`/api/document/${doc.id}`, {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        title: editTitle,
-                        content: editContent,
-                        tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
-                      }),
-                    });
-                    const data = await resp.json();
-                    if (data.success) {
-                      setSaveStatus('saved');
-                      // 캐시 업데이트
-                      const updated = { ...doc, title: editTitle, content: editContent, tags: editTags.split(',').map(t => t.trim()).filter(Boolean) };
-                      setDoc(updated);
-                      cacheRef.current.set(doc.id, updated);
-                      setTimeout(() => { setEditing(false); setSaveStatus(''); }, 1000);
-                    } else {
-                      setSaveStatus('error');
-                    }
-                  } catch {
-                    setSaveStatus('error');
-                  }
-                }}
-                disabled={saveStatus === 'saving'}
-                style={{
-                  width: '100%', padding: '8px', marginTop: '6px',
-                  background: saveStatus === 'saved' ? (isDark ? 'rgba(16,185,129,0.2)' : 'rgba(5,150,105,0.1)') : btnBg,
-                  border: `1px solid ${btnBorder}`, borderRadius: '5px',
-                  color: saveStatus === 'saved' ? (isDark ? '#10b981' : '#059669') : btnColor,
-                  fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                {saveStatus === 'saving' ? t('node.saving') : saveStatus === 'saved' ? t('node.saved') : saveStatus === 'error' ? t('node.saveError') : t('node.save')}
-              </button>
-            </div>
+            <NodeEditForm
+              editTitle={editTitle}
+              setEditTitle={setEditTitle}
+              editContent={editContent}
+              setEditContent={setEditContent}
+              editTags={editTags}
+              setEditTags={setEditTags}
+              saveStatus={saveStatus}
+              onSave={saveEdit}
+              isDark={isDark}
+            />
           ) : (
             <ContentAccordion content={doc.content} isDark={isDark} />
           )}
+
+          {/* Related documents */}
           {doc.related.length > 0 && (
             <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: `1px solid ${border}` }}>
               <div style={{ fontSize: '10px', color: textSecondary, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
@@ -297,7 +171,7 @@ export function NodeDetail() {
   );
 }
 
-/** [[wikilink]] → markdown link로 변환 + YouTube URL → 임베딩 */
+/** Convert [[wikilink]] to markdown links + YouTube URL to embeds */
 function processWikilinks(text: string): string {
   return text
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) =>
@@ -306,7 +180,7 @@ function processWikilinks(text: string): string {
       '[![YouTube](https://img.youtube.com/vi/$2/hqdefault.jpg)]($1)');
 }
 
-/** 리치 마크다운 렌더러 — 링크 클릭, wikilink 노드 이동, 코드 하이라이트 */
+/** Rich markdown renderer with wikilink navigation, external links, and code highlight */
 function RichMarkdown({ children, isDark }: { children: string; isDark: boolean }) {
   const handleWikilinkClick = useCallback((target: string) => {
     const store = useGraphStore.getState();
@@ -442,6 +316,7 @@ function RichMarkdown({ children, isDark }: { children: string; isDark: boolean 
   );
 }
 
+/** Collapsible content sections split by headings */
 function ContentAccordion({ content, isDark }: { content: string; isDark: boolean }) {
   const sections = useMemo(() => {
     const parts: Array<{ heading: string; body: string }> = [];
@@ -487,6 +362,7 @@ function ContentAccordion({ content, isDark }: { content: string; isDark: boolea
   );
 }
 
+/** Single accordion section with toggle */
 function AccordionSection({ heading, body, defaultOpen, isDark }: { heading: string; body: string; defaultOpen: boolean; isDark: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const trimmed = body.trim();

@@ -24,6 +24,14 @@ export interface VaultStats {
   lastIndexed: string;
 }
 
+export interface DecayItem {
+  documentId: string;
+  title: string;
+  retrievability: number;
+  lastAccess: string;
+  filePath: string;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -42,6 +50,7 @@ export interface IpcChannelMap {
   'core:search':        { args: [query: string, limit?: number]; result: SearchResult[] };
   'core:get-stats':     { args: []; result: VaultStats };
   'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
+  'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
 
   // Graph
   'graph:build':        { args: [mode: string]; result: { nodes: unknown[]; edges: unknown[] } };

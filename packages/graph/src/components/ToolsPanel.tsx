@@ -1,4 +1,4 @@
-// Intelligence Tools 패널 — Gaps, Duplicates, Clip, Review 통합 UI
+// Intelligence Tools Panel — Gaps, Duplicates, Clip, Review unified UI
 
 import { useState } from 'react';
 import { useGraphStore } from '../stores/graph-store.js';
@@ -231,16 +231,16 @@ export function ToolsPanel() {
         {tab === 'gaps' && !loading && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>{gaps.length}개 갭 | {isolatedCount}개 고립 노드</span>
+              <span>{gaps.length} gaps | {isolatedCount} isolated nodes</span>
               <span>
                 <button onClick={() => autoCreateBridges()} style={{
                   background: 'none', border: 'none',
                   color: isDark ? '#10b981' : '#047857', cursor: 'pointer', fontSize: '10px',
-                }}>전체 자동 생성</button>
+                }}>Auto-create all</button>
                 <button onClick={loadGaps} style={{
                   marginLeft: '6px', background: 'none', border: 'none',
                   color: isDark ? '#88aaff' : '#4466aa', cursor: 'pointer', fontSize: '10px',
-                }}>새로고침</button>
+                }}>Refresh</button>
               </span>
             </div>
             {gaps.map((g, i) => (
@@ -256,14 +256,14 @@ export function ToolsPanel() {
                   <button onClick={() => createGapNote(g)} style={{
                     background: 'none', border: 'none', color: isDark ? '#88aaff' : '#4466aa',
                     cursor: 'pointer', fontSize: '9px',
-                  }}>노트 생성</button>
+                  }}>Create note</button>
                 </div>
                 <div style={{ color: textSecondary, fontSize: '10px', marginTop: '2px' }}>
-                  연결 {g.bridgeCount}개 · {g.suggestedTopic}
+                  {g.bridgeCount} bridges · {g.suggestedTopic}
                 </div>
               </div>
             ))}
-            {gaps.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>갭이 없습니다!</div>}
+            {gaps.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>No gaps found!</div>}
           </div>
         )}
 
@@ -271,12 +271,12 @@ export function ToolsPanel() {
         {tab === 'duplicates' && !loading && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>{duplicates.length}쌍 발견</span>
+              <span>{duplicates.length} pairs found</span>
               <span>
                 <button onClick={loadDuplicates} style={{
                   background: 'none', border: 'none',
                   color: isDark ? '#88aaff' : '#4466aa', cursor: 'pointer', fontSize: '10px',
-                }}>새로고침</button>
+                }}>Refresh</button>
               </span>
             </div>
             {duplicates.map((d, i) => (
@@ -287,17 +287,17 @@ export function ToolsPanel() {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ color: Math.round(d.similarity * 100) >= 95 ? '#ef4444' : (isDark ? '#ffaa44' : '#aa6600') }}>
-                    {Math.round(d.similarity * 100)}% 유사
+                    {Math.round(d.similarity * 100)}% similar
                   </span>
                   <span>
                     <button onClick={() => mergeDuplicate(d)} style={{
                       background: 'none', border: 'none', color: isDark ? '#10b981' : '#047857',
                       cursor: 'pointer', fontSize: '9px', marginRight: '4px',
-                    }}>병합</button>
+                    }}>Merge</button>
                     <button onClick={() => openInObsidian(d.docA.filePath)} style={{
                       background: 'none', border: 'none', color: isDark ? '#88aaff' : '#4466aa',
                       cursor: 'pointer', fontSize: '9px',
-                    }}>열기</button>
+                    }}>Open</button>
                   </span>
                 </div>
                 <div style={{ color: textPrimary, fontSize: '10px', cursor: 'pointer' }}
@@ -310,7 +310,7 @@ export function ToolsPanel() {
                 </div>
               </div>
             ))}
-            {duplicates.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>중복 없음!</div>}
+            {duplicates.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>No duplicates!</div>}
           </div>
         )}
 
@@ -318,11 +318,11 @@ export function ToolsPanel() {
         {tab === 'decay' && !loading && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '8px' }}>
-              잊어가는 노트 {decayNotes.length}개
+              Fading notes: {decayNotes.length}
               <button onClick={loadDecay} style={{
                 marginLeft: '8px', background: 'none', border: 'none',
                 color: isDark ? '#88aaff' : '#4466aa', cursor: 'pointer', fontSize: '10px',
-              }}>새로고침</button>
+              }}>Refresh</button>
             </div>
             {decayNotes.map((d, i) => {
               const rPct = Math.round(d.retrievability * 100);
@@ -350,7 +350,7 @@ export function ToolsPanel() {
                 </div>
               );
             })}
-            {decayNotes.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>모든 지식이 건강!</div>}
+            {decayNotes.length === 0 && <div style={{ color: textSecondary, fontSize: '11px' }}>All knowledge is healthy!</div>}
           </div>
         )}
 
@@ -358,7 +358,7 @@ export function ToolsPanel() {
         {tab === 'clip' && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '8px' }}>
-              URL을 입력하면 Obsidian vault에 저장됩니다
+              Enter a URL to clip it to your vault
             </div>
             <div style={{ display: 'flex', gap: '4px' }}>
               <input
@@ -409,8 +409,8 @@ export function ToolsPanel() {
         {tab === 'sync' && (
           <div>
             <div style={{ fontSize: '10px', color: textSecondary, marginBottom: '10px' }}>
-              Notion 프로젝트 페이지를 Obsidian vault로 동기화합니다.
-              증분 동기화 — 변경된 페이지만 업데이트.
+              Sync Notion project pages to your Obsidian vault.
+              Incremental sync — only changed pages are updated.
             </div>
             <button
               onClick={handleSync}
@@ -423,7 +423,7 @@ export function ToolsPanel() {
                 cursor: loading ? 'wait' : 'pointer',
               }}
             >
-              {loading ? 'Syncing...' : 'Notion → Obsidian 동기화'}
+              {loading ? 'Syncing...' : 'Sync Notion → Obsidian'}
             </button>
             {syncStatus && (
               <div style={{
@@ -440,7 +440,7 @@ export function ToolsPanel() {
               </div>
             )}
             <div style={{ marginTop: '10px', fontSize: '10px', color: textSecondary }}>
-              동기화 후 `stellavault index`로 재인덱싱하면 검색에 반영됩니다.
+              After syncing, run `stellavault index` to re-index for search.
             </div>
           </div>
         )}
@@ -449,7 +449,7 @@ export function ToolsPanel() {
   );
 
   async function mergeDuplicate(pair: DuplicatePair) {
-    if (!confirm(`"${pair.docB.title}"을 "${pair.docA.title}"에 병합하고 삭제합니다. 계속?`)) return;
+    if (!confirm(`Merge "${pair.docB.title}" into "${pair.docA.title}" and delete it. Continue?`)) return;
     setLoading(true);
     try {
       const res = await fetch('http://127.0.0.1:3333/api/duplicates/merge', {
@@ -467,8 +467,8 @@ export function ToolsPanel() {
 
   async function autoCreateBridges() {
     const highGaps = gaps.filter(g => g.severity === 'high');
-    if (highGaps.length === 0) { setClipStatus('High 심각도 갭이 없습니다'); return; }
-    if (!confirm(`${highGaps.length}개 High 갭에 대해 브릿지 노트를 자동 생성합니다. 계속?`)) return;
+    if (highGaps.length === 0) { setClipStatus('No high-severity gaps found'); return; }
+    if (!confirm(`Auto-create bridge notes for ${highGaps.length} high gaps. Continue?`)) return;
 
     setLoading(true);
     let created = 0;
@@ -483,9 +483,9 @@ export function ToolsPanel() {
         if (data.success) created++;
       } catch {}
     }
-    setClipStatus(`${created}/${highGaps.length}개 브릿지 노트 생성 완료`);
+    setClipStatus(`${created}/${highGaps.length} bridge notes created`);
     setLoading(false);
-    loadGaps(); // 새로고침
+    loadGaps(); // refresh
   }
 
   async function openInObsidian(filePath: string) {
@@ -503,7 +503,7 @@ export function ToolsPanel() {
     const nameA = gap.clusterA.replace(/\s*\(\d+\)$/, '');
     const nameB = gap.clusterB.replace(/\s*\(\d+\)$/, '');
     const title = `${nameA} × ${nameB}`;
-    const content = `# ${title}\n\n> 이 노트는 지식 갭 탐지기에 의해 생성되었습니다.\n> ${nameA}와 ${nameB} 사이의 연결 지식을 정리하세요.\n\n## 관련 주제\n\n- ${nameA}\n- ${nameB}\n\n## 내용\n\n`;
+    const content = `# ${title}\n\n> This note was generated by the knowledge gap detector.\n> Organize bridging knowledge between ${nameA} and ${nameB}.\n\n## Related Topics\n\n- ${nameA}\n- ${nameB}\n\n## Content\n\n`;
 
     try {
       const res = await fetch('http://127.0.0.1:3333/api/clip', {
@@ -511,10 +511,10 @@ export function ToolsPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: `gap://${title}` }),
       });
-      // clip API는 URL용이라 직접 파일 생성
+      // clip API is for URLs, so create the file directly
     } catch {}
 
-    // Obsidian URI로 새 노트 생성
+    // Create new note via Obsidian URI
     let vault = 'Evan';
     try {
       const r = await fetch('http://127.0.0.1:3333/api/stats');
@@ -528,7 +528,7 @@ export function ToolsPanel() {
 
   async function handleSync() {
     setLoading(true);
-    setSyncStatus('⏳ 동기화 시작 중...');
+    setSyncStatus('Starting sync...');
     try {
       const res = await fetch('http://127.0.0.1:3333/api/sync', { method: 'POST' });
       const data = await res.json();
@@ -538,8 +538,8 @@ export function ToolsPanel() {
         return;
       }
 
-      setSyncStatus('🔄 동기화 진행 중...');
-      // 완료될 때까지 2초마다 상태 확인
+      setSyncStatus('Syncing...');
+      // Poll status every 2 seconds until complete
       const poll = setInterval(async () => {
         try {
           const sr = await fetch('http://127.0.0.1:3333/api/sync/status');
@@ -548,15 +548,15 @@ export function ToolsPanel() {
             clearInterval(poll);
             setLoading(false);
             if (state.result === 'success') {
-              setSyncStatus(`✅ 동기화 완료! ${state.output.match(/\d+개 페이지/)?.[0] || ''}`);
+              setSyncStatus(`Sync complete! ${state.output.match(/\d+ pages?/)?.[0] || ''}`);
             } else {
-              setSyncStatus(`❌ 동기화 실패: ${state.output.slice(-100)}`);
+              setSyncStatus(`Sync failed: ${state.output.slice(-100)}`);
             }
           }
         } catch { clearInterval(poll); setLoading(false); }
       }, 2000);
     } catch {
-      setSyncStatus('❌ 서버 연결 실패');
+      setSyncStatus('Server connection failed');
       setLoading(false);
     }
   }
@@ -573,13 +573,13 @@ export function ToolsPanel() {
       });
       const data = await res.json();
       if (data.success) {
-        setClipStatus(`✅ ${data.fileName} 저장됨`);
+        setClipStatus(`${data.fileName} saved`);
         setClipUrl('');
       } else {
         setClipStatus(`❌ ${data.error || 'Failed'}`);
       }
     } catch {
-      setClipStatus('❌ 서버 연결 실패');
+      setClipStatus('Server connection failed');
     }
     setLoading(false);
   }
