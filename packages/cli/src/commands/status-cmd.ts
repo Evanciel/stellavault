@@ -1,7 +1,8 @@
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore } from '@stellavault/core';
+import type { CliCommand } from '../types.js';
 
-export async function statusCommand(_opts: any, cmd: any) {
+export async function statusCommand(_opts: Record<string, never>, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
   const jsonMode = globalOpts.json;
   const config = loadConfig();
@@ -29,7 +30,7 @@ export async function statusCommand(_opts: any, cmd: any) {
   if (topics.length > 0) {
     console.log('');
     console.log(chalk.bold('🏷️ Top topics:'));
-    topics.slice(0, 10).forEach((t: any) => {
+    topics.slice(0, 10).forEach((t: { topic: string; count: number }) => {
       console.log(`  #${t.topic} (${t.count})`);
     });
   }

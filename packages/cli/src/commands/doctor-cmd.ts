@@ -50,11 +50,11 @@ export async function doctorCommand() {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       vaultPath = config.vaultPath || '';
       dbPath = config.dbPath || '';
-    } catch (err: any) {
+    } catch (err: unknown) {
       checks.push({
         name: 'Config valid JSON',
         pass: false,
-        detail: err.message,
+        detail: err instanceof Error ? err.message : String(err),
         fix: `Delete ${configPath} and re-run: stellavault init`,
       });
     }

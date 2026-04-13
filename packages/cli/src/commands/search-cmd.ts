@@ -1,7 +1,8 @@
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore, createLocalEmbedder, createSearchEngine } from '@stellavault/core';
+import type { CliCommand } from '../types.js';
 
-export async function searchCommand(query: string, options: { limit?: string }, cmd: any) {
+export async function searchCommand(query: string, options: { limit?: string }, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
   const jsonMode = globalOpts.json;
   const config = loadConfig();

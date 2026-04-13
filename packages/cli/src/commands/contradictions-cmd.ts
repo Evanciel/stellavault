@@ -3,8 +3,9 @@
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub } from '@stellavault/core';
 import { detectContradictions } from '@stellavault/core';
+import type { CliCommand } from '../types.js';
 
-export async function contradictionsCommand(_opts: any, cmd: any) {
+export async function contradictionsCommand(_opts: Record<string, never>, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
   const jsonMode = globalOpts.json;
   const config = loadConfig();

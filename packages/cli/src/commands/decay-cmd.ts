@@ -3,8 +3,9 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine } from '@stellavault/core';
+import type { CliCommand } from '../types.js';
 
-export async function decayCommand(_opts: any, cmd: any) {
+export async function decayCommand(_opts: Record<string, never>, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
   const jsonMode = globalOpts.json;
   const config = loadConfig();
