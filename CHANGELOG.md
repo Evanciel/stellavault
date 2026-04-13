@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.3] - 2026-04-14
+
+### Performance
+- **Graph HNSW** — sqlite-vec KNN for vaults with 200+ documents: O(n²) → O(n·K·log n)
+  - Auto-selects: brute-force for small vaults, HNSW for large ones
+  - New `findDocumentNeighbors()` store method using MATCH query
+- **Math utils exported** — `cosineSimilarity`, `dotProduct`, `normalizeVector`, `euclideanDist` available from `@stellavault/core`
+
 ## [0.7.2] - 2026-04-14
 
 ### Architecture

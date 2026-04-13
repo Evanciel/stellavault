@@ -232,9 +232,10 @@ node tests/stress.mjs 500     # Test with 500 synthetic documents
 ```
 
 Key optimizations:
+- **HNSW graph building** — sqlite-vec KNN for 200+ docs (O(n·K·log n) vs O(n²))
 - Pre-normalized vectors: cosine similarity → single dot product
 - Batched embedding loading (500/batch, prevents RAM overflow)
-- Upper-triangle graph building (50% fewer comparisons)
+- Upper-triangle brute-force for small vaults (< 200 docs)
 - O(n) K-Means centroid updates with typed arrays
 
 ---
