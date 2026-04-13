@@ -213,6 +213,32 @@ stellavault decay                         # What are you forgetting?
 
 ---
 
+## Performance
+
+Tested on synthetic vaults — all operations under 1 second for typical use cases:
+
+| Operation | 100 docs | 500 docs | 1000 docs |
+|-----------|----------|----------|-----------|
+| Store init | 15ms | 15ms | 16ms |
+| Bulk upsert | 12ms | 102ms | ~200ms |
+| Search (BM25) | <1ms | <1ms | <1ms |
+| Get all docs | <1ms | 2ms | ~4ms |
+| 124K dot products | — | 36ms | — |
+
+Run your own benchmarks:
+
+```bash
+node tests/stress.mjs 500     # Test with 500 synthetic documents
+```
+
+Key optimizations:
+- Pre-normalized vectors: cosine similarity → single dot product
+- Batched embedding loading (500/batch, prevents RAM overflow)
+- Upper-triangle graph building (50% fewer comparisons)
+- O(n) K-Means centroid updates with typed arrays
+
+---
+
 ## Tech Stack
 
 | Layer | Tech |

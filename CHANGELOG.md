@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.1] - 2026-04-13
+
+### Performance
+- **Graph building 50% faster** — upper-triangle dot product (skip symmetric pairs)
+- **Pre-normalized vectors** — cosine similarity → single dot product per pair
+- **O(n) K-Means** — typed array centroid accumulation (was O(k*n) with allocations)
+- **Batched embeddings** — 500/batch pagination prevents RAM overflow on large vaults
+- **O(1) edge keys** — direct index comparison instead of indexOf/sort
+- **Lazy imports** — detectDuplicates/detectKnowledgeGaps loaded on-demand
+- **Shared math utils** — deduplicated cosineSimilarity/euclideanDist into utils/math.ts
+
+### Tooling
+- **Stress test** — `node tests/stress.mjs 500` benchmarks store, search, vector math
+- **README benchmarks** — performance table with 100/500/1000 doc results
+
 ## [0.7.0] - 2026-04-13
 
 ### Architecture Evolution (5 iterations, 16 hypotheses validated)

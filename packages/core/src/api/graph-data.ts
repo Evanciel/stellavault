@@ -49,26 +49,26 @@ export async function buildGraphData(
   }
 
   const docIds = [...normalizedVecs.keys()];
-  const idToIndex = new Map(docIds.map((id, i) => [id, i]));
-  // Pre-collect normalized vectors into array for cache-friendly access
   const vecArray = docIds.map(id => normalizedVecs.get(id)!);
+  const n = docIds.length;
 
-  for (let i = 0; i < docIds.length; i++) {
-    const vec = vecArray[i];
+  // Build per-node neighbor lists using upper-triangle only (j>i): 50% fewer comparisons
+  const neighbors: Array<Array<{ peer: number; sim: number }>> = Array.from({ length: n }, () => []);
 
-    // dot product = cosine for unit vectors — only check j > i avoids half the work
-    const similarities: Array<{ j: number; sim: number }> = [];
-    for (let j = 0; j < docIds.length; j++) {
-      if (i === j) continue;
-      const sim = dotProduct(vec, vecArray[j]);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const sim = dotProduct(vecArray[i], vecArray[j]);
       if (sim >= edgeThreshold) {
-        similarities.push({ j, sim });
+        neighbors[i].push({ peer: j, sim });
+        neighbors[j].push({ peer: i, sim }); // symmetric
       }
     }
+  }
 
-    similarities.sort((a, b) => b.sim - a.sim);
-    for (const { j, sim } of similarities.slice(0, maxEdgesPerNode)) {
-      // Canonical edge key: smaller index first — O(1) via direct comparison
+  // Per-node top-K selection + dedup edges
+  for (let i = 0; i < n; i++) {
+    neighbors[i].sort((a, b) => b.sim - a.sim);
+    for (const { peer: j, sim } of neighbors[i].slice(0, maxEdgesPerNode)) {
       const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
       if (!edgeCounts.has(edgeKey)) {
         edges.push({ source: docIds[i], target: docIds[j], weight: sim });
