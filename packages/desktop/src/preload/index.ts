@@ -19,6 +19,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'core:get-stats',
   'core:index',
   'core:decay-top',
+  'core:draft',
   'graph:build',
   'backlinks:find',
   'window:minimize',

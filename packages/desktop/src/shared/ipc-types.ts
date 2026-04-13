@@ -52,6 +52,9 @@ export interface IpcChannelMap {
   'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
 
+  // Draft (Express)
+  'core:draft':         { args: [topic: string, format?: string]; result: { title: string; content: string; sources: string[] } };
+
   // Graph
   'graph:build':        { args: [mode: string]; result: { nodes: unknown[]; edges: unknown[] } };
 

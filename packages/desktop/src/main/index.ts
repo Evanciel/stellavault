@@ -228,6 +228,35 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
+  // Draft — generate a draft from vault knowledge
+  ipcMain.handle('core:draft', async (_e, topic: string, format?: string) => {
+    if (!coreReady || !searchEngine) return { title: '', content: '', sources: [] };
+    try {
+      const results = await searchEngine.search({ query: topic, limit: 5 });
+      const sources = results.map((r: any) => r.document?.title ?? 'Untitled');
+      const snippets = results.map((r: any) => r.highlights?.[0] ?? r.document?.content?.slice(0, 300) ?? '').filter(Boolean);
+
+      const fmt = format ?? 'outline';
+      let content = `# ${topic}\n\n`;
+      if (fmt === 'outline') {
+        content += `## Key Points\n\n`;
+        snippets.forEach((s: string, i: number) => {
+          content += `${i + 1}. ${s.trim().slice(0, 200)}\n\n`;
+        });
+        content += `## Sources\n\n`;
+        sources.forEach((s: string) => { content += `- [[${s}]]\n`; });
+      } else if (fmt === 'blog') {
+        content += `> Draft generated from ${sources.length} vault sources.\n\n`;
+        snippets.forEach((s: string) => { content += `${s.trim()}\n\n`; });
+        content += `---\n\n## References\n\n`;
+        sources.forEach((s: string) => { content += `- [[${s}]]\n`; });
+      }
+      return { title: topic, content, sources };
+    } catch {
+      return { title: topic, content: `# ${topic}\n\nNo relevant notes found.`, sources: [] };
+    }
+  });
+
   // Graph
   ipcMain.handle('graph:build', async (_e, mode: string) => {
     if (!coreReady || !store) return { nodes: [], edges: [] };
@@ -294,7 +323,10 @@ function createWindow() {
       preload: join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // Needed for native module preload
+      // HIGH-04: sandbox enabled. Preload only uses contextBridge +
+      // ipcRenderer (no native modules), so full sandbox is safe.
+      // All native module work (SQLite, embedder) runs in main process.
+      sandbox: true,
     },
     show: false,
   });

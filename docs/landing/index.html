@@ -227,6 +227,76 @@ nav.top .cta:hover {
 
 @media (max-width: 720px) {
   nav.top ul { display: none; }
+  nav.top .cta { display: none; }
+  .hamburger {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius);
+    cursor: pointer;
+    padding: 6px;
+  }
+  .hamburger span {
+    display: block;
+    height: 2px;
+    background: var(--ink-dim);
+    border-radius: 1px;
+    transition: transform 0.25s, opacity 0.25s;
+  }
+  .hamburger[aria-expanded="true"] span:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+  }
+  .hamburger[aria-expanded="true"] span:nth-child(2) {
+    opacity: 0;
+  }
+  .hamburger[aria-expanded="true"] span:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
+  }
+  .mobile-menu {
+    display: none;
+    position: fixed;
+    top: 52px; left: 0; right: 0;
+    z-index: 49;
+    background: rgba(10,10,15,0.95);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border-bottom: 1px solid var(--line);
+    padding: 16px clamp(20px, 4vw, 48px);
+  }
+  .mobile-menu.open { display: block; }
+  .mobile-menu a {
+    display: block;
+    padding: 12px 0;
+    font-size: 14px;
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+  }
+  .mobile-menu a:last-child { border-bottom: none; }
+  .mobile-menu a:hover { color: var(--ink); }
+  .mobile-menu .mobile-cta {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 10px 20px;
+    border: 1px solid var(--violet);
+    color: var(--violet-2);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .mobile-menu .mobile-cta:hover {
+    background: var(--violet);
+    color: #fff;
+  }
+}
+@media (min-width: 721px) {
+  .hamburger { display: none; }
+  .mobile-menu { display: none !important; }
 }
 
 /* ─── HERO ─────────────────────────────────── */
@@ -939,6 +1009,17 @@ footer .base {
       <li><a href="#setup">Setup</a></li>
     </ul>
     <a class="cta" href="https://github.com/Evanciel/stellavault" target="_blank" rel="noopener">GitHub ↗</a>
+    <button class="hamburger" aria-label="Menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <div class="mobile-menu" id="mobile-menu">
+    <a href="#why">Why</a>
+    <a href="#how">Pipeline</a>
+    <a href="#formats">Formats</a>
+    <a href="#mcp">MCP</a>
+    <a href="#setup">Setup</a>
+    <a class="mobile-cta" href="https://github.com/Evanciel/stellavault" target="_blank" rel="noopener">GitHub ↗</a>
   </div>
 </nav>
 
@@ -1330,6 +1411,25 @@ footer .base {
       ta.value = text; document.body.appendChild(ta); ta.select();
       try { document.execCommand('copy'); done(); } catch(e){}
       document.body.removeChild(ta);
+    }
+  });
+})();
+</script>
+
+<script>
+(function(){
+  var btn = document.querySelector('.hamburger');
+  var menu = document.getElementById('mobile-menu');
+  if (!btn || !menu) return;
+  btn.addEventListener('click', function(){
+    var open = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!open));
+    menu.classList.toggle('open', !open);
+  });
+  menu.addEventListener('click', function(e){
+    if (e.target.tagName === 'A') {
+      btn.setAttribute('aria-expanded', 'false');
+      menu.classList.remove('open');
     }
   });
 })();

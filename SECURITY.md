@@ -39,6 +39,29 @@ Stellavault is **local-first**. Your knowledge stays on your machine.
 - **URL validation**: Image URLs restricted to `https://` scheme
 - **SSRF protection**: Private/local IP addresses blocked for URL ingest
 
+## Desktop App Security (Electron)
+
+- **Context Isolation**: enabled — renderer cannot access Node.js APIs
+- **Sandbox**: enabled — renderer runs with reduced OS privileges
+- **Node Integration**: disabled — no `require()` in renderer
+- **IPC Allowlist**: explicit channel whitelist in preload (17 channels)
+- **Path Validation**: all vault filesystem IPC handlers validate paths stay inside vault root
+- **Auth Token**: API server generates per-session random token for all mutating endpoints
+- **CSP**: strict Content Security Policy (no unsafe-eval in production)
+
+## Federation Security
+
+- **Embeddings only**: original text never transmitted over the network
+- **Buffer limits**: 1MB per connection, 64KB per message
+- **Message validation**: schema checking on all incoming messages
+- **Leave authentication**: leave messages only accepted from the owning connection
+- **Differential privacy**: noise added to shared embeddings
+
+## Known Accepted Risks
+
+- **LOW-03**: `data:` URIs allowed in desktop CSP for inline images in markdown editor
+- **LOW-05**: Cloud sync uses Bearer token instead of AWS Signature v4 (R2-specific)
+
 ## Reporting Vulnerabilities
 
 Please report security issues to: https://github.com/Evanciel/stellavault/issues (label: security)

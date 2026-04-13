@@ -12,6 +12,7 @@ import { AIPanel } from './components/panels/AIPanel.js';
 import { GraphPanel } from './components/panels/GraphPanel.js';
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { ipc, onIpc } from './lib/ipc-client.js';
+import './theme.css';
 
 export function App() {
   const theme = useAppStore((s) => s.theme);
@@ -23,8 +24,6 @@ export function App() {
   const setFileTree = useAppStore((s) => s.setFileTree);
   const setVaultPath = useAppStore((s) => s.setVaultPath);
   const setCoreReady = useAppStore((s) => s.setCoreReady);
-
-  const isDark = theme === 'dark';
 
   // Load vault tree on mount
   useEffect(() => {
@@ -46,53 +45,20 @@ export function App() {
     return () => { off(); offFile(); };
   }, [setFileTree, setVaultPath, setCoreReady]);
 
-  // Apply theme CSS variables
-  const vars = isDark ? {
-    '--bg': '#0a0a0f',
-    '--bg-2': '#0f0f18',
-    '--bg-3': '#14141f',
-    '--ink': '#e0e0f0',
-    '--ink-dim': '#8a8aa0',
-    '--ink-faint': '#4a4a60',
-    '--border': 'rgba(100,120,255,0.12)',
-    '--accent': '#6366f1',
-    '--accent-2': '#818cf8',
-    '--sidebar-bg': '#0c0c14',
-    '--editor-bg': '#0f0f18',
-    '--tab-bg': '#0a0a12',
-    '--tab-active': '#14141f',
-    '--hover': 'rgba(100,120,255,0.08)',
-    '--selection': 'rgba(99,102,241,0.25)',
-  } : {
-    '--bg': '#fafafa',
-    '--bg-2': '#ffffff',
-    '--bg-3': '#f3f3f6',
-    '--ink': '#1a1a2e',
-    '--ink-dim': '#666680',
-    '--ink-faint': '#99999a',
-    '--border': 'rgba(0,0,0,0.08)',
-    '--accent': '#6366f1',
-    '--accent-2': '#818cf8',
-    '--sidebar-bg': '#f5f5f8',
-    '--editor-bg': '#ffffff',
-    '--tab-bg': '#f0f0f3',
-    '--tab-active': '#ffffff',
-    '--hover': 'rgba(0,0,0,0.04)',
-    '--selection': 'rgba(99,102,241,0.15)',
-  };
-
   return (
-    <div style={{
-      ...vars as React.CSSProperties,
-      width: '100%',
-      height: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      background: 'var(--bg)',
-      color: 'var(--ink)',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-      fontSize: '13px',
-    }}>
+    <div
+      data-theme={theme === 'light' ? 'light' : undefined}
+      style={{
+        width: '100%',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bg)',
+        color: 'var(--ink)',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+        fontSize: '13px',
+      }}
+    >
       <TitleBar />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

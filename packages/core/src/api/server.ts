@@ -183,8 +183,8 @@ export function createApiServer(options: ApiServerOptions) {
   // GET /api/search?q=&limit=
   app.get('/api/search', async (req, res) => {
     try {
-      const query = String(req.query.q || '');
-      const limit = parseInt(String(req.query.limit || '10'), 10);
+      const query = String(req.query.q || '').slice(0, 1000); // LOW-04: cap query length
+      const limit = Math.min(parseInt(String(req.query.limit || '10'), 10), 100);
       if (!query) { res.json({ results: [], query: '' }); return; }
 
       const results = await searchEngine.search({ query, limit });
@@ -623,7 +623,9 @@ export function createApiServer(options: ApiServerOptions) {
           const { writeFileSync, unlinkSync } = await import('node:fs');
           const { join } = await import('node:path');
           const { tmpdir } = await import('node:os');
-          const tmpPath = join(tmpdir(), `sv-upload-${Date.now()}-${file.originalname}`);
+          // LOW-02: Sanitize originalname to prevent path traversal in temp dir
+          const safeName = (file.originalname ?? 'upload').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
+          const tmpPath = join(tmpdir(), `sv-upload-${Date.now()}-${safeName}`);
 
           // 임시 파일 저장 → 파서가 파일 경로 필요
           writeFileSync(tmpPath, file.buffer);

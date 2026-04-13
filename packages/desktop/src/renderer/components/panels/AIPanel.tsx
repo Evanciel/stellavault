@@ -6,7 +6,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import type { SearchResult, VaultStats } from '../../../shared/ipc-types.js';
 
-type Tab = 'search' | 'decay' | 'stats';
+type Tab = 'search' | 'express' | 'decay' | 'stats';
 
 export function AIPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('search');
@@ -30,10 +30,12 @@ export function AIPanel() {
         borderBottom: '1px solid var(--border)',
         fontSize: 11,
       }}>
-        {(['search', 'decay', 'stats'] as Tab[]).map((tab) => (
+        {(['search', 'express', 'decay', 'stats'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
+            aria-selected={activeTab === tab}
+            role="tab"
             style={{
               flex: 1,
               padding: '8px 0',
@@ -42,10 +44,10 @@ export function AIPanel() {
               color: activeTab === tab ? 'var(--accent-2)' : 'var(--ink-dim)',
               cursor: 'pointer',
               fontWeight: activeTab === tab ? 600 : 400,
-              textTransform: 'capitalize',
+              fontSize: 11,
             }}
           >
-            {tab === 'search' ? 'AI search' : tab === 'decay' ? 'Memory' : 'Stats'}
+            {tab === 'search' ? 'Search' : tab === 'express' ? 'Draft' : tab === 'decay' ? 'Memory' : 'Stats'}
           </button>
         ))}
       </div>
@@ -53,6 +55,7 @@ export function AIPanel() {
       {/* Content */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
         {activeTab === 'search' && <AISearch />}
+        {activeTab === 'express' && <ExpressDraft />}
         {activeTab === 'decay' && <DecayDashboard />}
         {activeTab === 'stats' && <VaultStatsView />}
       </div>
@@ -255,6 +258,113 @@ function VaultStatsView() {
       >
         Re-index vault
       </button>
+    </div>
+  );
+}
+
+function ExpressDraft() {
+  const [topic, setTopic] = useState('');
+  const [format, setFormat] = useState<'outline' | 'blog'>('outline');
+  const [draft, setDraft] = useState<{ title: string; content: string; sources: string[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const openFile = useAppStore((s) => s.openFile);
+
+  const handleGenerate = useCallback(async () => {
+    if (!topic.trim()) return;
+    setLoading(true);
+    const result = await ipc('core:draft', topic, format);
+    setDraft(result);
+    setLoading(false);
+  }, [topic, format]);
+
+  const handleSave = useCallback(async () => {
+    if (!draft) return;
+    const vp = await ipc('vault:get-path');
+    const safeName = draft.title.replace(/[<>:"/\\|?*]/g, '').slice(0, 80);
+    const path = `${vp}/_drafts/${safeName}.md`;
+    await ipc('vault:create-file', path, draft.content);
+    openFile(path, `Draft: ${draft.title}`, draft.content);
+  }, [draft, openFile]);
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--ink)' }}>
+        Express — draft from your knowledge
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <input
+          type="text"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void handleGenerate(); }}
+          placeholder="Topic or question..."
+          aria-label="Draft topic"
+          style={{
+            flex: 1, background: 'var(--hover)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '6px 10px', fontSize: 12, color: 'var(--ink)', outline: 'none',
+          }}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        {(['outline', 'blog'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFormat(f)}
+            style={{
+              padding: '4px 12px', fontSize: 11, border: 'none', borderRadius: 4, cursor: 'pointer',
+              background: format === f ? 'var(--selection)' : 'var(--hover)',
+              color: format === f ? 'var(--accent-2)' : 'var(--ink-dim)',
+            }}
+          >
+            {f === 'outline' ? 'Outline' : 'Blog post'}
+          </button>
+        ))}
+        <button
+          onClick={() => void handleGenerate()}
+          disabled={loading || !topic.trim()}
+          style={{
+            marginLeft: 'auto', padding: '4px 14px', background: 'var(--accent)',
+            border: 'none', borderRadius: 4, color: '#fff', fontSize: 11, cursor: 'pointer',
+            opacity: loading || !topic.trim() ? 0.5 : 1,
+          }}
+        >
+          {loading ? 'Generating...' : 'Generate'}
+        </button>
+      </div>
+
+      {draft && (
+        <div style={{
+          background: 'var(--hover)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: 12, fontSize: 12, lineHeight: 1.6,
+        }}>
+          <pre style={{
+            whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0,
+            color: 'var(--ink)', maxHeight: 300, overflowY: 'auto',
+          }}>
+            {draft.content}
+          </pre>
+          <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => void handleSave()}
+              style={{
+                padding: '6px 14px', background: 'var(--accent)', border: 'none',
+                borderRadius: 4, color: '#fff', fontSize: 11, cursor: 'pointer',
+              }}
+            >
+              Save to vault & edit
+            </button>
+            <span style={{ fontSize: 10, color: 'var(--ink-faint)', alignSelf: 'center' }}>
+              {draft.sources.length} sources used
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!draft && !loading && (
+        <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
+          Enter a topic and click Generate to create a draft from your vault knowledge.
+        </div>
+      )}
     </div>
   );
 }
