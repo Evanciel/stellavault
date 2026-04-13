@@ -172,6 +172,48 @@ function registerIpcHandlers(config: AppConfig) {
     return { indexed: result.indexed, totalChunks: result.totalChunks };
   });
 
+  // Graph
+  ipcMain.handle('graph:build', async (_e, mode: string) => {
+    if (!coreReady || !store) return { nodes: [], edges: [] };
+    try {
+      const core = await import('@stellavault/core');
+      const data = await core.buildGraphData(store, { mode: mode as 'semantic' | 'folder' });
+      return data;
+    } catch (err) {
+      console.error('[main] Graph build failed:', err);
+      return { nodes: [], edges: [] };
+    }
+  });
+
+  // Backlinks — find notes that contain [[title]]
+  ipcMain.handle('backlinks:find', (_e, title: string) => {
+    const results: Array<{ filePath: string; name: string; line: string }> = [];
+    const pattern = `[[${title}]]`;
+    function walk(dir: string) {
+      try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) { walk(full); continue; }
+          if (!entry.name.endsWith('.md')) continue;
+          try {
+            const content = readFileSync(full, 'utf-8');
+            if (content.includes(pattern)) {
+              const lineMatch = content.split('\n').find((l) => l.includes(pattern));
+              results.push({
+                filePath: full,
+                name: entry.name.replace(/\.md$/, ''),
+                line: (lineMatch ?? '').trim().slice(0, 120),
+              });
+            }
+          } catch { /* skip unreadable */ }
+        }
+      } catch { /* skip */ }
+    }
+    walk(vp);
+    return results;
+  });
+
   // Window controls
   ipcMain.handle('window:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
   ipcMain.handle('window:maximize', (e) => {

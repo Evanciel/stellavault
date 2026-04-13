@@ -7,7 +7,10 @@ import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
 import { StatusBar } from './components/layout/StatusBar.js';
 import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
+import { CommandPalette } from './components/shared/CommandPalette.js';
 import { AIPanel } from './components/panels/AIPanel.js';
+import { GraphPanel } from './components/panels/GraphPanel.js';
+import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { ipc, onIpc } from './lib/ipc-client.js';
 
 export function App() {
@@ -144,16 +147,8 @@ export function App() {
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
               {rightPanel === 'ai' && <AIPanel />}
-              {rightPanel === 'graph' && (
-                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
-                  3D graph panel coming in v0.2
-                </div>
-              )}
-              {rightPanel === 'backlinks' && (
-                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
-                  Backlinks panel coming in v0.2
-                </div>
-              )}
+              {rightPanel === 'graph' && <GraphPanel />}
+              {rightPanel === 'backlinks' && <BacklinksPanel />}
             </div>
           </div>
         )}
@@ -161,6 +156,7 @@ export function App() {
 
       <StatusBar />
       <QuickSwitcher />
+      <CommandPalette />
     </div>
   );
 }

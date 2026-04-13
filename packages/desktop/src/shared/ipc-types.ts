@@ -43,9 +43,11 @@ export interface IpcChannelMap {
   'core:get-stats':     { args: []; result: VaultStats };
   'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
 
-  // Settings
-  'settings:get':       { args: []; result: Record<string, unknown> };
-  'settings:set':       { args: [key: string, value: unknown]; result: void };
+  // Graph
+  'graph:build':        { args: [mode: string]; result: { nodes: unknown[]; edges: unknown[] } };
+
+  // Backlinks
+  'backlinks:find':     { args: [title: string]; result: Array<{ filePath: string; name: string; line: string }> };
 
   // Window
   'window:minimize':    { args: []; result: void };

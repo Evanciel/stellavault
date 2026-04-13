@@ -41,11 +41,25 @@ export function TitleBar() {
       </span>
 
       <button
+        onClick={() => setRightPanel(rightPanel === 'graph' ? 'none' : 'graph')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'graph' ? 'var(--accent-2)' : undefined }}
+        title="3D Graph"
+      >
+        &#x25C9;
+      </button>
+      <button
         onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}
         style={{ ...btnStyle(isDark), color: rightPanel === 'ai' ? 'var(--accent-2)' : undefined }}
         title="AI panel"
       >
         &#x2726;
+      </button>
+      <button
+        onClick={() => setRightPanel(rightPanel === 'backlinks' ? 'none' : 'backlinks')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'backlinks' ? 'var(--accent-2)' : undefined }}
+        title="Backlinks"
+      >
+        &#x21C4;
       </button>
       <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme">
         {isDark ? '\u263C' : '\u263E'}
