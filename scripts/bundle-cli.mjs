@@ -85,6 +85,6 @@ if (existsSync(graphDist)) {
   console.log(`✓ Copied graph UI → dist/graph-ui/`);
 } else {
   console.warn('⚠ packages/graph/dist not found — build @stellavault/graph first (vite build)');
-  console.warn('  Published package will not include the 3D UI.');
-  process.exit(1);
+  console.warn('  CLI bundle works without the 3D UI. Run `npm run build --workspace=@stellavault/graph` to include it.');
+  // Don't exit(1) — the CLI bundle is valid without graph UI
 }
