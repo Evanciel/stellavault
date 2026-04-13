@@ -1,5 +1,7 @@
 # Stellavault
 
+[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-177%20passing-brightgreen)]()
+
 > **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
 
 Self-compiling knowledge base with a full-featured editor, 3D neural graph, AI-powered search, and spaced repetition — available as a **desktop app**, **CLI**, **Obsidian plugin**, and **MCP server**. Your vault files are never modified.
@@ -145,6 +147,18 @@ Claude can search, ask, draft, lint, and analyze your vault directly.
 - Heatmap overlay + Timeline slider + Decay overlay
 - Multiverse view — your vault as a universe in a P2P network
 - Dark/Light theme
+
+---
+
+## Try It Now (Demo Vault)
+
+```bash
+npx stellavault index --vault ./examples/demo-vault   # Index 10 sample notes
+npx stellavault search "vector database"               # Semantic search
+npx stellavault graph                                  # 3D graph visualization
+```
+
+The demo vault includes interconnected notes about Vector Databases, Knowledge Graphs, Spaced Repetition, RAG, MCP, and more — perfect for exploring all features instantly.
 
 ---
 

@@ -43,7 +43,15 @@ jobs:
           node dist/stellavault.js --help | head -5
 
       - name: Run smoke tests
-        run: node tests/smoke.mjs || echo "Some smoke tests may fail without graph UI — acceptable in CI"
+        run: node tests/smoke.mjs
+
+      - name: Run core tests (168 tests)
+        run: npx vitest run
+        working-directory: packages/core
+
+      - name: Run desktop IPC security tests (9 tests)
+        run: npx vitest run
+        working-directory: packages/desktop
 
   security:
     runs-on: ubuntu-latest

@@ -8,7 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +120,57 @@ await test('bundle: dist/graph-ui/assets/ has at least 1 .js file', () => {
   assert(existsSync(assetsDir), `${assetsDir} does not exist`);
   const jsFiles = readdirSync(assetsDir).filter((f) => f.endsWith('.js'));
   assert(jsFiles.length >= 1, `No .js files found in ${assetsDir}`);
+});
+
+// ---------------------------------------------------------------------------
+// 4. Demo vault integration
+// ---------------------------------------------------------------------------
+console.log('\n--- Demo Vault ---');
+
+await test('demo-vault: 10 markdown files exist', () => {
+  const demoDir = join(ROOT, 'examples', 'demo-vault');
+  assert(existsSync(demoDir), 'examples/demo-vault/ does not exist');
+  const mdFiles = [];
+  for (const sub of ['00_Fleeting', '01_Knowledge', '02_Literature']) {
+    const dir = join(demoDir, sub);
+    if (existsSync(dir)) {
+      mdFiles.push(...readdirSync(dir).filter(f => f.endsWith('.md')));
+    }
+  }
+  assert(mdFiles.length >= 10, `Expected 10+ md files, found ${mdFiles.length}`);
+});
+
+await test('demo-vault: all notes have frontmatter', () => {
+  const demoDir = join(ROOT, 'examples', 'demo-vault');
+  for (const sub of ['00_Fleeting', '01_Knowledge', '02_Literature']) {
+    const dir = join(demoDir, sub);
+    if (!existsSync(dir)) continue;
+    for (const file of readdirSync(dir).filter(f => f.endsWith('.md'))) {
+      const content = readFileSync(join(dir, file), 'utf-8');
+      assert(content.startsWith('---'), `${sub}/${file} missing frontmatter`);
+      assert(content.includes('title:'), `${sub}/${file} missing title in frontmatter`);
+      assert(content.includes('tags:'), `${sub}/${file} missing tags in frontmatter`);
+    }
+  }
+});
+
+await test('demo-vault: wikilinks cross-reference correctly', () => {
+  const demoDir = join(ROOT, 'examples', 'demo-vault');
+  const allTitles = new Set();
+  const allLinks = [];
+  for (const sub of ['00_Fleeting', '01_Knowledge', '02_Literature']) {
+    const dir = join(demoDir, sub);
+    if (!existsSync(dir)) continue;
+    for (const file of readdirSync(dir).filter(f => f.endsWith('.md'))) {
+      const content = readFileSync(join(dir, file), 'utf-8');
+      const titleMatch = content.match(/title:\s*"([^"]+)"/);
+      if (titleMatch) allTitles.add(titleMatch[1]);
+      const links = [...content.matchAll(/\[\[([^\]]+)\]\]/g)].map(m => m[1]);
+      allLinks.push(...links);
+    }
+  }
+  const validLinks = allLinks.filter(l => allTitles.has(l));
+  assert(validLinks.length >= 5, `Expected 5+ valid wikilinks, found ${validLinks.length} (titles: ${allTitles.size})`);
 });
 
 // ---------------------------------------------------------------------------
