@@ -36,43 +36,59 @@ export async function buildGraphData(
     store.getDocumentEmbeddings(),
   ]);
 
-  // 2. k-NN 엣지 생성 — 사전 정규화로 cosine→dot product 최적화
+  // 2. k-NN 엣지 생성 — 전략 선택
   const edges: GraphEdge[] = [];
   const edgeCounts = new Map<string, number>();
+  const USE_HNSW_THRESHOLD = 200; // N > 200이면 sqlite-vec KNN 사용
 
-  // Pre-normalize: O(n·dims) 1회 — 이후 dot product = cosine similarity
-  const normalizedVecs = new Map<string, number[]>();
-  for (const doc of docs) {
-    const vec = embeddings.get(doc.id);
-    if (!vec) continue;
-    normalizedVecs.set(doc.id, normalizeVector([...vec])); // copy + normalize
-  }
+  const docsWithVecs = docs.filter(d => embeddings.has(d.id));
 
-  const docIds = [...normalizedVecs.keys()];
-  const vecArray = docIds.map(id => normalizedVecs.get(id)!);
-  const n = docIds.length;
+  if (docsWithVecs.length > USE_HNSW_THRESHOLD) {
+    // === HNSW 전략: O(n · K · log n) via sqlite-vec ===
+    for (const doc of docsWithVecs) {
+      const vec = embeddings.get(doc.id)!;
+      const neighbors = await store.findDocumentNeighbors(vec, maxEdgesPerNode + 1);
 
-  // Build per-node neighbor lists using upper-triangle only (j>i): 50% fewer comparisons
-  const neighbors: Array<Array<{ peer: number; sim: number }>> = Array.from({ length: n }, () => []);
-
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const sim = dotProduct(vecArray[i], vecArray[j]);
-      if (sim >= edgeThreshold) {
-        neighbors[i].push({ peer: j, sim });
-        neighbors[j].push({ peer: i, sim }); // symmetric
+      for (const { documentId: targetId, similarity } of neighbors) {
+        if (targetId === doc.id) continue;
+        if (similarity < edgeThreshold) continue;
+        const edgeKey = [doc.id, targetId].sort().join(':');
+        if (!edgeCounts.has(edgeKey)) {
+          edges.push({ source: doc.id, target: targetId, weight: similarity });
+          edgeCounts.set(edgeKey, 1);
+        }
       }
     }
-  }
+  } else {
+    // === Brute-force 전략: O(n²/2) — 소규모 vault에서 더 빠름 ===
+    const normalizedVecs = new Map<string, number[]>();
+    for (const doc of docsWithVecs) {
+      normalizedVecs.set(doc.id, normalizeVector([...embeddings.get(doc.id)!]));
+    }
 
-  // Per-node top-K selection + dedup edges
-  for (let i = 0; i < n; i++) {
-    neighbors[i].sort((a, b) => b.sim - a.sim);
-    for (const { peer: j, sim } of neighbors[i].slice(0, maxEdgesPerNode)) {
-      const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
-      if (!edgeCounts.has(edgeKey)) {
-        edges.push({ source: docIds[i], target: docIds[j], weight: sim });
-        edgeCounts.set(edgeKey, 1);
+    const docIds = [...normalizedVecs.keys()];
+    const vecArray = docIds.map(id => normalizedVecs.get(id)!);
+    const n = docIds.length;
+
+    const neighbors: Array<Array<{ peer: number; sim: number }>> = Array.from({ length: n }, () => []);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const sim = dotProduct(vecArray[i], vecArray[j]);
+        if (sim >= edgeThreshold) {
+          neighbors[i].push({ peer: j, sim });
+          neighbors[j].push({ peer: i, sim });
+        }
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      neighbors[i].sort((a, b) => b.sim - a.sim);
+      for (const { peer: j, sim } of neighbors[i].slice(0, maxEdgesPerNode)) {
+        const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
+        if (!edgeCounts.has(edgeKey)) {
+          edges.push({ source: docIds[i], target: docIds[j], weight: sim });
+          edgeCounts.set(edgeKey, 1);
+        }
       }
     }
   }

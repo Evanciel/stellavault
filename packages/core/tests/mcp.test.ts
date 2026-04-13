@@ -34,6 +34,8 @@ function createMockStore(): VectorStore {
     searchSemantic: async () => [],
     searchKeyword: async () => [],
     getAllDocumentHashes: async () => new Map(),
+    getDocumentEmbeddings: async () => new Map(),
+    findDocumentNeighbors: async () => [],
   } as VectorStore;
 }
 

@@ -15,7 +15,9 @@ export interface VectorStore {
   getTopics(): Promise<TopicInfo[]>;
   getStats(): Promise<StoreStats>;
   /** 각 문서의 첫 청크 임베딩 반환 (graph용) */
-  getDocumentEmbeddings(): Promise<Map<string, number[]>>;
+  getDocumentEmbeddings(maxDocs?: number): Promise<Map<string, number[]>>;
+  /** sqlite-vec KNN으로 유사 문서 검색 (graph edge용, O(K log n)) */
+  findDocumentNeighbors(embedding: number[], limit: number): Promise<Array<{ documentId: string; similarity: number }>>;
   close(): Promise<void>;
   /** 내부 DB 인스턴스 접근 (Intelligence Layer용) */
   getDb(): unknown;

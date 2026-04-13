@@ -179,6 +179,24 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
       return result;
     },
 
+    async findDocumentNeighbors(embedding: number[], limit: number): Promise<Array<{ documentId: string; similarity: number }>> {
+      // Use sqlite-vec KNN (HNSW) to find similar chunks, then deduplicate by document
+      const rows = db.prepare(`
+        SELECT c.document_id, MIN(ce.distance) as distance
+        FROM chunk_embeddings ce
+        JOIN chunks c ON c.id = ce.chunk_id
+        WHERE ce.embedding MATCH ?
+        GROUP BY c.document_id
+        ORDER BY distance
+        LIMIT ?
+      `).all(float32Buffer(embedding), limit * 2) as Array<{ document_id: string; distance: number }>;
+
+      return rows.slice(0, limit).map(r => ({
+        documentId: r.document_id,
+        similarity: 1 / (1 + r.distance),
+      }));
+    },
+
     async close() {
       db.close();
     },

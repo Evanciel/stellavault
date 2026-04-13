@@ -42,6 +42,7 @@ function createMockStore(): VectorStore {
     getAllDocuments: async () => [mockDoc],
     getAllDocumentHashes: async () => new Map(),
     getDocumentEmbeddings: async () => new Map(),
+    findDocumentNeighbors: async () => [],
   } as VectorStore;
 }
 
