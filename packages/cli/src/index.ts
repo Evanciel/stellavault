@@ -310,4 +310,28 @@ pack.command('info <name>')
   .description('Show pack details')
   .action(packInfoCommand);
 
+// ─── Shell completion ────────────────────────────────────────
+
+program
+  .command('completion')
+  .description('Output shell completion script (bash/zsh/fish)')
+  .option('--shell <type>', 'Shell type: bash, zsh, fish', 'bash')
+  .action((opts: { shell: string }) => {
+    const commands = program.commands.map(c => c.name()).filter(n => n !== 'completion');
+    const name = 'stellavault';
+
+    if (opts.shell === 'zsh') {
+      console.log(`#compdef ${name} sv\n_${name}() {\n  local -a commands\n  commands=(\n${commands.map(c => `    '${c}:${program.commands.find(cmd => cmd.name() === c)?.description() ?? ''}'`).join('\n')}\n  )\n  _describe 'command' commands\n}\ncompdef _${name} ${name} sv`);
+    } else if (opts.shell === 'fish') {
+      console.log(commands.map(c => {
+        const desc = program.commands.find(cmd => cmd.name() === c)?.description() ?? '';
+        return `complete -c ${name} -n "__fish_use_subcommand" -a "${c}" -d "${desc}"`;
+      }).join('\n'));
+    } else {
+      // bash
+      console.log(`_${name}_completions() {\n  local commands="${commands.join(' ')}"\n  COMPREPLY=($(compgen -W "$commands" -- "\${COMP_WORDS[COMP_CWORD]}"))\n}\ncomplete -F _${name}_completions ${name} sv`);
+    }
+    console.error(`\n# Add to your shell profile:\n#   eval "$(stellavault completion --shell ${opts.shell})"`);
+  });
+
 program.parse();

@@ -119,7 +119,61 @@ try {
     }
   });
 
-  // 8. Close
+  // 8. Graph build simulation (upper-triangle dot product + K-Means)
+  const graphN = Math.min(N, 500);
+  const graphVecs = Array.from({ length: graphN }, randomVec);
+  // Normalize
+  for (const v of graphVecs) {
+    let norm = 0;
+    for (let i = 0; i < v.length; i++) norm += v[i] * v[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < v.length; i++) v[i] /= norm;
+  }
+
+  bench(`Graph edges (${graphN} docs, upper-triangle)`, () => {
+    const threshold = 0.3;
+    let edgeCount = 0;
+    for (let i = 0; i < graphN; i++) {
+      for (let j = i + 1; j < graphN; j++) {
+        let dot = 0;
+        for (let d = 0; d < dims; d++) dot += graphVecs[i][d] * graphVecs[j][d];
+        if (dot >= threshold) edgeCount++;
+      }
+    }
+    return edgeCount;
+  });
+
+  bench(`K-Means (${graphN} docs, k=8, typed arrays)`, () => {
+    const k = 8;
+    const assignments = new Array(graphN).fill(0);
+    // Init centroids (first k vectors)
+    const centroids = graphVecs.slice(0, k).map(v => [...v]);
+    for (let iter = 0; iter < 20; iter++) {
+      let changed = false;
+      for (let i = 0; i < graphN; i++) {
+        let bestC = 0, bestD = Infinity;
+        for (let c = 0; c < k; c++) {
+          let dist = 0;
+          for (let d = 0; d < dims; d++) { const diff = graphVecs[i][d] - centroids[c][d]; dist += diff * diff; }
+          if (dist < bestD) { bestD = dist; bestC = c; }
+        }
+        if (assignments[i] !== bestC) { assignments[i] = bestC; changed = true; }
+      }
+      if (!changed) break;
+      const sums = Array.from({ length: k }, () => new Float64Array(dims));
+      const counts = new Uint32Array(k);
+      for (let i = 0; i < graphN; i++) {
+        counts[assignments[i]]++;
+        for (let d = 0; d < dims; d++) sums[assignments[i]][d] += graphVecs[i][d];
+      }
+      for (let c = 0; c < k; c++) {
+        if (counts[c] === 0) continue;
+        for (let d = 0; d < dims; d++) centroids[c][d] = sums[c][d] / counts[c];
+      }
+    }
+  });
+
+  // 9. Close
   await store.close();
 
   // Summary
