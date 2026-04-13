@@ -47,6 +47,7 @@ export type { DecayState, AccessEvent, DecayReport } from './intelligence/types.
 export { computeRetrievability, updateStability, estimateInitialStability, elapsedDays } from './intelligence/fsrs.js';
 export { detectDuplicates } from './intelligence/duplicate-detector.js';
 export { detectKnowledgeGaps } from './intelligence/gap-detector.js';
+export type { KnowledgeGap, GapReport } from './intelligence/gap-detector.js';
 export { detectContradictions } from './intelligence/contradiction-detector.js';
 export type { ContradictionPair } from './intelligence/contradiction-detector.js';
 export { computeSemanticDrift, findMostDrifted, hashEmbedding } from './intelligence/semantic-versioning.js';

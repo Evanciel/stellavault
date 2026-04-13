@@ -32,23 +32,23 @@ export async function federateJoinCommand(options: { name?: string }) {
 
   // Federation 노드 시작
   const node = new FederationNode(options.name);
-  node.setLocalStats(stats.documentCount, topics.slice(0, 5).map((t: any) => t.topic));
+  node.setLocalStats(stats.documentCount, topics.slice(0, 5).map(t => t.topic));
 
   const search = new FederatedSearch(node, store, embedder);
   search.startResponder();
 
   // 이벤트 리스너
-  node.on('joined', (info: any) => {
+  node.on('joined', (info: { topic: string }) => {
     console.log(chalk.green(`  ✦ Joined federation network`));
     console.log(chalk.dim(`    Topic: ${info.topic}`));
     console.log(chalk.dim(`    Waiting for peers...\n`));
   });
 
-  node.on('peer_joined', (peer: any) => {
+  node.on('peer_joined', (peer: { displayName: string; documentCount: number; peerId: string }) => {
     console.log(chalk.cyan(`  → Peer found: ${peer.displayName} (${peer.documentCount} docs) [${peer.peerId}]`));
   });
 
-  node.on('peer_left', (info: any) => {
+  node.on('peer_left', (info: { peerId: string }) => {
     console.log(chalk.yellow(`  ← Peer left: ${info.peerId}`));
   });
 

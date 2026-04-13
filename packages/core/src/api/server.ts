@@ -275,7 +275,7 @@ export function createApiServer(options: ApiServerOptions) {
   // GET /api/profile-card → SVG
   app.get('/api/profile-card', async (_req, res) => {
     try {
-      const mode = ((_req as any).query.mode as string) === 'folder' ? 'folder' : 'semantic';
+      const mode = (String(_req.query.mode ?? '')) === 'folder' ? 'folder' : 'semantic';
       const cachedProfile = graphCaches.get(mode);
       if (!cachedProfile || Date.now() - cachedProfile.cachedAt > GRAPH_CACHE_TTL) {
         const data = await buildGraphData(store, { mode });
@@ -608,7 +608,7 @@ export function createApiServer(options: ApiServerOptions) {
       const docs = await store.getAllDocuments();
 
       // Decay 요약
-      let decaySummary = { totalDocuments: 0, criticalCount: 0, decayingCount: 0, averageR: 1.0, topDecaying: [] as any[] };
+      let decaySummary: { totalDocuments: number; criticalCount: number; decayingCount: number; averageR: number; topDecaying: Array<{ documentId: string; title: string; retrievability: number; daysSinceAccess: number }> } = { totalDocuments: 0, criticalCount: 0, decayingCount: 0, averageR: 1.0, topDecaying: [] };
       if (decayEngine) {
         const report = await decayEngine.computeAll();
         decaySummary = {

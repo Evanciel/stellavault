@@ -2,6 +2,7 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine, detectKnowledgeGaps, generateLearningPath } from '@stellavault/core';
+import type { KnowledgeGap } from '@stellavault/core';
 import type { CliCommand } from '../types.js';
 
 export async function learnCommand(_opts: Record<string, never>, cmd: CliCommand) {
@@ -19,7 +20,7 @@ export async function learnCommand(_opts: Record<string, never>, cmd: CliCommand
   const decayEngine = new DecayEngine(db);
   const decayReport = await decayEngine.computeAll();
 
-  let gaps: any[] = [];
+  let gaps: KnowledgeGap[] = [];
   try {
     const gapReport = await detectKnowledgeGaps(hub.store);
     gaps = gapReport.gaps ?? [];

@@ -4,6 +4,10 @@ import { createDetectGapsTool } from '../src/mcp/tools/detect-gaps.js';
 import { createAskTool } from '../src/mcp/tools/ask.js';
 import { createGenerateDraftTool } from '../src/mcp/tools/generate-draft.js';
 import { createAgenticGraphTools } from '../src/mcp/tools/agentic-graph.js';
+import { createSnapshotToolDef, loadSnapshotToolDef, handleCreateSnapshot, handleLoadSnapshot } from '../src/mcp/tools/snapshot.js';
+import { logDecisionToolDef, findDecisionsToolDef, handleLogDecision, handleFindDecisions } from '../src/mcp/tools/decision-journal.js';
+import { getDecayStatusToolDef, handleGetDecayStatus } from '../src/mcp/tools/decay.js';
+import { getMorningBriefToolDef, handleGetMorningBrief } from '../src/mcp/tools/brief.js';
 import type { VectorStore } from '../src/store/types.js';
 import type { SearchEngine } from '../src/search/index.js';
 import type { Document } from '../src/types/document.js';
@@ -182,5 +186,154 @@ describe('agentic-graph tools', () => {
       content: 'x'.repeat(50001),
     });
     expect(result.content[0].text).toContain('Error');
+  });
+});
+
+// ─── Snapshot Tool ───────────────────────────────────────
+describe('snapshot tool', () => {
+  it('create-snapshot schema 유효', () => {
+    expect(createSnapshotToolDef.name).toBe('create-snapshot');
+    expect(createSnapshotToolDef.inputSchema.required).toContain('name');
+    expect(createSnapshotToolDef.inputSchema.required).toContain('queries');
+  });
+
+  it('load-snapshot schema 유효', () => {
+    expect(loadSnapshotToolDef.name).toBe('load-snapshot');
+    expect(loadSnapshotToolDef.inputSchema.required).toContain('name');
+  });
+
+  it('create-snapshot 실행 — 결과 반환', async () => {
+    const searchEngine = createMockSearchEngine();
+    const result = await handleCreateSnapshot(searchEngine, {
+      name: 'test-snap-' + Date.now(),
+      queries: ['knowledge'],
+    });
+    expect(result).toHaveProperty('saved');
+    expect(result).toHaveProperty('resultCount');
+    expect(result.resultCount).toBeGreaterThanOrEqual(0);
+
+    // cleanup
+    try { const { unlinkSync } = await import('node:fs'); unlinkSync(result.saved); } catch {}
+  });
+
+  it('load-snapshot — 존재하지 않는 스냅샷', async () => {
+    const result = await handleLoadSnapshot({ name: 'nonexistent-snap-999' });
+    expect(result).toHaveProperty('error');
+  });
+
+  it('sanitizeName — 특수문자 제거 후 안전한 이름으로 변환', async () => {
+    const result = await handleLoadSnapshot({ name: '../../../etc/passwd' });
+    // sanitizeName strips special chars → "etcpasswd" → not found
+    expect(result).toHaveProperty('error');
+  });
+});
+
+// ─── Decision Journal Tool ───────────────────────────────
+describe('decision-journal tool', () => {
+  const testVault = join(tmpdir(), 'sv-test-decisions-' + Date.now());
+
+  beforeEach(async () => {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(testVault, { recursive: true });
+  });
+  afterEach(async () => {
+    try { const { rmSync } = await import('node:fs'); rmSync(testVault, { recursive: true }); } catch {}
+  });
+
+  it('log-decision schema 유효', () => {
+    expect(logDecisionToolDef.name).toBe('log-decision');
+    expect(logDecisionToolDef.inputSchema.required).toContain('title');
+    expect(logDecisionToolDef.inputSchema.required).toContain('decision');
+    expect(logDecisionToolDef.inputSchema.required).toContain('reasoning');
+  });
+
+  it('find-decisions schema 유효', () => {
+    expect(findDecisionsToolDef.name).toBe('find-decisions');
+    expect(findDecisionsToolDef.inputSchema.required).toContain('query');
+  });
+
+  it('log-decision → find-decisions 라운드트립', async () => {
+    const logResult = await handleLogDecision(testVault, {
+      title: 'Choose Vitest over Jest',
+      decision: 'Use Vitest for unit testing',
+      reasoning: 'Better ESM support and faster execution',
+      alternatives: ['Jest', 'Mocha'],
+      project: 'stellavault',
+    });
+    expect(logResult).toHaveProperty('saved');
+    expect(logResult).toHaveProperty('fileName');
+
+    const findResult = await handleFindDecisions(testVault, { query: 'vitest' });
+    expect(findResult.decisions.length).toBeGreaterThanOrEqual(1);
+    expect(findResult.decisions[0].content).toContain('Vitest');
+  });
+
+  it('find-decisions — 빈 디렉토리', async () => {
+    const emptyVault = join(tmpdir(), 'sv-empty-' + Date.now());
+    const result = await handleFindDecisions(emptyVault, { query: 'anything' });
+    expect(result).toHaveProperty('message', 'No decisions directory');
+  });
+});
+
+// ─── Decay Status Tool ───────────────────────────────────
+describe('decay-status tool', () => {
+  it('schema 유효', () => {
+    expect(getDecayStatusToolDef.name).toBe('get-decay-status');
+    expect(getDecayStatusToolDef.inputSchema.properties.threshold).toBeDefined();
+    expect(getDecayStatusToolDef.inputSchema.properties.limit).toBeDefined();
+  });
+
+  it('핸들러 실행 — 결과 구조 검증', async () => {
+    const mockDecayEngine = {
+      getDecaying: async (threshold: number, limit: number) => [
+        { documentId: 'doc1', title: 'Test', retrievability: 0.3, stability: 2.5, lastAccess: '2026-01-01' },
+      ],
+    };
+    const result = await handleGetDecayStatus(mockDecayEngine as any, {});
+    expect(result.count).toBe(1);
+    expect(result.threshold).toBe(0.5);
+    expect(result.notes[0].title).toBe('Test');
+    expect(result.notes[0].retrievability).toBe(0.3);
+    expect(result.tip).toContain('잊어가고');
+  });
+
+  it('건강한 상태 — 0개 감쇠', async () => {
+    const mockDecayEngine = { getDecaying: async () => [] };
+    const result = await handleGetDecayStatus(mockDecayEngine as any, { threshold: 0.3 });
+    expect(result.count).toBe(0);
+    expect(result.tip).toContain('건강한');
+  });
+});
+
+// ─── Morning Brief Tool ──────────────────────────────────
+describe('morning-brief tool', () => {
+  it('schema 유효', () => {
+    expect(getMorningBriefToolDef.name).toBe('get-morning-brief');
+  });
+
+  it('핸들러 실행 — 브리핑 구조 검증', async () => {
+    const store = createMockStore();
+    const mockDecayEngine = {
+      computeAll: async () => ({
+        totalDocuments: 10,
+        decayingCount: 2,
+        criticalCount: 1,
+        averageR: 0.75,
+        topDecaying: [
+          { documentId: 'doc1', title: 'Decaying Note', retrievability: 0.3, daysSinceAccess: 14, stability: 2.0, lastAccess: '2026-01-01' },
+        ],
+        clusterHealth: [
+          { label: 'React', avgR: 0.4, count: 5 },
+        ],
+      }),
+    };
+    const result = await handleGetMorningBrief(mockDecayEngine as any, store);
+    expect(result.greeting).toContain('1개 노트');
+    expect(result.summary.averageR).toBe(0.75);
+    expect(result.summary.critical).toBe(1);
+    expect(result.reviewSuggestions).toHaveLength(1);
+    expect(result.reviewSuggestions[0].title).toBe('Decaying Note');
+    expect(result.unhealthyClusters).toHaveLength(1);
+    expect(result.tip).toContain('위험');
   });
 });
