@@ -1028,9 +1028,9 @@ footer .base {
   <section class="section hero">
     <div>
       <div class="meta rise-1">
-        <span>v0.6.0 · MIT</span>
+        <span>v0.6.1 · MIT</span>
         <span>Desktop + CLI + Obsidian</span>
-        <span>21 MCP tools</span>
+        <span>Full editor · 21 MCP tools</span>
       </div>
 
       <h1 class="rise-2">
@@ -1039,24 +1039,35 @@ footer .base {
       </h1>
 
       <p class="sub rise-3">
-        <b>Stellavault</b> is a self-compiling knowledge base for your Obsidian vault.
-        Drop anything — PDFs, voice notes, YouTube, screenshots — and it organizes,
-        distills, and connects it into a 3D neural graph that Claude can read through MCP.
+        <b>Stellavault</b> is a self-compiling knowledge base with a full-featured editor,
+        3D graph, and AI intelligence. Drop anything — PDFs, YouTube, documents — and it
+        organizes, distills, and connects your knowledge. Claude reads it all through MCP.
       </p>
 
-      <div class="rise-4" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-        <a href="https://github.com/Evanciel/stellavault/releases/latest" target="_blank" rel="noopener"
-          style="display:inline-flex;align-items:center;gap:8px;padding:12px 24px;
+      <!-- One-click install buttons -->
+      <div class="rise-4" style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;">
+        <a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-win32-x64-0.1.0.zip" target="_blank" rel="noopener"
+          style="display:inline-flex;align-items:center;gap:8px;padding:14px 28px;
                  background:var(--violet);color:#fff;border-radius:var(--radius);
                  font-family:var(--mono);font-size:13px;font-weight:600;
                  text-decoration:none;letter-spacing:0.02em;
                  box-shadow:0 4px 20px rgba(99,102,241,0.4);transition:all 0.2s;">
-          Download Desktop App
+          ⬇ Windows
         </a>
-        <span style="color:var(--ink-faint);font-size:11px;">Windows &middot; Linux &middot; 107–116 MB</span>
+        <a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-linux-x64-0.1.0.zip" target="_blank" rel="noopener"
+          style="display:inline-flex;align-items:center;gap:8px;padding:14px 28px;
+                 background:rgba(99,102,241,0.15);color:var(--violet-2);border:1px solid var(--violet);
+                 border-radius:var(--radius);
+                 font-family:var(--mono);font-size:13px;font-weight:600;
+                 text-decoration:none;letter-spacing:0.02em;transition:all 0.2s;">
+          ⬇ Linux
+        </a>
+        <span style="color:var(--ink-faint);font-size:10px;align-self:center;letter-spacing:0.04em;">
+          107–116 MB &middot; No install wizard &middot; Unzip &amp; run
+        </span>
       </div>
 
-      <div class="install rise-4" role="region" aria-label="Install command" style="margin-top:16px;">
+      <div class="install rise-4" role="region" aria-label="Install command" style="margin-top:14px;">
         <span class="prompt">$</span>
         <span class="cmd" id="install-cmd">npm install -g stellavault</span>
         <button type="button" id="copy-btn" aria-label="Copy install command">Copy</button>
