@@ -23,7 +23,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build core
         run: npm run build --workspace=@stellavault/core
@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --legacy-peer-deps
       - name: Check for known vulnerabilities
         run: npm audit --production --audit-level=high || true
       - name: Check for secrets in code
