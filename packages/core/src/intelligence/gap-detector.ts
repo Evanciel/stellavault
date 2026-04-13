@@ -2,6 +2,7 @@
 // 클러스터 간 브릿지 노드 부족 영역 식별
 
 import type { VectorStore } from '../store/types.js';
+import type { GraphData, GraphNode, Cluster } from '../types/graph.js';
 
 export interface KnowledgeGap {
   clusterA: string;
@@ -25,24 +26,26 @@ export interface GapReport {
  */
 export async function detectKnowledgeGaps(
   store: VectorStore,
-  graphData?: any, // buildGraphData 결과 (없으면 직접 계산)
+  graphData?: GraphData,
 ): Promise<GapReport> {
   const docs = await store.getAllDocuments();
   const embeddings = await store.getDocumentEmbeddings();
 
-  // 그래프 데이터가 없으면 간단히 계산
+  let gd: GraphData;
   if (!graphData) {
     const { buildGraphData } = await import('../api/graph-data.js');
-    graphData = await buildGraphData(store);
+    gd = await buildGraphData(store);
+  } else {
+    gd = graphData;
   }
 
-  const { nodes, edges, clusters } = graphData;
+  const { nodes, edges, clusters } = gd;
 
   // 1. 클러스터 간 연결 수 매트릭스
   const clusterEdges = new Map<string, number>();
   for (const edge of edges) {
-    const nodeA = nodes.find((n: any) => n.id === edge.source);
-    const nodeB = nodes.find((n: any) => n.id === edge.target);
+    const nodeA = nodes.find(n => n.id === edge.source);
+    const nodeB = nodes.find(n => n.id === edge.target);
     if (!nodeA || !nodeB || nodeA.clusterId === nodeB.clusterId) continue;
 
     const key = [
@@ -54,7 +57,7 @@ export async function detectKnowledgeGaps(
 
   // 2. 갭 식별 (클러스터 쌍 중 연결이 적은 것)
   const gaps: KnowledgeGap[] = [];
-  const clusterLabels = new Map<number, string>(clusters.map((c: any) => [c.id, c.label as string]));
+  const clusterLabels = new Map<number, string>(clusters.map(c => [c.id, c.label]));
 
   for (let i = 0; i < clusters.length; i++) {
     for (let j = i + 1; j < clusters.length; j++) {
@@ -89,8 +92,8 @@ export async function detectKnowledgeGaps(
   }
 
   const isolatedNodes = nodes
-    .filter((n: any) => (connectionCounts.get(n.id) ?? 0) <= 1)
-    .map((n: any) => ({
+    .filter(n => (connectionCounts.get(n.id) ?? 0) <= 1)
+    .map(n => ({
       id: n.id,
       title: n.label,
       connections: connectionCounts.get(n.id) ?? 0,

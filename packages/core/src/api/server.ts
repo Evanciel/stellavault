@@ -287,14 +287,14 @@ export function createApiServer(options: ApiServerOptions) {
       // 동적 import (graph 패키지의 profile-card)
       // 여기서는 간단히 SVG를 직접 생성
       const stats = await store.getStats();
-      const top6 = graphData.clusters
-        .sort((a: any, b: any) => b.nodeCount - a.nodeCount)
+      const top6 = [...graphData.clusters]
+        .sort((a, b) => b.nodeCount - a.nodeCount)
         .slice(0, 6);
-      const maxCount = Math.max(1, ...top6.map((c: any) => c.nodeCount));
+      const maxCount = Math.max(1, ...top6.map(c => c.nodeCount));
       const W = 800, H = 420;
       const radarCx = 200, radarCy = 220, radarR = 100;
 
-      const radarPoints = top6.map((c: any, i: number) => {
+      const radarPoints = top6.map((c, i) => {
         const angle = (Math.PI * 2 * i) / top6.length - Math.PI / 2;
         const r = radarR * (c.nodeCount / maxCount);
         return {
@@ -307,20 +307,20 @@ export function createApiServer(options: ApiServerOptions) {
         };
       });
 
-      const radarPath = radarPoints.map((p: any, i: number) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + 'Z';
+      const radarPath = radarPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + 'Z';
       const gridPaths = [0.33, 0.66, 1].map((s) =>
-        top6.map((_: any, i: number) => {
+        top6.map((_, i) => {
           const a = (Math.PI * 2 * i) / top6.length - Math.PI / 2;
           return `${i === 0 ? 'M' : 'L'}${radarCx + radarR * s * Math.cos(a)},${radarCy + radarR * s * Math.sin(a)}`;
         }).join(' ') + 'Z'
       );
 
       const tags20 = topics.slice(0, 20);
-      const maxTag = Math.max(1, ...tags20.map((t: any) => t.count));
+      const maxTag = Math.max(1, ...tags20.map(t => t.count));
       // HIGH-07: SVG injection 방어 — 모든 특수문자 이스케이프
       const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-      const tagEls = tags20.map((t: any, i: number) => {
+      const tagEls = tags20.map((t, i) => {
         const sz = 10 + 14 * (t.count / maxTag);
         const x = 480 + (Math.floor(i / 2) % 5) * 60;
         const y = 140 + (i % 2) * 30 + Math.floor(i / 10) * 70;
@@ -344,9 +344,9 @@ export function createApiServer(options: ApiServerOptions) {
   <line x1="30" y1="80" x2="${W-30}" y2="80" stroke="#6366f120"/>
   <text x="${radarCx}" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">KNOWLEDGE DISTRIBUTION</text>
   ${gridPaths.map((p: string) => `<path d="${p}" fill="none" stroke="#6366f115" stroke-width="0.5"/>`).join('\n  ')}
-  ${radarPoints.map((p: any) => `<line x1="${radarCx}" y1="${radarCy}" x2="${p.lx}" y2="${p.ly}" stroke="#6366f110" stroke-width="0.5"/>`).join('\n  ')}
+  ${radarPoints.map(p => `<line x1="${radarCx}" y1="${radarCy}" x2="${p.lx}" y2="${p.ly}" stroke="#6366f110" stroke-width="0.5"/>`).join('\n  ')}
   <path d="${radarPath}" fill="url(#rf)" stroke="#818cf8" stroke-width="1.5"/>
-  ${radarPoints.map((p: any) => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${p.color}"/><text x="${p.lx}" y="${p.ly+4}" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">${esc(p.label)}</text>`).join('\n  ')}
+  ${radarPoints.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${p.color}"/><text x="${p.lx}" y="${p.ly+4}" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">${esc(p.label)}</text>`).join('\n  ')}
   <text x="580" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">TOP TOPICS</text>
   <rect x="440" y="115" width="320" height="240" rx="8" fill="#6366f108"/>
     ${tagEls}
@@ -750,7 +750,7 @@ export function createApiServer(options: ApiServerOptions) {
       const sortedNodes = [...nodes].sort((a, b) => (connCount.get(b.id) ?? 0) - (connCount.get(a.id) ?? 0));
       const selectedNodes = sortedNodes.slice(0, maxNodes);
       const selectedIds = new Set(selectedNodes.map(n => n.id));
-      const selectedEdges = edges.filter((e: any) => selectedIds.has(e.source) && selectedIds.has(e.target));
+      const selectedEdges = edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target));
 
       const embedNodes = selectedNodes.map((n, i) => {
         const angle = (i / selectedNodes.length) * Math.PI * 2;

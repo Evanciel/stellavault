@@ -8,6 +8,8 @@ import { createSnapshotToolDef, loadSnapshotToolDef, handleCreateSnapshot, handl
 import { logDecisionToolDef, findDecisionsToolDef, handleLogDecision, handleFindDecisions } from '../src/mcp/tools/decision-journal.js';
 import { getDecayStatusToolDef, handleGetDecayStatus } from '../src/mcp/tools/decay.js';
 import { getMorningBriefToolDef, handleGetMorningBrief } from '../src/mcp/tools/brief.js';
+import { createLinkCodeTool } from '../src/mcp/tools/link-code.js';
+import { createGetEvolutionTool } from '../src/mcp/tools/get-evolution.js';
 import type { VectorStore } from '../src/store/types.js';
 import type { SearchEngine } from '../src/search/index.js';
 import type { Document } from '../src/types/document.js';
@@ -335,5 +337,63 @@ describe('morning-brief tool', () => {
     expect(result.reviewSuggestions[0].title).toBe('Decaying Note');
     expect(result.unhealthyClusters).toHaveLength(1);
     expect(result.tip).toContain('위험');
+  });
+});
+
+// ─── Link Code Tool ──────────────────────────────────────
+describe('link-code tool', () => {
+  it('schema 유효', () => {
+    const tool = createLinkCodeTool(createMockSearchEngine());
+    expect(tool.name).toBe('link-code');
+    expect(tool.inputSchema.required).toContain('filePath');
+  });
+
+  it('코드 파일 → 관련 노트 검색', async () => {
+    const tool = createLinkCodeTool(createMockSearchEngine());
+    const result = await tool.handler({ filePath: 'src/auth/middleware.ts' });
+    expect(result.content[0].type).toBe('text');
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveProperty('filePath', 'src/auth/middleware.ts');
+    expect(parsed).toHaveProperty('extractedKeywords');
+    expect(parsed).toHaveProperty('relatedNotes');
+    expect(parsed).toHaveProperty('summary');
+  });
+
+  it('content 옵션으로 심층 검색', async () => {
+    const tool = createLinkCodeTool(createMockSearchEngine());
+    const result = await tool.handler({
+      filePath: 'src/graph/renderer.ts',
+      content: 'import { GraphNode } from "./types"; function renderGraph() { /* knowledge visualization */ }',
+      limit: 3,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.extractedKeywords.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Get Evolution Tool ──────────────────────────────────
+describe('get-evolution tool', () => {
+  it('schema 유효', () => {
+    const tool = createGetEvolutionTool(createMockStore());
+    expect(tool.name).toBe('get-evolution');
+    expect(tool.inputSchema.properties.topic).toBeDefined();
+    expect(tool.inputSchema.properties.limit).toBeDefined();
+  });
+
+  it('전체 vault 진화 분석', async () => {
+    const tool = createGetEvolutionTool(createMockStore());
+    const result = await tool.handler({});
+    expect(result.content[0].type).toBe('text');
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveProperty('topic', 'all');
+    expect(parsed).toHaveProperty('totalDocuments');
+    expect(parsed).toHaveProperty('recentlyEvolved');
+  });
+
+  it('토픽 필터링', async () => {
+    const tool = createGetEvolutionTool(createMockStore());
+    const result = await tool.handler({ topic: 'test', limit: 5 });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.topic).toBe('test');
   });
 });

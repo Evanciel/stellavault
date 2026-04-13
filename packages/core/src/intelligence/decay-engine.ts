@@ -11,6 +11,16 @@ import {
   FSRS_PARAMS,
 } from './fsrs.js';
 
+// SQLite row shapes returned by better-sqlite3 .get()/.all()
+interface DecayStateRow { document_id: string; stability: number; difficulty: number; last_access: string; retrievability: number; updated_at: string }
+interface DocTitleRow { id: string; title: string }
+interface DocContentRow { content?: string }
+interface ChunkCountRow { c: number }
+interface ClusterDataRow { document_id: string; retrievability: number }
+interface DocFilePathRow { file_path?: string }
+interface DocInitRow { id: string; content?: string; last_modified?: string }
+interface DecayJoinRow extends DecayStateRow { title: string }
+
 export class DecayEngine {
   constructor(private db: Database) {
     this.ensureTables();
@@ -52,7 +62,7 @@ export class DecayEngine {
     // Get or create decay state
     const existing = this.db.prepare(
       'SELECT * FROM decay_state WHERE document_id = ?'
-    ).get(event.documentId) as any;
+    ).get(event.documentId) as DecayStateRow | undefined;
 
     if (existing) {
       const elapsed = elapsedDays(existing.last_access, now);
@@ -65,11 +75,11 @@ export class DecayEngine {
       `).run(newS, now, now, event.documentId);
     } else {
       // New document — estimate initial stability
-      const doc = this.db.prepare('SELECT content FROM documents WHERE id = ?').get(event.documentId) as any;
+      const doc = this.db.prepare('SELECT content FROM documents WHERE id = ?').get(event.documentId) as DocContentRow | undefined;
       const contentLen = doc?.content?.length ?? 500;
       const connCount = (this.db.prepare(
         'SELECT COUNT(*) as c FROM chunks WHERE document_id = ?'
-      ).get(event.documentId) as any)?.c ?? 1;
+      ).get(event.documentId) as ChunkCountRow | undefined)?.c ?? 1;
       const initS = estimateInitialStability(contentLen, connCount);
 
       this.db.prepare(`
@@ -89,9 +99,9 @@ export class DecayEngine {
     await this.initializeNewDocuments();
 
     // Compute R for all
-    const states = this.db.prepare('SELECT * FROM decay_state').all() as any[];
-    const docs = this.db.prepare('SELECT id, title FROM documents').all() as any[];
-    const titleMap = new Map(docs.map((d: any) => [d.id, d.title]));
+    const states = this.db.prepare('SELECT * FROM decay_state').all() as DecayStateRow[];
+    const docs = this.db.prepare('SELECT id, title FROM documents').all() as DocTitleRow[];
+    const titleMap = new Map(docs.map(d => [d.id, d.title]));
 
     const updated: DecayState[] = [];
     const updateStmt = this.db.prepare(
@@ -136,9 +146,8 @@ export class DecayEngine {
       SELECT ds.document_id, ds.retrievability
       FROM decay_state ds
       JOIN documents d ON d.id = ds.document_id
-    `).all() as any[];
+    `).all() as ClusterDataRow[];
 
-    // Get cluster info from graph data cache (simplified: group by first folder)
     const clusterHealth = this.computeClusterHealth(clusterData);
 
     return {
@@ -151,11 +160,10 @@ export class DecayEngine {
     };
   }
 
-  private computeClusterHealth(data: any[]): DecayReport['clusterHealth'] {
-    // Group by document's top-level folder as proxy for cluster
+  private computeClusterHealth(data: ClusterDataRow[]): DecayReport['clusterHealth'] {
     const groups = new Map<string, number[]>();
     for (const row of data) {
-      const doc = this.db.prepare('SELECT file_path FROM documents WHERE id = ?').get(row.document_id) as any;
+      const doc = this.db.prepare('SELECT file_path FROM documents WHERE id = ?').get(row.document_id) as DocFilePathRow | undefined;
       const folder = doc?.file_path?.split('/')[0] ?? 'unknown';
       if (!groups.has(folder)) groups.set(folder, []);
       groups.get(folder)!.push(row.retrievability);
@@ -182,7 +190,7 @@ export class DecayEngine {
       WHERE ds.retrievability < ?
       ORDER BY ds.retrievability ASC
       LIMIT ?
-    `).all(threshold, limit) as any[];
+    `).all(threshold, limit) as DecayJoinRow[];
 
     return rows.map(r => ({
       documentId: r.document_id,
@@ -203,7 +211,7 @@ export class DecayEngine {
       FROM documents d
       LEFT JOIN decay_state ds ON d.id = ds.document_id
       WHERE ds.document_id IS NULL
-    `).all() as any[];
+    `).all() as DocInitRow[];
 
     if (missing.length === 0) return 0;
 
