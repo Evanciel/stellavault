@@ -2,6 +2,7 @@
 // 기존 벡터 임베딩의 cosine similarity 활용
 
 import type { VectorStore } from '../store/types.js';
+import { cosineSimilarity } from '../utils/math.js';
 
 export interface DuplicatePair {
   docA: { id: string; title: string; filePath: string };
@@ -58,14 +59,4 @@ export async function detectDuplicates(
     .slice(0, limit);
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
+// cosineSimilarity imported from utils/math.ts

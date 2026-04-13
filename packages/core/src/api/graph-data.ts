@@ -4,6 +4,7 @@
 import type { VectorStore } from '../store/types.js';
 import type { GraphNode, GraphEdge, Cluster, GraphData } from '../types/graph.js';
 import { createHash } from 'node:crypto';
+import { cosineSimilarity, euclideanDist, normalizeVector, dotProduct } from '../utils/math.js';
 
 const CLUSTER_COLORS = [
   '#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
@@ -35,23 +36,31 @@ export async function buildGraphData(
     store.getDocumentEmbeddings(),
   ]);
 
-  // 2. k-NN으로 엣지 생성
+  // 2. k-NN 엣지 생성 — 사전 정규화로 cosine→dot product 최적화
   const edges: GraphEdge[] = [];
   const edgeCounts = new Map<string, number>();
 
+  // Pre-normalize: O(n·dims) 1회 — 이후 dot product = cosine similarity
+  const normalizedVecs = new Map<string, number[]>();
   for (const doc of docs) {
     const vec = embeddings.get(doc.id);
     if (!vec) continue;
+    normalizedVecs.set(doc.id, normalizeVector([...vec])); // copy + normalize
+  }
 
-    // 모든 다른 문서와 코사인 유사도 계산
+  const docIds = [...normalizedVecs.keys()];
+  for (let i = 0; i < docIds.length; i++) {
+    const docId = docIds[i];
+    const vec = normalizedVecs.get(docId)!;
+
+    // 다른 문서와 dot product (= cosine for unit vectors)
     const similarities: Array<{ id: string; sim: number }> = [];
-    for (const other of docs) {
-      if (other.id === doc.id) continue;
-      const otherVec = embeddings.get(other.id);
-      if (!otherVec) continue;
-      const sim = cosineSimilarity(vec, otherVec);
+    for (let j = 0; j < docIds.length; j++) {
+      if (i === j) continue;
+      const otherId = docIds[j];
+      const sim = dotProduct(vec, normalizedVecs.get(otherId)!);
       if (sim >= edgeThreshold) {
-        similarities.push({ id: other.id, sim });
+        similarities.push({ id: otherId, sim });
       }
     }
 
@@ -60,10 +69,9 @@ export async function buildGraphData(
     const topK = similarities.slice(0, maxEdgesPerNode);
 
     for (const { id: targetId, sim } of topK) {
-      // 중복 엣지 방지 (A→B, B→A)
-      const edgeKey = [doc.id, targetId].sort().join(':');
+      const edgeKey = i < docIds.indexOf(targetId) ? `${docId}:${targetId}` : `${targetId}:${docId}`;
       if (!edgeCounts.has(edgeKey)) {
-        edges.push({ source: doc.id, target: targetId, weight: sim });
+        edges.push({ source: docId, target: targetId, weight: sim });
         edgeCounts.set(edgeKey, 1);
       }
     }
@@ -196,16 +204,7 @@ export async function buildGraphData(
 
 // --- 유틸리티 ---
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
+// Imported from shared utils — see utils/math.ts
 
 function kMeans(vectors: number[][], k: number, maxIter: number = 50): number[] {
   if (vectors.length === 0) return [];
@@ -267,14 +266,7 @@ function kMeans(vectors: number[][], k: number, maxIter: number = 50): number[] 
   return assignments;
 }
 
-function euclideanDist(a: number[], b: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) {
-    const diff = a[i] - b[i];
-    sum += diff * diff;
-  }
-  return Math.sqrt(sum);
-}
+// euclideanDist imported from shared utils
 
 function extractClusterLabel(titles: string[]): string {
   // 제목에서 빈출 단어 추출 (2글자 이상)
