@@ -7,6 +7,8 @@ export function TitleBar() {
   const theme = useAppStore((s) => s.theme);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const toggleTheme = useAppStore((s) => s.toggleTheme);
+  const rightPanel = useAppStore((s) => s.rightPanel);
+  const setRightPanel = useAppStore((s) => s.setRightPanel);
   const isDark = theme === 'dark';
   const isMac = window.stellavault.platform === 'darwin';
 
@@ -38,6 +40,13 @@ export function TitleBar() {
         Stellavault
       </span>
 
+      <button
+        onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'ai' ? 'var(--accent-2)' : undefined }}
+        title="AI panel"
+      >
+        &#x2726;
+      </button>
       <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme">
         {isDark ? '\u263C' : '\u263E'}
       </button>

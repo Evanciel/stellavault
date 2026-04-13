@@ -7,12 +7,16 @@ import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
 import { StatusBar } from './components/layout/StatusBar.js';
 import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
+import { AIPanel } from './components/panels/AIPanel.js';
 import { ipc, onIpc } from './lib/ipc-client.js';
 
 export function App() {
   const theme = useAppStore((s) => s.theme);
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const rightPanel = useAppStore((s) => s.rightPanel);
+  const setRightPanel = useAppStore((s) => s.setRightPanel);
+  const rightPanelWidth = useAppStore((s) => s.rightPanelWidth);
   const setFileTree = useAppStore((s) => s.setFileTree);
   const setVaultPath = useAppStore((s) => s.setVaultPath);
   const setCoreReady = useAppStore((s) => s.setCoreReady);
@@ -108,6 +112,51 @@ export function App() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <EditorArea />
         </div>
+
+        {rightPanel !== 'none' && (
+          <div style={{
+            width: rightPanelWidth,
+            minWidth: 280,
+            maxWidth: 500,
+            background: 'var(--sidebar-bg)',
+            borderLeft: '1px solid var(--border)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <div style={{
+              padding: '6px 10px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: 11,
+            }}>
+              <span style={{ color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+                {rightPanel === 'ai' ? 'AI Intelligence' : rightPanel === 'graph' ? '3D Graph' : 'Backlinks'}
+              </span>
+              <button
+                onClick={() => setRightPanel('none')}
+                style={{ background: 'transparent', border: 'none', color: 'var(--ink-faint)', cursor: 'pointer', fontSize: 14 }}
+              >
+                &#x2715;
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              {rightPanel === 'ai' && <AIPanel />}
+              {rightPanel === 'graph' && (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
+                  3D graph panel coming in v0.2
+                </div>
+              )}
+              {rightPanel === 'backlinks' && (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
+                  Backlinks panel coming in v0.2
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <StatusBar />
