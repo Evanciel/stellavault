@@ -12,8 +12,7 @@ import { createFederationRouter } from './routes/federation.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
 import { createIngestRouter } from './routes/ingest.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
-import { detectDuplicates } from '../intelligence/duplicate-detector.js';
-import { detectKnowledgeGaps } from '../intelligence/gap-detector.js';
+// detectDuplicates + detectKnowledgeGaps: lazy imported in /api/health only
 
 export interface ApiServerOptions {
   store: VectorStore;
@@ -623,6 +622,7 @@ export function createApiServer(options: ApiServerOptions) {
       // Gaps 요약
       let gapSummary = { gapCount: 0, isolatedCount: 0 };
       try {
+        const { detectKnowledgeGaps } = await import('../intelligence/gap-detector.js');
         const gapReport = await detectKnowledgeGaps(store);
         gapSummary = {
           gapCount: gapReport.gaps?.length ?? 0,
@@ -633,6 +633,7 @@ export function createApiServer(options: ApiServerOptions) {
       // Duplicates 요약
       let dupCount = 0;
       try {
+        const { detectDuplicates } = await import('../intelligence/duplicate-detector.js');
         const pairs = await detectDuplicates(store, 0.88, 50);
         dupCount = pairs.length;
       } catch (e) { console.error('[health] Duplicate detection failed:', e instanceof Error ? e.message : e); }

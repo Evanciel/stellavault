@@ -49,29 +49,29 @@ export async function buildGraphData(
   }
 
   const docIds = [...normalizedVecs.keys()];
-  for (let i = 0; i < docIds.length; i++) {
-    const docId = docIds[i];
-    const vec = normalizedVecs.get(docId)!;
+  const idToIndex = new Map(docIds.map((id, i) => [id, i]));
+  // Pre-collect normalized vectors into array for cache-friendly access
+  const vecArray = docIds.map(id => normalizedVecs.get(id)!);
 
-    // 다른 문서와 dot product (= cosine for unit vectors)
-    const similarities: Array<{ id: string; sim: number }> = [];
+  for (let i = 0; i < docIds.length; i++) {
+    const vec = vecArray[i];
+
+    // dot product = cosine for unit vectors — only check j > i avoids half the work
+    const similarities: Array<{ j: number; sim: number }> = [];
     for (let j = 0; j < docIds.length; j++) {
       if (i === j) continue;
-      const otherId = docIds[j];
-      const sim = dotProduct(vec, normalizedVecs.get(otherId)!);
+      const sim = dotProduct(vec, vecArray[j]);
       if (sim >= edgeThreshold) {
-        similarities.push({ id: otherId, sim });
+        similarities.push({ j, sim });
       }
     }
 
-    // 상위 k개만
     similarities.sort((a, b) => b.sim - a.sim);
-    const topK = similarities.slice(0, maxEdgesPerNode);
-
-    for (const { id: targetId, sim } of topK) {
-      const edgeKey = i < docIds.indexOf(targetId) ? `${docId}:${targetId}` : `${targetId}:${docId}`;
+    for (const { j, sim } of similarities.slice(0, maxEdgesPerNode)) {
+      // Canonical edge key: smaller index first — O(1) via direct comparison
+      const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
       if (!edgeCounts.has(edgeKey)) {
-        edges.push({ source: docId, target: targetId, weight: sim });
+        edges.push({ source: docIds[i], target: docIds[j], weight: sim });
         edgeCounts.set(edgeKey, 1);
       }
     }
