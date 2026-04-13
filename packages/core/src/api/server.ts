@@ -11,6 +11,8 @@ import type { GraphData } from '../types/graph.js';
 import { createFederationRouter } from './routes/federation.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
 import { createIngestRouter } from './routes/ingest.js';
+import { createProfileCardRouter } from './routes/profile-card.js';
+import { createHealthRouter } from './routes/health.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 // detectDuplicates + detectKnowledgeGaps: lazy imported in /api/health only
 
@@ -271,93 +273,8 @@ export function createApiServer(options: ApiServerOptions) {
     }
   });
 
-  // GET /api/profile-card → SVG
-  app.get('/api/profile-card', async (_req, res) => {
-    try {
-      const mode = (String(_req.query.mode ?? '')) === 'folder' ? 'folder' : 'semantic';
-      const cachedProfile = graphCaches.get(mode);
-      if (!cachedProfile || Date.now() - cachedProfile.cachedAt > GRAPH_CACHE_TTL) {
-        const data = await buildGraphData(store, { mode });
-        graphCaches.set(mode, { data, generatedAt: new Date().toISOString(), cachedAt: Date.now() });
-      }
-      const graphData = graphCaches.get(mode)!.data;
-      const topics = await store.getTopics();
-
-      // 동적 import (graph 패키지의 profile-card)
-      // 여기서는 간단히 SVG를 직접 생성
-      const stats = await store.getStats();
-      const top6 = [...graphData.clusters]
-        .sort((a, b) => b.nodeCount - a.nodeCount)
-        .slice(0, 6);
-      const maxCount = Math.max(1, ...top6.map(c => c.nodeCount));
-      const W = 800, H = 420;
-      const radarCx = 200, radarCy = 220, radarR = 100;
-
-      const radarPoints = top6.map((c, i) => {
-        const angle = (Math.PI * 2 * i) / top6.length - Math.PI / 2;
-        const r = radarR * (c.nodeCount / maxCount);
-        return {
-          x: radarCx + r * Math.cos(angle),
-          y: radarCy + r * Math.sin(angle),
-          lx: radarCx + (radarR + 20) * Math.cos(angle),
-          ly: radarCy + (radarR + 20) * Math.sin(angle),
-          label: c.label.split(',')[0].trim().slice(0, 12),
-          color: c.color,
-        };
-      });
-
-      const radarPath = radarPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + 'Z';
-      const gridPaths = [0.33, 0.66, 1].map((s) =>
-        top6.map((_, i) => {
-          const a = (Math.PI * 2 * i) / top6.length - Math.PI / 2;
-          return `${i === 0 ? 'M' : 'L'}${radarCx + radarR * s * Math.cos(a)},${radarCy + radarR * s * Math.sin(a)}`;
-        }).join(' ') + 'Z'
-      );
-
-      const tags20 = topics.slice(0, 20);
-      const maxTag = Math.max(1, ...tags20.map(t => t.count));
-      // HIGH-07: SVG injection 방어 — 모든 특수문자 이스케이프
-      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-
-      const tagEls = tags20.map((t, i) => {
-        const sz = 10 + 14 * (t.count / maxTag);
-        const x = 480 + (Math.floor(i / 2) % 5) * 60;
-        const y = 140 + (i % 2) * 30 + Math.floor(i / 10) * 70;
-        const op = 0.5 + 0.5 * (t.count / maxTag);
-        return `<text x="${x}" y="${y}" font-size="${sz}" fill="#88aaff" opacity="${op}" font-family="monospace">#${esc(t.topic)}</text>`;
-      }).join('\n    ');
-
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0d1028"/><stop offset="100%" stop-color="#050510"/>
-    </linearGradient>
-    <linearGradient id="rf" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.3"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0.15"/>
-    </linearGradient>
-  </defs>
-  <rect width="${W}" height="${H}" rx="16" fill="url(#bg)"/>
-  <rect width="${W}" height="${H}" rx="16" fill="none" stroke="#6366f140"/>
-  <text x="30" y="40" font-size="20" font-weight="700" fill="#c0c0f0" font-family="system-ui">🧠 Knowledge Universe</text>
-  <text x="30" y="65" font-size="13" fill="#556" font-family="monospace">${stats.documentCount} docs · ${graphData.clusters.length} clusters · ${graphData.edges.length} connections</text>
-  <line x1="30" y1="80" x2="${W-30}" y2="80" stroke="#6366f120"/>
-  <text x="${radarCx}" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">KNOWLEDGE DISTRIBUTION</text>
-  ${gridPaths.map((p: string) => `<path d="${p}" fill="none" stroke="#6366f115" stroke-width="0.5"/>`).join('\n  ')}
-  ${radarPoints.map(p => `<line x1="${radarCx}" y1="${radarCy}" x2="${p.lx}" y2="${p.ly}" stroke="#6366f110" stroke-width="0.5"/>`).join('\n  ')}
-  <path d="${radarPath}" fill="url(#rf)" stroke="#818cf8" stroke-width="1.5"/>
-  ${radarPoints.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${p.color}"/><text x="${p.lx}" y="${p.ly+4}" font-size="9" fill="#889" text-anchor="middle" font-family="monospace">${esc(p.label)}</text>`).join('\n  ')}
-  <text x="580" y="105" font-size="11" fill="#667" text-anchor="middle" font-family="system-ui">TOP TOPICS</text>
-  <rect x="440" y="115" width="320" height="240" rx="8" fill="#6366f108"/>
-    ${tagEls}
-  <text x="${W/2}" y="${H-15}" font-size="10" fill="#334" text-anchor="middle" font-family="monospace">Generated by Stellavault</text>
-</svg>`;
-
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.send(svg);
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // GET /api/profile-card — Extracted to routes/profile-card.ts
+  app.use('/api', createProfileCardRouter({ store, graphCaches, GRAPH_CACHE_TTL }));
 
   // GET /api/stats
   app.get('/api/stats', async (_req, res) => {
@@ -601,77 +518,8 @@ export function createApiServer(options: ApiServerOptions) {
   app.use('/api', createKnowledgeRouter({ store, searchEngine, vaultPath, requireAuth }));
 
   // GET /api/health — 종합 건강도 대시보드
-  app.get('/api/health', async (_req, res) => {
-    try {
-      const stats = await store.getStats();
-      const docs = await store.getAllDocuments();
-
-      // Decay 요약
-      let decaySummary: { totalDocuments: number; criticalCount: number; decayingCount: number; averageR: number; topDecaying: Array<{ documentId: string; title: string; retrievability: number; daysSinceAccess: number }> } = { totalDocuments: 0, criticalCount: 0, decayingCount: 0, averageR: 1.0, topDecaying: [] };
-      if (decayEngine) {
-        const report = await decayEngine.computeAll();
-        decaySummary = {
-          totalDocuments: report.totalDocuments ?? docs.length,
-          criticalCount: report.criticalCount ?? 0,
-          decayingCount: report.decayingCount ?? 0,
-          averageR: report.averageR ?? 1.0,
-          topDecaying: (report.topDecaying ?? []).slice(0, 5),
-        };
-      }
-
-      // Gaps 요약
-      let gapSummary = { gapCount: 0, isolatedCount: 0 };
-      try {
-        const { detectKnowledgeGaps } = await import('../intelligence/gap-detector.js');
-        const gapReport = await detectKnowledgeGaps(store);
-        gapSummary = {
-          gapCount: gapReport.gaps?.length ?? 0,
-          isolatedCount: gapReport.isolatedNodes?.length ?? 0,
-        };
-      } catch (e) { console.error('[health] Gap detection failed:', e instanceof Error ? e.message : e); }
-
-      // Duplicates 요약
-      let dupCount = 0;
-      try {
-        const { detectDuplicates } = await import('../intelligence/duplicate-detector.js');
-        const pairs = await detectDuplicates(store, 0.88, 50);
-        dupCount = pairs.length;
-      } catch (e) { console.error('[health] Duplicate detection failed:', e instanceof Error ? e.message : e); }
-
-      // Source/Type 분포
-      const sourceDist = new Map<string, number>();
-      const typeDist = new Map<string, number>();
-      for (const doc of docs) {
-        const s = doc.source ?? 'local';
-        const t = doc.type ?? 'note';
-        sourceDist.set(s, (sourceDist.get(s) ?? 0) + 1);
-        typeDist.set(t, (typeDist.get(t) ?? 0) + 1);
-      }
-
-      // 시간별 문서 증가 (월별)
-      const monthlyGrowth = new Map<string, number>();
-      for (const doc of docs) {
-        const month = doc.lastModified?.slice(0, 7) ?? 'unknown';
-        monthlyGrowth.set(month, (monthlyGrowth.get(month) ?? 0) + 1);
-      }
-
-      res.json({
-        stats: { ...stats, vaultName },
-        decay: decaySummary,
-        gaps: gapSummary,
-        duplicates: { count: dupCount },
-        distribution: {
-          source: Object.fromEntries(sourceDist),
-          type: Object.fromEntries(typeDist),
-        },
-        growth: Object.fromEntries(
-          [...monthlyGrowth.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-        ),
-      });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // GET /api/health — Extracted to routes/health.ts
+  app.use('/api', createHealthRouter({ store, vaultName, decayEngine }));
 
   // GET /api/profile — Knowledge Profile summary (F-A09)
   app.get('/api/profile', async (_req, res) => {
