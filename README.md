@@ -15,11 +15,11 @@ Self-compiling knowledge base with 3D neural graph, AI-powered search, and space
 
 Download and run — no terminal needed.
 
-| Platform | Download |
-|----------|----------|
-| **Windows** | [Stellavault-win32-x64-0.1.0.zip](https://github.com/Evanciel/stellavault/releases/latest) |
-| macOS | Coming soon |
-| Linux | Coming soon |
+| Platform | Download | Size |
+|----------|----------|------|
+| **Windows x64** | [Stellavault-win32-x64-0.1.0.zip](https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-win32-x64-0.1.0.zip) | 116 MB |
+| **Linux x64** | [Stellavault-linux-x64-0.1.0.zip](https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-linux-x64-0.1.0.zip) | 107 MB |
+| macOS | Coming soon (requires Apple code signing) | — |
 
 **What you get:**
 - Full markdown editor with WYSIWYG toolbar
