@@ -31,7 +31,10 @@ jobs:
       - name: Build CLI
         run: npm run build --workspace=@stellavault/cli
 
-      - name: Bundle CLI
+      - name: Build graph UI
+        run: npm run build --workspace=@stellavault/graph
+
+      - name: Bundle CLI (includes graph UI copy)
         run: npm run bundle
 
       - name: Verify bundle
@@ -39,11 +42,8 @@ jobs:
           node dist/stellavault.js --version
           node dist/stellavault.js --help | head -5
 
-      - name: Build graph UI
-        run: npm run build --workspace=@stellavault/graph
-
-      - name: Run tests
-        run: npm test --if-present
+      - name: Run smoke tests
+        run: node tests/smoke.mjs
 
   security:
     runs-on: ubuntu-latest
