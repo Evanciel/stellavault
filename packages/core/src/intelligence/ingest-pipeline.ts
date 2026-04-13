@@ -237,6 +237,30 @@ function extractAutoTags(content: string, type: string): string[] {
   if (/경쟁|competitor|시장|market|swot|분석/.test(lc)) tags.add('analysis');
   if (/일기|diary|journal|오늘|today|daily/.test(lc)) tags.add('journal');
 
+  // Content-based keyword extraction — top meaningful words as tags
+  // Simple TF approach: count word frequency, filter stop words, take top 3
+  const stopWords = new Set([
+    'the','a','an','and','or','but','in','on','at','to','for','of','with','by','from',
+    'is','are','was','were','be','been','being','have','has','had','do','does','did',
+    'will','would','could','should','may','might','can','this','that','these','those',
+    'it','its','they','them','their','we','our','you','your','he','she','his','her',
+    'not','no','all','each','every','both','few','more','most','other','some','such',
+    'than','too','very','just','about','above','after','before','between','into','through',
+    'during','without','also','how','what','which','who','when','where','why','if','then',
+  ]);
+  const wordFreq = new Map<string, number>();
+  const words = content.toLowerCase().replace(/[^a-z가-힣\s]/g, ' ').split(/\s+/);
+  for (const w of words) {
+    if (w.length < 3 || stopWords.has(w)) continue;
+    wordFreq.set(w, (wordFreq.get(w) ?? 0) + 1);
+  }
+  const topKeywords = [...wordFreq.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([word]) => word);
+  topKeywords.forEach(k => tags.add(k));
+
   return [...tags].slice(0, 15);
 }
 

@@ -9,7 +9,7 @@ export function TabBar() {
   const closeTab = useAppStore((s) => s.closeTab);
 
   return (
-    <div style={{
+    <div role="tablist" aria-label="Open documents" style={{
       display: 'flex',
       background: 'var(--tab-bg)',
       borderBottom: '1px solid var(--border)',
@@ -21,6 +21,9 @@ export function TabBar() {
         return (
           <div
             key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
             style={{
               display: 'flex',
@@ -44,6 +47,7 @@ export function TabBar() {
               {tab.title}
             </span>
             <button
+              aria-label={`Close ${tab.title}`}
               onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
               style={{
                 background: 'transparent',

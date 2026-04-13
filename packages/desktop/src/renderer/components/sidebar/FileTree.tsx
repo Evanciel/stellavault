@@ -14,7 +14,7 @@ export function FileTree({ filter }: Props) {
   const filterLower = filter.toLowerCase();
 
   return (
-    <div style={{ padding: '4px 0' }}>
+    <div role="tree" aria-label="Vault files" style={{ padding: '4px 0' }}>
       {tree.map((node) => (
         <TreeNode key={node.path} node={node} depth={0} filter={filterLower} />
       ))}
@@ -60,6 +60,10 @@ function TreeNode({ node, depth, filter }: { node: FileTreeNode; depth: number; 
   return (
     <>
       <div
+        role="treeitem"
+        aria-expanded={node.isDir ? isExpanded : undefined}
+        aria-selected={isActive}
+        tabIndex={isActive ? 0 : -1}
         onClick={() => void handleClick()}
         style={{
           padding: '3px 8px 3px 0',
