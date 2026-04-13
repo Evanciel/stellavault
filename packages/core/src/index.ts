@@ -129,6 +129,9 @@ export type { Locale } from './i18n/index.js';
 export { withRetry, StellavaultError, wrapError, errors } from './utils/retry.js';
 export type { RetryOptions } from './utils/retry.js';
 
+// Math Utils
+export { cosineSimilarity, dotProduct, normalizeVector, euclideanDist } from './utils/math.js';
+
 // Factory — 전체 조립
 import { createSqliteVecStore as _createStore } from './store/index.js';
 import { createLocalEmbedder as _createEmbedder } from './indexer/index.js';
