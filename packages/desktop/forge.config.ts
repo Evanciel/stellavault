@@ -13,8 +13,8 @@ const config: ForgeConfig = {
     icon: './assets/icon',
   },
   makers: [
-    new MakerSquirrel({ name: 'stellavault' }),
-    new MakerZIP({}, ['darwin', 'linux']),
+    new MakerSquirrel({ name: 'stellavault', authors: 'Evanciel', description: 'Stellavault Desktop' }),
+    new MakerZIP({}, ['win32', 'darwin', 'linux']),
     new MakerDeb({ options: { name: 'stellavault', productName: 'Stellavault' } }),
     new MakerDMG({ name: 'Stellavault' }),
   ],

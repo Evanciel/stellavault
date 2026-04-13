@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Stellavault Desktop — Knowledge management app (Electron)",
   "private": true,
-  "main": ".vite/build/main.js",
+  "main": ".vite/build/index.js",
   "type": "module",
   "scripts": {
     "start": "electron-forge start",
