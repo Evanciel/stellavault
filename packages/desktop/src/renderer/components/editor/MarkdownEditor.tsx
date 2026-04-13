@@ -6,6 +6,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Link from '@tiptap/extension-link';
+import { WikilinkExtension } from './WikilinkSuggestion.js';
 
 interface Props {
   content: string;
@@ -21,6 +22,7 @@ export function MarkdownEditor({ content, onChange }: Props) {
       }),
       Placeholder.configure({ placeholder: 'Start writing...' }),
       Link.configure({ openOnClick: false, autolink: true }),
+      WikilinkExtension,
     ],
     content,
     onUpdate: ({ editor: e }) => {

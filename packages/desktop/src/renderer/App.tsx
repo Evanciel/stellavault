@@ -6,6 +6,7 @@ import { TitleBar } from './components/layout/TitleBar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
 import { StatusBar } from './components/layout/StatusBar.js';
+import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
 import { ipc, onIpc } from './lib/ipc-client.js';
 
 export function App() {
@@ -110,6 +111,7 @@ export function App() {
       </div>
 
       <StatusBar />
+      <QuickSwitcher />
     </div>
   );
 }
