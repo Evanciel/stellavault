@@ -10,6 +10,8 @@ import { getDecayStatusToolDef, handleGetDecayStatus } from '../src/mcp/tools/de
 import { getMorningBriefToolDef, handleGetMorningBrief } from '../src/mcp/tools/brief.js';
 import { createLinkCodeTool } from '../src/mcp/tools/link-code.js';
 import { createGetEvolutionTool } from '../src/mcp/tools/get-evolution.js';
+import { generateClaudeMdToolDef, handleGenerateClaudeMd } from '../src/mcp/tools/generate-claude-md.js';
+import { createFederatedSearchTool } from '../src/mcp/tools/federated-search.js';
 import type { VectorStore } from '../src/store/types.js';
 import type { SearchEngine } from '../src/search/index.js';
 import type { Document } from '../src/types/document.js';
@@ -395,5 +397,89 @@ describe('get-evolution tool', () => {
     const result = await tool.handler({ topic: 'test', limit: 5 });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.topic).toBe('test');
+  });
+});
+
+// ─── Generate CLAUDE.md Tool ─────────────────────────────
+describe('generate-claude-md tool', () => {
+  it('schema 유효', () => {
+    expect(generateClaudeMdToolDef.name).toBe('generate-claude-md');
+    expect(generateClaudeMdToolDef.inputSchema.required).toContain('projectName');
+  });
+
+  it('프로젝트명으로 CLAUDE.md 생성', async () => {
+    const result = await handleGenerateClaudeMd(
+      createMockSearchEngine(),
+      createMockStore(),
+      { projectName: 'stellavault' },
+    );
+    expect(result).toHaveProperty('content');
+    expect(result).toHaveProperty('stats');
+    expect(typeof result.content).toBe('string');
+    expect(result.content).toContain('stellavault');
+    expect(result.stats.queriesRun).toBeGreaterThan(0);
+  });
+
+  it('추가 토픽으로 확장 검색', async () => {
+    const result = await handleGenerateClaudeMd(
+      createMockSearchEngine(),
+      createMockStore(),
+      { projectName: 'stellavault', topics: ['security', 'performance'] },
+    );
+    expect(result.content.length).toBeGreaterThan(0);
+    // 기본 4 + topics 2 = 6 queries
+    expect(result.stats.queriesRun).toBe(6);
+  });
+});
+
+// ─── Federated Search Tool ───────────────────────────────
+describe('federated-search tool', () => {
+  it('schema 유효', () => {
+    const tool = createFederatedSearchTool(null);
+    expect(tool.name).toBe('federated-search');
+    expect(tool.inputSchema.required).toContain('query');
+  });
+
+  it('federation 비활성 시 안내 메시지', async () => {
+    const tool = createFederatedSearchTool(null);
+    const result = await tool.handler({ query: 'test' });
+    expect(result.content[0].text).toContain('Federation not active');
+  });
+
+  it('federation 활성 — 결과 없음', async () => {
+    const mockSearch = { search: async () => [] } as any;
+    const tool = createFederatedSearchTool(mockSearch);
+    const result = await tool.handler({ query: 'nonexistent' });
+    expect(result.content[0].text).toContain('No results');
+  });
+
+  it('federation 활성 — 결과 있음', async () => {
+    const mockSearch = {
+      search: async () => [
+        { title: 'Remote Note', similarity: 0.85, snippet: 'knowledge about...', peerId: 'peer1', peerName: 'Alice' },
+      ],
+    } as any;
+    const tool = createFederatedSearchTool(mockSearch);
+    const result = await tool.handler({ query: 'knowledge' });
+    expect(result.content[0].text).toContain('Remote Note');
+    expect(result.content[0].text).toContain('85%');
+    expect(result.content[0].text).toContain('Alice');
+  });
+});
+
+// ─── Morning Brief Handler Test ──────────────────────────
+describe('morning-brief handler', () => {
+  it('건강한 vault — 위험 없음', async () => {
+    const store = createMockStore();
+    const mockDecay = {
+      computeAll: async () => ({
+        totalDocuments: 50, decayingCount: 0, criticalCount: 0, averageR: 0.95,
+        topDecaying: [], clusterHealth: [],
+      }),
+    };
+    const result = await handleGetMorningBrief(mockDecay as any, store);
+    expect(result.tip).toContain('건강');
+    expect(result.summary.critical).toBe(0);
+    expect(result.reviewSuggestions).toHaveLength(0);
   });
 });

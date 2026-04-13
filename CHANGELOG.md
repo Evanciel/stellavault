@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0] - 2026-04-13
+
+### Architecture Evolution (5 iterations, 16 hypotheses validated)
+- **Modular API** — `server.ts` split into 3 route modules: `routes/federation.ts`, `routes/knowledge.ts`, `routes/ingest.ts` (1,374→852 lines, -38%)
+- **Type Safety** — Core `:any` reduced from 87→34 (-61%), CLI `:any` completely eliminated (20→0)
+  - Typed DB rows in sqlite-vec, decay-engine, gap-detector
+  - Typed Hyperswarm interfaces in federation/node.ts
+  - Typed SQL query results throughout
+- **Runtime Hardening** — O(1) sliding-window rate limiter with auto-cleanup, graph cache with 5-min TTL, silent catch blocks eliminated
+- **MCP Tool Hardening** — Input size limits (2KB) on ask/generate-draft, rate limiting (50/hr) on create-knowledge-node, title/content validation
+- **Test Coverage** — 127→168 tests (+41), MCP tool coverage 22%→100% (18/18 tools tested)
+- **CLI Type System** — Shared `CliCommand` type, typed digest/federate/learn command handlers
+
+### Zero-Any Files (8 critical modules)
+`server.ts`, `sqlite-vec.ts`, `decay-engine.ts`, `gap-detector.ts`, `federation/node.ts`, `federation/search.ts`, `marketplace.ts`, CLI (all 8 files)
+
+### Demo Vault
+- `examples/demo-vault/` — 10 sample notes for instant `npx stellavault` experience
+
 ## [0.4.2] - 2026-04-07
 
 ### Features — Karpathy Architecture Complete
