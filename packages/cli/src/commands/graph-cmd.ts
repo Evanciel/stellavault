@@ -114,10 +114,9 @@ export async function graphCommand() {
   if (hasDevGraph) {
     console.error(chalk.dim('   🚀 Starting Vite dev server...'));
 
-    const vite = spawn('npx', ['vite', '--host'], {
+    const vite = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', '--host'], {
       cwd: devGraphDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
     });
 
     vite.stderr.on('data', (data: Buffer) => {

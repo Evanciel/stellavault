@@ -2,7 +2,7 @@
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { FileTreeNode, SearchResult, VaultStats } from '../shared/ipc-types.js';
@@ -112,37 +112,58 @@ function collectAllNotes(dirPath: string): string[] {
   return results;
 }
 
+// ─── Path safety ─────────────────────────────────────
+// CRIT-01: Every IPC handler that touches the filesystem MUST validate
+// that the resolved path is inside the vault root. Without this, a
+// compromised renderer can read/write/delete ANY file on disk.
+
+function assertInsideVault(vaultPath: string, filePath: string): string {
+  const resolved = resolve(filePath);
+  const vaultRoot = resolve(vaultPath);
+  if (resolved !== vaultRoot && !resolved.startsWith(vaultRoot + sep)) {
+    throw new Error(`Access denied: path outside vault — ${resolved}`);
+  }
+  return resolved;
+}
+
 // ─── IPC Handlers ────────────────────────────────────
 
 function registerIpcHandlers(config: AppConfig) {
   const vp = config.vaultPath;
 
-  // Vault FS
+  // Vault FS — all paths validated against vault root
   ipcMain.handle('vault:get-path', () => vp);
   ipcMain.handle('vault:read-file', (_e, filePath: string) => {
-    return readFileSync(filePath, 'utf-8');
+    const safe = assertInsideVault(vp, filePath);
+    return readFileSync(safe, 'utf-8');
   });
   ipcMain.handle('vault:write-file', (_e, filePath: string, content: string) => {
-    mkdirSync(join(filePath, '..'), { recursive: true });
-    writeFileSync(filePath, content, 'utf-8');
+    const safe = assertInsideVault(vp, filePath);
+    mkdirSync(join(safe, '..'), { recursive: true });
+    writeFileSync(safe, content, 'utf-8');
   });
   ipcMain.handle('vault:rename', (_e, oldPath: string, newPath: string) => {
-    renameSync(oldPath, newPath);
+    const safeOld = assertInsideVault(vp, oldPath);
+    const safeNew = assertInsideVault(vp, newPath);
+    renameSync(safeOld, safeNew);
   });
   ipcMain.handle('vault:delete', (_e, filePath: string) => {
-    if (statSync(filePath).isDirectory()) {
-      rmSync(filePath, { recursive: true });
+    const safe = assertInsideVault(vp, filePath);
+    if (statSync(safe).isDirectory()) {
+      rmSync(safe, { recursive: true });
     } else {
-      unlinkSync(filePath);
+      unlinkSync(safe);
     }
   });
   ipcMain.handle('vault:read-tree', () => buildFileTree(vp));
   ipcMain.handle('vault:create-file', (_e, filePath: string, content?: string) => {
-    mkdirSync(join(filePath, '..'), { recursive: true });
-    writeFileSync(filePath, content ?? '', 'utf-8');
+    const safe = assertInsideVault(vp, filePath);
+    mkdirSync(join(safe, '..'), { recursive: true });
+    writeFileSync(safe, content ?? '', 'utf-8');
   });
   ipcMain.handle('vault:create-folder', (_e, folderPath: string) => {
-    mkdirSync(folderPath, { recursive: true });
+    const safe = assertInsideVault(vp, folderPath);
+    mkdirSync(safe, { recursive: true });
   });
   ipcMain.handle('vault:list-notes', () => collectAllNotes(vp));
 

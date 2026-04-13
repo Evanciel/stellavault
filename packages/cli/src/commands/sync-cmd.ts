@@ -55,7 +55,7 @@ function runScript(scriptPath: string, cwd: string): Promise<void> {
     const child = spawn('node', [scriptPath], {
       cwd,
       stdio: 'inherit',
-      shell: true,
+      shell: false,
     });
 
     child.on('close', (code) => {

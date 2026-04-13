@@ -92,7 +92,6 @@ export function App() {
       color: 'var(--ink)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
       fontSize: '13px',
-      userSelect: 'none',
     }}>
       <TitleBar />
 

@@ -24,6 +24,7 @@ export function TitleBar() {
       paddingRight: 8,
       gap: 8,
       fontSize: '12px',
+      userSelect: 'none' as const,
     }}>
       <button onClick={toggleSidebar} style={btnStyle(isDark)} title="Toggle sidebar">
         <span style={{ fontSize: 14, lineHeight: 1 }}>&#9776;</span>

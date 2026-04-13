@@ -1,7 +1,7 @@
 // AI Panel — semantic search, decay dashboard, ask vault.
 // Connects to @stellavault/core via IPC.
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import type { SearchResult, VaultStats } from '../../../shared/ipc-types.js';
@@ -168,17 +168,18 @@ function AISearch() {
 }
 
 function DecayDashboard() {
-  const [items, setItems] = useState<Array<{ title: string; retrievability: number; daysSinceAccess: number }>>([]);
   const [loaded, setLoaded] = useState(false);
 
-  if (!loaded) {
+  // P0 fix: move IPC call into useEffect (was firing on every render)
+  useEffect(() => {
+    if (loaded) return;
     void (async () => {
       try {
-        const data = await ipc('core:search', '__decay__', 1); // placeholder — actual decay via extended IPC
-        setLoaded(true);
-      } catch { setLoaded(true); }
+        await ipc('core:search', '__decay__', 1);
+      } catch { /* ignore */ }
+      setLoaded(true);
     })();
-  }
+  }, [loaded]);
 
   return (
     <div>
@@ -199,9 +200,11 @@ function DecayDashboard() {
 function VaultStatsView() {
   const [stats, setStats] = useState<VaultStats | null>(null);
 
-  if (!stats) {
+  // P0 fix: move IPC call into useEffect (was firing on every render)
+  useEffect(() => {
+    if (stats) return;
     void ipc('core:get-stats').then(setStats).catch(() => {});
-  }
+  }, [stats]);
 
   if (!stats) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>Loading...</div>;
 

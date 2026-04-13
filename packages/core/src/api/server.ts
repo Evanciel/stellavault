@@ -3,6 +3,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import { randomBytes } from 'node:crypto';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
 import { buildGraphData, type BuildGraphOptions } from './graph-data.js';
@@ -25,8 +26,72 @@ export function createApiServer(options: ApiServerOptions) {
   const { store, searchEngine, port = 3333, vaultName = '', vaultPath = '', decayEngine, graphUiPath } = options;
   const app = express();
 
-  app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }));
+  // ─── CRIT-03: Per-session auth token for mutating endpoints ───
+  // Generated at server start, passed to the UI via /api/token.
+  // Any local process can get the token by calling GET /api/token once,
+  // but this prevents blind CSRF from random browser tabs.
+  const authToken = randomBytes(32).toString('hex');
+
+  // MED-01: Security headers
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    next();
+  });
+
+  // CORS — restrict to localhost origins + same-origin graph UI
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ];
+  app.use(cors({ origin: allowedOrigins }));
   app.use(express.json());
+
+  // MED-02: Simple in-memory rate limiter for mutating endpoints
+  const rateLimiter = new Map<string, number[]>();
+  function rateLimit(key: string, windowMs = 60000, maxHits = 30): boolean {
+    const now = Date.now();
+    const hits = (rateLimiter.get(key) ?? []).filter(t => now - t < windowMs);
+    if (hits.length >= maxHits) return false;
+    hits.push(now);
+    rateLimiter.set(key, hits);
+    return true;
+  }
+
+  // Auth middleware for mutating endpoints
+  function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const token = req.headers['x-stellavault-token'] as string | undefined;
+    if (token === authToken) return next();
+    // Also accept token in query for simple browser usage
+    if (req.query.token === authToken) return next();
+    res.status(403).json({ error: 'Invalid or missing auth token. GET /api/token first.' });
+  }
+
+  // Token endpoint — any local process can retrieve the session token
+  app.get('/api/token', (_req, res) => { res.json({ token: authToken }); });
+
+  // HIGH-01: Shared SSRF protection — blocks private/internal IPs
+  function assertNotPrivateUrl(url: string): void {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http/https URLs allowed');
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host.endsWith('.local') ||
+      host.startsWith('192.168.') ||
+      host.startsWith('10.') ||
+      // Fix: 172.16.0.0/12 covers 172.16.* through 172.31.*
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.startsWith('169.254.') ||
+      host === '0.0.0.0'
+    ) {
+      throw new Error('Internal URLs not allowed');
+    }
+  }
 
   // Serve bundled graph UI when present (installed-from-npm path).
   // In dev mode graphUiPath is undefined and CLI spawns Vite instead.
@@ -72,7 +137,7 @@ export function createApiServer(options: ApiServerOptions) {
 
   // POST /api/reindex — 웹에서 인덱싱 트리거
   let isReindexing = false;
-  app.post('/api/reindex', async (_req, res) => {
+  app.post('/api/reindex', requireAuth, async (_req, res) => {
     if (isReindexing) {
       res.json({ success: false, error: 'Reindexing already in progress', progress: reindexProgress });
       return;
@@ -108,7 +173,7 @@ export function createApiServer(options: ApiServerOptions) {
       });
     } catch (err: any) {
       console.error('[reindex]', err);
-      res.status(500).json({ error: `Reindex failed: ${err?.message ?? String(err)}` });
+      res.status(500).json({ error: 'Reindex failed' });
     } finally {
       isReindexing = false;
       reindexProgress = { active: false, current: 0, total: 0, phase: 'done' };
@@ -152,7 +217,7 @@ export function createApiServer(options: ApiServerOptions) {
   // GET /api/document/:id
   app.get('/api/document/:id', async (req, res) => {
     try {
-      const doc = await store.getDocument(req.params.id);
+      const doc = await store.getDocument(String(req.params.id));
       if (!doc) { res.status(404).json({ error: 'Not found' }); return; }
 
       // 접근 이벤트 기록 (감쇠 리셋)
@@ -292,9 +357,9 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // PUT /api/document/:id — 노트 편집 (vault 파일 직접 수정)
-  app.put('/api/document/:id', async (req, res) => {
+  app.put('/api/document/:id', requireAuth, async (req, res) => {
     try {
-      const { id } = req.params;
+      const id = String(req.params.id);
       const { title, content, tags } = req.body;
 
       const doc = await store.getDocument(id);
@@ -348,14 +413,14 @@ export function createApiServer(options: ApiServerOptions) {
       res.json({ success: true, id, title: title ?? doc.title });
     } catch (err: any) {
       console.error('[edit]', err);
-      res.status(500).json({ error: err?.message ?? 'Edit failed' });
+      res.status(500).json({ error: 'Edit failed' });
     }
   });
 
   // DELETE /api/document/:id — 노트 삭제 (vault 파일 + DB)
-  app.delete('/api/document/:id', async (req, res) => {
+  app.delete('/api/document/:id', requireAuth, async (req, res) => {
     try {
-      const { id } = req.params;
+      const id = String(req.params.id);
       const doc = await store.getDocument(id);
       if (!doc) { res.status(404).json({ error: 'Document not found' }); return; }
 
@@ -379,7 +444,7 @@ export function createApiServer(options: ApiServerOptions) {
       res.json({ success: true, id, deleted: doc.filePath });
     } catch (err: any) {
       console.error('[delete]', err);
-      res.status(500).json({ error: err?.message ?? 'Delete failed' });
+      res.status(500).json({ error: 'Delete failed' });
     }
   });
 
@@ -403,7 +468,7 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // POST /api/ingest — 웹 UI에서 URL/텍스트 인제스트
-  app.post('/api/ingest', async (req, res) => {
+  app.post('/api/ingest', requireAuth, async (req, res) => {
     try {
       const { input, type, tags, title, stage, locale } = req.body;
 
@@ -446,7 +511,10 @@ export function createApiServer(options: ApiServerOptions) {
           } catch { /* URL만 저장 */ }
         }
       } else if (input.startsWith('http')) {
-        // 일반 웹페이지
+        // HIGH-01: SSRF protection for general URL ingest
+        try { assertNotPrivateUrl(input); } catch (e: unknown) {
+          res.status(400).json({ error: (e as Error).message }); return;
+        }
         try {
           const resp = await fetch(input, { signal: AbortSignal.timeout(8000) });
           const html = await resp.text();
@@ -514,7 +582,7 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // POST /api/ingest/file — 웹 UI에서 파일 드래그앤드롭 인제스트
-  app.post('/api/ingest/file', async (req, res) => {
+  app.post('/api/ingest/file', requireAuth, async (req, res) => {
     try {
       const multer = (await import('multer')).default;
       const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -625,7 +693,7 @@ export function createApiServer(options: ApiServerOptions) {
             wordCount: result.wordCount,
           });
         } catch (err) {
-          res.status(500).json({ error: err instanceof Error ? err.message : 'Processing failed' });
+          res.status(500).json({ error: 'Processing failed' });
         }
       });
     } catch (err) {
@@ -754,7 +822,7 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // POST /api/duplicates/merge — 중복 노트 자동 병합
-  app.post('/api/duplicates/merge', async (req, res) => {
+  app.post('/api/duplicates/merge', requireAuth, async (req, res) => {
     try {
       const { docAId, docBId } = req.body;
       if (!docAId || !docBId) { res.status(400).json({ error: 'docAId, docBId required' }); return; }
@@ -800,7 +868,7 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // POST /api/gaps/create-bridge — 갭 브릿지 노트 자동 생성
-  app.post('/api/gaps/create-bridge', async (req, res) => {
+  app.post('/api/gaps/create-bridge', requireAuth, async (req, res) => {
     try {
       const { clusterA, clusterB } = req.body;
       if (!clusterA || !clusterB) { res.status(400).json({ error: 'clusterA, clusterB required' }); return; }
@@ -971,7 +1039,7 @@ export function createApiServer(options: ApiServerOptions) {
         if (month) monthlyActivity[month] = (monthlyActivity[month] ?? 0) + 1;
       }
 
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      // HIGH-05: Removed wildcard CORS override — use global CORS policy
       res.json({
         name: vaultName || 'Knowledge Vault',
         stats: {
@@ -1028,7 +1096,7 @@ export function createApiServer(options: ApiServerOptions) {
         };
       });
 
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      // HIGH-05: Removed wildcard CORS override — use global CORS policy
       res.json({
         nodes: embedNodes, edges: selectedEdges,
         stats: { nodeCount: embedNodes.length, edgeCount: selectedEdges.length, clusterCount: clusters.length, totalNodes: nodes.length },
@@ -1045,7 +1113,7 @@ export function createApiServer(options: ApiServerOptions) {
   };
 
   // POST /api/sync — Notion → Obsidian 동기화 트리거
-  app.post('/api/sync', async (_req, res) => {
+  app.post('/api/sync', requireAuth, async (_req, res) => {
     if (syncState.running) {
       res.json({ success: false, error: 'Sync already running', state: syncState }); return;
     }
@@ -1060,7 +1128,7 @@ export function createApiServer(options: ApiServerOptions) {
       if (!existsSync(resolve(syncDir, '.env'))) { res.json({ success: false, error: '.env not found' }); return; }
 
       syncState = { running: true, startedAt: new Date().toISOString(), completedAt: '', result: '', output: '' };
-      const child = spawn('node', [syncScript], { cwd: syncDir, stdio: ['ignore', 'pipe', 'pipe'], shell: true });
+      const child = spawn('node', [syncScript], { cwd: syncDir, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
 
       let output = '';
       child.stdout.on('data', (d: Buffer) => { output += d.toString(); });
@@ -1085,20 +1153,15 @@ export function createApiServer(options: ApiServerOptions) {
   });
 
   // POST /api/clip — 웹 페이지 클리핑
-  app.post('/api/clip', async (req, res) => {
+  app.post('/api/clip', requireAuth, async (req, res) => {
     try {
       const { url } = req.body;
       if (!url) { res.status(400).json({ error: 'url required' }); return; }
 
-      // HIGH-03: SSRF 방어 — 내부 네트워크 차단
-      try {
-        const parsed = new URL(url);
-        if (!['http:', 'https:'].includes(parsed.protocol)) { res.status(400).json({ error: 'Only http/https URLs allowed' }); return; }
-        const host = parsed.hostname.toLowerCase();
-        if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local') || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.16.')) {
-          res.status(400).json({ error: 'Internal URLs not allowed' }); return;
-        }
-      } catch { res.status(400).json({ error: 'Invalid URL' }); return; }
+      // HIGH-01: SSRF protection via shared assertNotPrivateUrl
+      try { assertNotPrivateUrl(url); } catch (e: unknown) {
+        res.status(400).json({ error: (e as Error).message }); return;
+      }
 
       const isYT = /youtube\.com\/watch|youtu\.be\//.test(url);
       const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 stellavault-clipper/1.0' }, signal: AbortSignal.timeout(15000) });
