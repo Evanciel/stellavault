@@ -219,8 +219,13 @@ export class FederationNode extends EventEmitter {
       }
 
       case 'leave': {
-        this.peers.delete(msg.peerId);
-        this.emit('peer_left', { peerId: msg.peerId });
+        // MED-04/05: Only accept leave from the connection that owns that peerId.
+        // Without this, any peer could send a leave with another peer's ID to evict them.
+        const legit = this.peers.get(msg.peerId);
+        if (legit && legit.conn === conn) {
+          this.peers.delete(msg.peerId);
+          this.emit('peer_left', { peerId: msg.peerId });
+        }
         break;
       }
     }
