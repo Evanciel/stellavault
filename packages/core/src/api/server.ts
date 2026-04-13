@@ -13,6 +13,7 @@ import { createKnowledgeRouter } from './routes/knowledge.js';
 import { createIngestRouter } from './routes/ingest.js';
 import { createProfileCardRouter } from './routes/profile-card.js';
 import { createHealthRouter } from './routes/health.js';
+import { createAnalyticsRouter } from './routes/analytics.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 // detectDuplicates + detectKnowledgeGaps: lazy imported in /api/health only
 
@@ -522,108 +523,8 @@ export function createApiServer(options: ApiServerOptions) {
   app.use('/api', createHealthRouter({ store, vaultName, decayEngine }));
 
   // GET /api/profile — Knowledge Profile summary (F-A09)
-  app.get('/api/profile', async (_req, res) => {
-    try {
-      const stats = await store.getStats();
-      const topics = await store.getTopics();
-      const docs = await store.getAllDocuments();
-
-      let decaySummary = { averageR: 1.0, criticalCount: 0, healthScore: 100 };
-      if (decayEngine) {
-        const report = await decayEngine.computeAll();
-        const avgR = report.averageR ?? 1.0;
-        decaySummary = {
-          averageR: avgR,
-          criticalCount: report.criticalCount ?? 0,
-          healthScore: Math.round(avgR * 100),
-        };
-      }
-
-      // Source/Type distribution
-      const sourceDist: Record<string, number> = {};
-      const typeDist: Record<string, number> = {};
-      for (const doc of docs) {
-        const s = doc.source ?? 'local';
-        const t = doc.type ?? 'note';
-        sourceDist[s] = (sourceDist[s] ?? 0) + 1;
-        typeDist[t] = (typeDist[t] ?? 0) + 1;
-      }
-
-      // Activity: docs per month (last 12)
-      const monthlyActivity: Record<string, number> = {};
-      for (const doc of docs) {
-        const month = doc.lastModified?.slice(0, 7);
-        if (month) monthlyActivity[month] = (monthlyActivity[month] ?? 0) + 1;
-      }
-
-      // HIGH-05: Removed wildcard CORS override — use global CORS policy
-      res.json({
-        name: vaultName || 'Knowledge Vault',
-        stats: {
-          documents: stats.documentCount,
-          chunks: stats.chunkCount,
-          topics: topics.length,
-        },
-        healthScore: decaySummary.healthScore,
-        topTopics: topics.slice(0, 15).map(t => ({ name: t.topic, count: t.count })),
-        distribution: { source: sourceDist, type: typeDist },
-        activity: Object.fromEntries(
-          Object.entries(monthlyActivity).sort((a, b) => a[0].localeCompare(b[0])).slice(-12)
-        ),
-        generatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // GET /api/embed — 임베드용 경량 그래프 데이터 (F-A08)
-  app.get('/api/embed', async (req, res) => {
-    try {
-      const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
-      const maxNodes = Math.min(parseInt(String(req.query.max ?? '200'), 10), 500);
-
-      const cachedConstellation = graphCaches.get(mode);
-      if (!cachedConstellation || Date.now() - cachedConstellation.cachedAt > GRAPH_CACHE_TTL) {
-        const data = await buildGraphData(store, { mode });
-        graphCaches.set(mode, { data, generatedAt: new Date().toISOString(), cachedAt: Date.now() });
-      }
-      const cached = graphCaches.get(mode)!;
-      const { nodes, edges, clusters } = cached.data;
-
-      const connCount = new Map<string, number>();
-      for (const e of edges) {
-        connCount.set(e.source, (connCount.get(e.source) ?? 0) + 1);
-        connCount.set(e.target, (connCount.get(e.target) ?? 0) + 1);
-      }
-      const sortedNodes = [...nodes].sort((a, b) => (connCount.get(b.id) ?? 0) - (connCount.get(a.id) ?? 0));
-      const selectedNodes = sortedNodes.slice(0, maxNodes);
-      const selectedIds = new Set(selectedNodes.map(n => n.id));
-      const selectedEdges = edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target));
-
-      const embedNodes = selectedNodes.map((n, i) => {
-        const angle = (i / selectedNodes.length) * Math.PI * 2;
-        const r = 100 + n.clusterId * 15;
-        return {
-          id: n.id, label: n.label, clusterId: n.clusterId, size: n.size,
-          position: [
-            r * Math.cos(angle) + (Math.random() - 0.5) * 60,
-            (Math.random() - 0.5) * 200,
-            r * Math.sin(angle) + (Math.random() - 0.5) * 60,
-          ],
-        };
-      });
-
-      // HIGH-05: Removed wildcard CORS override — use global CORS policy
-      res.json({
-        nodes: embedNodes, edges: selectedEdges,
-        stats: { nodeCount: embedNodes.length, edgeCount: selectedEdges.length, clusterCount: clusters.length, totalNodes: nodes.length },
-        title: vaultName || 'Knowledge Graph',
-      });
-    } catch (err) {
-      console.error(err); res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // GET /api/profile + /api/embed — Extracted to routes/analytics.ts
+  app.use('/api', createAnalyticsRouter({ store, vaultName, decayEngine, graphCaches, GRAPH_CACHE_TTL }));
 
   // Sync 상태 추적
   let syncState: { running: boolean; startedAt: string; completedAt: string; result: string; output: string } = {

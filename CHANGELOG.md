@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.2] - 2026-04-14
+
+### Architecture
+- **server.ts -55%** — 1,374→620 lines. 6 route modules: federation, knowledge, ingest, profile-card, health, analytics
+- **CLI shell completion** — `stellavault completion --shell bash|zsh|fish` (33 commands)
+
+### Performance
+- **Graph edge-key O(1)** — direct index comparison instead of indexOf
+- **Server lazy imports** — gap-detector/duplicate-detector loaded on-demand
+- **Upper-triangle graph** — 50% fewer similarity comparisons
+
+### Tooling
+- **Stress test** — `node tests/stress.mjs 1000` (1K docs: 346ms total)
+
 ## [0.7.1] - 2026-04-13
 
 ### Performance
