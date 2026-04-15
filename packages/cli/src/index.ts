@@ -74,7 +74,11 @@ program
 program
   .command('index [vault-path]')
   .description('Index your vault (vectorize all documents for search)')
-  .action(indexCommand);
+  .option('--no-spinner', 'Disable spinner (for CI / log redirection)')
+  .option('-v, --verbose', 'Verbose progress logs instead of spinner')
+  .option('--log-skipped <file>', 'Write skipped/failed file list as JSON')
+  .option('--profile-memory', 'Log RSS/heap every ~100 embeddings (diagnoses memory leaks)')
+  .action((vaultPath: string | undefined, opts: Record<string, unknown>) => indexCommand(vaultPath, opts as any));
 
 program
   .command('status')
@@ -117,7 +121,8 @@ program
 
 program
   .command('serve')
-  .description('Start MCP server (for Claude Code / Claude Desktop)')
+  .alias('mcp')
+  .description('Start MCP server (for Claude Code / Claude Desktop). Alias: mcp')
   .action(serveCommand);
 
 // ─── Intelligence ────────────────────────────────────────────
@@ -159,6 +164,10 @@ program
   .command('review')
   .description('Daily review — resurface fading notes for spaced repetition')
   .option('-n, --count <n>', 'Number of notes to review', '5')
+  .option('--json', 'Output as JSON (non-interactive, for automation)')
+  .option('--seed <value>', 'Deterministic seed for rotation (e.g. day-of-year)')
+  .option('--exclude <glob>', 'Exclude paths matching glob (e.g. "Templates/**")')
+  .option('--min-age <days>', 'Only notes older than N days', '0')
   .action(reviewCommand);
 
 program

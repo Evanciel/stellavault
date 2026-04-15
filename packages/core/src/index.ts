@@ -23,7 +23,7 @@ export { createSqliteVecStore } from './store/index.js';
 
 // Indexer
 export { indexVault, scanVault, chunkDocument, createLocalEmbedder } from './indexer/index.js';
-export type { IndexResult, IndexerOptions } from './indexer/index.js';
+export type { IndexResult, IndexerOptions, SkipReason, SkippedFile } from './indexer/index.js';
 
 // Search
 export { createSearchEngine } from './search/index.js';

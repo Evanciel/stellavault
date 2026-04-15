@@ -6,31 +6,55 @@ import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import type { Document } from '../types/document.js';
 
+export type SkipReason = 'empty' | 'parse-error' | 'binary' | 'too-large' | 'unreadable';
+
+export interface SkippedFile {
+  path: string;
+  reason: SkipReason;
+  detail?: string;
+}
+
 export interface ScanResult {
   documents: Document[];
   scannedFiles: number;
   skippedFiles: number;
+  skipped: SkippedFile[];
 }
 
-/**
- * vault 디렉토리에서 모든 .md 파일을 스캔하여 Document 목록 반환
- */
+const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB safeguard
+
 export function scanVault(vaultPath: string): ScanResult {
   const documents: Document[] = [];
-  let skippedFiles = 0;
+  const skipped: SkippedFile[] = [];
 
   const mdFiles = findMdFiles(vaultPath);
 
   for (const filePath of mdFiles) {
+    const rel = relative(vaultPath, filePath).replace(/\\/g, '/');
     try {
+      const stat = statSync(filePath);
+      if (stat.size === 0) {
+        skipped.push({ path: rel, reason: 'empty' });
+        continue;
+      }
+      if (stat.size > MAX_FILE_BYTES) {
+        skipped.push({ path: rel, reason: 'too-large', detail: `${stat.size}B` });
+        continue;
+      }
       const doc = parseDocument(vaultPath, filePath);
+      if (!doc.content || doc.content.trim().length === 0) {
+        skipped.push({ path: rel, reason: 'empty', detail: 'no content after frontmatter' });
+        continue;
+      }
       documents.push(doc);
-    } catch {
-      skippedFiles++;
+    } catch (err) {
+      const msg = (err as Error)?.message ?? String(err);
+      const reason: SkipReason = /ENOENT|EACCES|EPERM/.test(msg) ? 'unreadable' : 'parse-error';
+      skipped.push({ path: rel, reason, detail: msg.slice(0, 200) });
     }
   }
 
-  return { documents, scannedFiles: mdFiles.length, skippedFiles };
+  return { documents, scannedFiles: mdFiles.length, skippedFiles: skipped.length, skipped };
 }
 
 function findMdFiles(dir: string, files: string[] = []): string[] {
@@ -61,7 +85,6 @@ function parseDocument(vaultPath: string, filePath: string): Document {
 
   const tags = extractTags(frontmatter, content);
 
-  // Obsidian frontmatter 호환: aliases를 tags에 추가
   if (frontmatter.aliases) {
     const aliases = Array.isArray(frontmatter.aliases) ? frontmatter.aliases : [frontmatter.aliases];
     for (const alias of aliases) {
@@ -69,11 +92,9 @@ function parseDocument(vaultPath: string, filePath: string): Document {
     }
   }
 
-  // source/type 자동 추출 (원본 파일 수정 없이 DB에만 저장)
   const source = inferSource(frontmatter, relativePath);
   const type = inferType(frontmatter, relativePath);
 
-  // Obsidian frontmatter 호환: date/created 우선 사용
   const fmDate = frontmatter.date ?? frontmatter.created ?? frontmatter.created_at;
   const lastModified = fmDate ? new Date(fmDate as string).toISOString() : stat.mtime.toISOString();
 
@@ -92,28 +113,23 @@ function parseDocument(vaultPath: string, filePath: string): Document {
 }
 
 function inferSource(frontmatter: Record<string, unknown>, filePath: string): string {
-  // frontmatter에 명시된 경우
   if (frontmatter.source && typeof frontmatter.source === 'string') {
     if (frontmatter.source.startsWith('http')) return 'clip';
     return frontmatter.source;
   }
-  // 경로 기반 추론
   if (filePath.includes('clips/') || filePath.includes('clip/')) return 'clip';
   if (filePath.includes('PDCA') || filePath.includes('pdca')) return 'local';
-  if (frontmatter['x-i18n']) return 'notion'; // Notion 번역 문서
+  if (frontmatter['x-i18n']) return 'notion';
   if (frontmatter.clipped) return 'clip';
   return 'local';
 }
 
 function inferType(frontmatter: Record<string, unknown>, filePath: string): string {
-  // frontmatter에 명시된 경우
   if (frontmatter.type && typeof frontmatter.type === 'string') return frontmatter.type;
-  // tags 기반
   const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
   if (tags.includes('bridge') || tags.includes('auto-generated')) return 'bridge';
   if (tags.includes('clip') || tags.includes('youtube')) return 'clip';
   if (tags.includes('decision')) return 'decision';
-  // 경로 기반
   if (filePath.includes('clips/')) return 'clip';
   if (filePath.includes('Decisions/') || filePath.includes('decisions/')) return 'decision';
   if (filePath.includes('Sessions/') || filePath.includes('sessions/')) return 'session';
@@ -131,7 +147,6 @@ function extractFirstHeading(content: string): string | null {
 function extractTags(frontmatter: Record<string, unknown>, content: string): string[] {
   const tags = new Set<string>();
 
-  // frontmatter tags
   const fmTags = frontmatter.tags;
   if (Array.isArray(fmTags)) {
     fmTags.forEach(t => tags.add(String(t)));
@@ -139,12 +154,10 @@ function extractTags(frontmatter: Record<string, unknown>, content: string): str
     fmTags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => tags.add(t));
   }
 
-  // inline #tags (CSS 컬러코드, 순수 숫자, heading # 제외)
   const inlineTags = content.match(/(?:^|\s)#([a-zA-Z가-힣][a-zA-Z가-힣\w-]*)/g);
   if (inlineTags) {
     for (const raw of inlineTags) {
       const tag = raw.trim().slice(1);
-      // CSS hex 컬러 (#fff, #6c5ce7 등) 제외
       if (/^[0-9a-fA-F]{3,8}$/.test(tag)) continue;
       tags.add(tag);
     }

@@ -4,13 +4,13 @@ import type { Embedder } from './embedder.js';
 import type { VectorStore } from '../store/types.js';
 import type { Document } from '../types/document.js';
 import type { Chunk } from '../types/chunk.js';
-import { scanVault } from './scanner.js';
+import { scanVault, type SkippedFile } from './scanner.js';
 import { chunkDocument, type ChunkOptions } from './chunker.js';
 import { withRetry, errors } from '../utils/retry.js';
 
 export { type Embedder } from './embedder.js';
 export { createLocalEmbedder } from './local-embedder.js';
-export { scanVault } from './scanner.js';
+export { scanVault, type SkippedFile, type SkipReason } from './scanner.js';
 export { chunkDocument, estimateTokens } from './chunker.js';
 export { createWatcher } from './watcher.js';
 
@@ -28,6 +28,9 @@ export interface IndexResult {
   failed: number;
   totalChunks: number;
   elapsedMs: number;
+  totalFiles: number;
+  skippedFiles: SkippedFile[];
+  failedFiles: { path: string; error: string }[];
 }
 
 /**
@@ -41,7 +44,8 @@ export async function indexVault(
   const { store, embedder, chunkOptions, onProgress } = options;
 
   // 1. 스캔
-  const { documents } = scanVault(vaultPath);
+  const scan = scanVault(vaultPath);
+  const { documents } = scan;
 
   // 2. 기존 인덱스 상태 조회
   const existingDocs = await store.getAllDocuments();
@@ -51,6 +55,7 @@ export async function indexVault(
   let skipped = 0;
   let failed = 0;
   let totalChunks = 0;
+  const failedFiles: { path: string; error: string }[] = [];
 
   // 3. 증분 처리 (에러 복구 포함)
   const scannedIds = new Set<string>();
@@ -89,6 +94,7 @@ export async function indexVault(
     } catch (err) {
       // Graceful degradation: skip failed file, continue with rest
       failed++;
+      failedFiles.push({ path: doc.filePath, error: (err as Error)?.message ?? String(err) });
       console.error(errors.indexingFailed(doc.filePath, err).format());
     }
   }
@@ -109,5 +115,8 @@ export async function indexVault(
     failed,
     totalChunks,
     elapsedMs: Date.now() - start,
+    totalFiles: scan.scannedFiles,
+    skippedFiles: scan.skipped,
+    failedFiles,
   };
 }

@@ -5,12 +5,41 @@ import chalk from 'chalk';
 import { createInterface } from 'node:readline';
 import { loadConfig, createKnowledgeHub, DecayEngine } from '@stellavault/core';
 
-export async function reviewCommand(options: { count?: string }) {
+interface ReviewOpts {
+  count?: string;
+  json?: boolean;
+  seed?: string;
+  exclude?: string;
+  minAge?: string;
+}
+
+function globToRegex(glob: string): RegExp {
+  const esc = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '.+')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '.');
+  return new RegExp('^' + esc + '$');
+}
+
+function seededRotate<T>(arr: T[], seed: string): T[] {
+  if (!seed) return arr;
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const offset = Math.abs(h) % Math.max(1, arr.length);
+  return arr.slice(offset).concat(arr.slice(0, offset));
+}
+
+export async function reviewCommand(options: ReviewOpts) {
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
   const count = parseInt(options.count ?? '5', 10);
+  const minAgeDays = parseInt(options.minAge ?? '0', 10);
+  const excludeRe = options.exclude ? globToRegex(options.exclude) : null;
 
-  console.error(chalk.dim('⏳ Initializing...'));
+  if (!options.json) console.error(chalk.dim('⏳ Initializing...'));
   await hub.store.initialize();
 
   const db = hub.store.getDb() as any;
@@ -20,7 +49,42 @@ export async function reviewCommand(options: { count?: string }) {
   }
 
   const decayEngine = new DecayEngine(db);
-  const decaying = await decayEngine.getDecaying(0.6, count);
+  // 풀을 넉넉히 뽑아서 exclude/min-age 필터링 후 count만큼 자름
+  let pool = await decayEngine.getDecaying(0.6, Math.max(count * 5, 50));
+
+  if (excludeRe || minAgeDays > 0) {
+    pool = pool.filter((d: any) => {
+      const doc = db.prepare('SELECT file_path FROM documents WHERE id = ?').get(d.documentId) as any;
+      const fp = doc?.file_path ?? '';
+      if (excludeRe && excludeRe.test(fp)) return false;
+      if (minAgeDays > 0) {
+        const ageDays = (Date.now() - new Date(d.lastAccess).getTime()) / 86400000;
+        if (ageDays < minAgeDays) return false;
+      }
+      return true;
+    });
+  }
+
+  if (options.seed) pool = seededRotate(pool, options.seed);
+  const decaying = pool.slice(0, count);
+
+  if (options.json) {
+    const out = decaying.map((d: any) => {
+      const doc = db.prepare('SELECT file_path FROM documents WHERE id = ?').get(d.documentId) as any;
+      const ageDays = Math.round((Date.now() - new Date(d.lastAccess).getTime()) / 86400000);
+      return {
+        documentId: d.documentId,
+        title: d.title,
+        filePath: doc?.file_path ?? null,
+        retrievability: d.retrievability,
+        lastAccess: d.lastAccess,
+        ageDays,
+        reviewScore: d.retrievability * 0.7 + Math.min(1, ageDays / 30) * 0.3,
+      };
+    });
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
 
   if (decaying.length === 0) {
     console.log(chalk.green('\n✨ All knowledge is healthy! No notes to review.'));
