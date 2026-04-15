@@ -80,12 +80,12 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     },
 
     async searchSemantic(embedding: number[], limit: number): Promise<ScoredChunk[]> {
+      // sqlite-vec KNN: `k = ?` 제약 필수 (LIMIT만으론 vec0가 거부)
       const rows = db.prepare(`
         SELECT chunk_id, distance
         FROM chunk_embeddings
-        WHERE embedding MATCH ?
+        WHERE embedding MATCH ? AND k = ?
         ORDER BY distance
-        LIMIT ?
       `).all(float32Buffer(embedding), limit) as Array<{ chunk_id: string; distance: number }>;
 
       return rows.map(r => ({
@@ -180,16 +180,17 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     },
 
     async findDocumentNeighbors(embedding: number[], limit: number): Promise<Array<{ documentId: string; similarity: number }>> {
-      // Use sqlite-vec KNN (HNSW) to find similar chunks, then deduplicate by document
+      // sqlite-vec KNN (HNSW): `k = ?` 제약 필수. chunk 단위로 3배 뽑은 뒤 document로 dedupe
+      const knnK = Math.max(limit * 3, 30);
       const rows = db.prepare(`
         SELECT c.document_id, MIN(ce.distance) as distance
         FROM chunk_embeddings ce
         JOIN chunks c ON c.id = ce.chunk_id
-        WHERE ce.embedding MATCH ?
+        WHERE ce.embedding MATCH ? AND k = ?
         GROUP BY c.document_id
         ORDER BY distance
         LIMIT ?
-      `).all(float32Buffer(embedding), limit * 2) as Array<{ document_id: string; distance: number }>;
+      `).all(float32Buffer(embedding), knnK, limit * 2) as Array<{ document_id: string; distance: number }>;
 
       return rows.slice(0, limit).map(r => ({
         documentId: r.document_id,
