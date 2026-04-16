@@ -349,12 +349,13 @@ export function GraphNodes() {
     }
   }, [nodes, hoverNode]);
 
+  // 노드 선택은 Graph3D의 pointerup 핸들러에서 처리 (드래그 vs 클릭 구분 + 토글 로직).
+  // 여기서도 R3F onClick으로 selectNode를 호출하면 Graph3D의 10ms setTimeout과 경쟁해
+  // "같은 노드로 인식 → 토글 OFF"가 발생, 디테일 패널이 10ms만 보였다 사라짐.
+  // 따라서 onClick은 클릭 소비만 하고 선택 처리는 하지 않는다.
   const handleClick = useCallback((e: any) => {
     e.stopPropagation();
-    if (e.index !== undefined && e.index < nodes.length) {
-      selectNode(nodes[e.index].id);
-    }
-  }, [nodes, selectNode]);
+  }, []);
 
   const handlePointerOut = useCallback(() => {
     hoverNode(null);
