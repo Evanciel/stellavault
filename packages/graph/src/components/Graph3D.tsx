@@ -116,8 +116,12 @@ export function Graph3D() {
           } else {
             currentState.selectNode(currentState.hoveredNodeId);
           }
-        } else if (!currentState.selectedNodeId) {
-          // 빈 곳 클릭이고 선택된 것도 없음 → 하이라이트 해제
+        } else {
+          // 빈 곳(노드 바깥) 클릭 → 선택 해제
+          if (currentState.selectedNodeId) {
+            currentState.selectNode(null);
+          }
+          // 하이라이트도 있으면 같이 해제 + 카메라 리셋
           if (currentState.highlightedNodeIds.size > 0) {
             currentState.setHighlightedNodes([]);
             (window as any).__sv_resetCamera?.();
