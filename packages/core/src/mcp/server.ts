@@ -32,10 +32,15 @@ export interface McpServerOptions {
   embedder?: Embedder;
   vaultPath?: string;
   decayEngine?: DecayEngine;
+  /** Resolves once store/embedder are fully initialized.
+   *  Tool handlers await this before running any query.
+   *  Default: already-resolved Promise (backward compatible). */
+  ready?: Promise<void>;
 }
 
 export function createMcpServer(options: McpServerOptions) {
   const { store, searchEngine, embedder, vaultPath = '', decayEngine } = options;
+  const ready = options.ready ?? Promise.resolve();
 
   const learningPathTool = createLearningPathTool(store);
   const detectGapsTool = createDetectGapsTool(store);
@@ -67,8 +72,9 @@ export function createMcpServer(options: McpServerOptions) {
     ],
   }));
 
-  // Call tool
+  // Call tool — await ready so first call blocks until index is loaded
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    await ready;
     const { name, arguments: args } = request.params;
 
     try {

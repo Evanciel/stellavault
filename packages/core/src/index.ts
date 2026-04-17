@@ -138,12 +138,15 @@ import { createLocalEmbedder as _createEmbedder } from './indexer/index.js';
 import { createSearchEngine as _createSearch } from './search/index.js';
 import { createMcpServer as _createMcp } from './mcp/index.js';
 
-export function createKnowledgeHub(config: import('./config.js').StellavaultConfig) {
+export function createKnowledgeHub(
+  config: import('./config.js').StellavaultConfig,
+  options: { ready?: Promise<void> } = {},
+) {
   const embedder = _createEmbedder(config.embedding.localModel);
   const dims = embedder.dimensions;
   const store = _createStore(config.dbPath, dims);
   const searchEngine = _createSearch({ store, embedder, rrfK: config.search.rrfK });
-  const mcpServer = _createMcp({ store, searchEngine, vaultPath: config.vaultPath });
+  const mcpServer = _createMcp({ store, searchEngine, vaultPath: config.vaultPath, ready: options.ready });
 
   return { store, embedder, searchEngine, mcpServer, config };
 }
