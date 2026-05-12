@@ -1,9 +1,19 @@
 # 환경변수 (API 키 포함)
 .env
 
+# 백업 파일 (만료 토큰/시크릿 포함 가능성)
+*.bak
+*.bak.*
+
 # 동기화 상태 파일
 .sync-state.json
 .upload-state.json
+
+# Autopilot runtime state (per-machine, not portable)
+.autopilot-state.json
+
+# Codex session pointer (per-machine)
+.context/
 
 # 의존성
 node_modules/

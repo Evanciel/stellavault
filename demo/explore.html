@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stellavault — Explore Connections</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050510; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  canvas { display: block; }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 8px 16px;
+    background: rgba(10, 10, 20, 0.8);
+    border-bottom: 1px solid rgba(100, 120, 255, 0.1);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #header .title { color: #88aaff; font-size: 13px; font-weight: 600; letter-spacing: 0.5px; }
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 20;
+    padding: 5px 10px; border-radius: 6px;
+    background: rgba(10,10,30,0.92); border: 1px solid rgba(100,120,255,0.15);
+    color: #c0d0ff; font-size: 11px; white-space: nowrap;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  #tooltip .tags { color: #556; font-size: 10px; margin-top: 2px; }
+  #statusbar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    padding: 4px 16px;
+    background: rgba(10,10,20,0.8);
+    border-top: 1px solid rgba(100,120,255,0.08);
+    display: flex; justify-content: space-between;
+    font-size: 10px; color: #445; letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+<div id="header"><span class="title">Stellavault</span></div>
+<div id="tooltip"><span id="tt-label"></span><div class="tags" id="tt-tags"></div></div>
+<div id="statusbar"><span id="sb-left"></span><span>Exploring...</span></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const PALETTE = [
+  [0.49,0.23,0.93],[0.93,0.27,0.60],[0.96,0.62,0.04],[0.06,0.72,0.51],
+  [0.23,0.51,0.96],[0.94,0.27,0.27],[0.02,0.71,0.83],[0.52,0.80,0.09],
+  [0.98,0.57,0.09],[0.55,0.36,0.96],[0.08,0.72,0.65],[0.91,0.47,0.98],
+  [0.92,0.80,0.03],[0.13,0.83,0.93],[0.98,0.45,0.52],
+];
+const BASE_LABELS = [
+  'Spaced Repetition','FSRS Algorithm','Memory Decay','Knowledge Graph',
+  'Obsidian Plugins','Semantic Search','Vector Embeddings','MCP Protocol',
+  'Federation P2P','Trust Network','Note Linking','Zettelkasten',
+  'Claude Code','AI Agents','LLM Prompting','RAG Pipeline',
+  'TypeScript ESM','SQLite FTS5','K-Means Clustering','HNSW Index',
+  'React Three Fiber','WebGL Shaders','Force Layout','BFS Traversal',
+  'Graph Neural Net','Attention Mechanism','Transformer','Tokenization',
+  'Cosine Similarity','Dot Product','Pre-normalization','Batch Embedding',
+  'Decay Engine','Access Logging','Retrievability','Stability Score',
+  'CLI Completion','Shell Integration','Zsh Plugin','Fish Script',
+  'Desktop Electron','IPC Security','Sandbox Policy','Auto Update',
+  'npm Publishing','Monorepo','Workspace Protocol','Vitest Suite',
+  'Hyperswarm DHT','Noise Protocol','WoT Reputation','Differential Privacy',
+  'Session Flush','Daily Digest','Brief Command','Learning Path',
+  'Contradiction Detect','Gap Analysis','Duplicate Finder','Lint Rules',
+  'Profile Card','Analytics Route','Health Check','REST API',
+  'WebSocket Stream','OAuth2 PKCE','CORS Policy','Rate Limiting',
+  'Content Hash','Merkle Tree','DAG Structure','Bloom Filter',
+  'Redis Cache','Event Loop','Promise Pool','Worker Thread',
+  'CSS Grid','Flexbox Layout','Container Query','View Transition',
+  'IndexedDB','Service Worker','Web Crypto','Intersection Observer',
+  'OpenTelemetry','Structured Logging','Error Boundary','Circuit Breaker',
+  'Feature Flag','A/B Testing','Canary Deploy','Blue-Green',
+  'gRPC Stream','Protocol Buffer','MessagePack','CBOR Encoding',
+  'Ed25519 Sign','X25519 Key','AES-GCM','Argon2 Hash',
+  'Backpressure','Ring Buffer','Lock-Free Queue','CAS Operation',
+  'Trie Index','B+ Tree','LSM Tree','Skip List',
+  'Conflict-Free CRDT','Operational Transform','Vector Clock','Lamport Timestamp',
+  'Markdown AST','Remark Plugin','Rehype Transform','MDX Compiler',
+  'Drag & Drop','Virtual Scroll','Infinite Load','Optimistic Update',
+  'Webhook Handler','Cron Scheduler','Retry Policy','Dead Letter Queue',
+  'DNS Resolution','TCP Handshake','TLS Cert','HTTP/3 QUIC',
+  'GPU Compute','WASM Module','SIMD Vector','SharedArrayBuffer',
+  'React Suspense','Server Component','Streaming SSR','Partial Hydration',
+  'Deno Deploy','Bun Runtime','Edge Function','Cloudflare Worker',
+  'Cursor Pagination','Offset Pagination','Keyset Pagination','GraphQL Relay',
+  'JWT Refresh','Session Cookie','CSRF Token','SameSite Policy',
+  'Sharding Strategy','Read Replica','Connection Pool','Query Planner',
+  'Playwright Test','Vitest Snapshot','Property-Based Test','Mutation Test',
+  'Git Worktree','Rebase Strategy','Cherry Pick','Bisect Debug',
+  'Docker Layer','OCI Image','Buildpack','Multi-Stage Build',
+  'Terraform State','Pulumi Stack','CDK Construct','CloudFormation',
+  'Prometheus Metric','Grafana Panel','Alert Rule','SLO Budget',
+  'PagerDuty','Incident Response','Postmortem','Blameless Review',
+  'Design Token','Figma Variable','Style Dictionary','Theme Contract',
+  'i18n Message','ICU Format','Plural Rule','RTL Layout',
+  'Accessibility Audit','ARIA Live Region','Focus Trap','Screen Reader',
+  'PDF Extract','OCR Pipeline','Table Detection','Layout Analysis',
+  'Embedding Model','Quantization','ONNX Runtime','TensorRT',
+  'Prompt Template','Chain of Thought','Few-Shot','System Message',
+  'Tool Calling','Function Schema','Streaming Response','Token Budget',
+  'Knowledge Base','Document Chunk','Overlap Window','Semantic Split',
+  'Reranker Model','Cross-Encoder','Bi-Encoder','ColBERT',
+  'Agent Loop','ReAct Pattern','Plan-Execute','Reflection',
+  'Memory Buffer','Summary Memory','Entity Memory','Conversation Window',
+];
+const BASE_TAGS = [
+  ['spaced-repetition','learning'],['algorithm','memory'],['decay','knowledge'],['graph','visualization'],
+  ['obsidian','plugin'],['search','semantic'],['embedding','vector'],['mcp','protocol'],
+  ['federation','p2p'],['trust','network'],['linking','obsidian'],['zettelkasten','note-taking'],
+  ['claude','ai'],['agent','automation'],['llm','prompt'],['rag','retrieval'],
+  ['typescript','esm'],['sqlite','fts'],['clustering','ml'],['hnsw','index'],
+];
+// Generate 300 nodes
+const TARGET_N = 300;
+const LABELS = BASE_LABELS.slice(0, TARGET_N);
+while (LABELS.length < TARGET_N) LABELS.push(BASE_LABELS[LABELS.length % BASE_LABELS.length] + ' ' + (LABELS.length));
+const TAGS_DB = LABELS.map((_, i) => BASE_TAGS[i % BASE_TAGS.length]);
+
+const N = LABELS.length;
+const CLUSTER_COUNT = 15;
+const nodes = [];
+const edges = [];
+const edgeSet = new Set();
+
+for (let i = 0; i < N; i++) {
+  const cluster = i % CLUSTER_COUNT;
+  // cluster grouping: nodes in same cluster are closer
+  const cAngle = (cluster / CLUSTER_COUNT) * Math.PI * 2;
+  const cOffset = [Math.cos(cAngle)*120, Math.sin(cAngle)*120, (cluster%3-1)*80];
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  const r = 60 + Math.random() * 60;
+  nodes.push({
+    id: i, label: LABELS[i], tags: TAGS_DB[i] || [],
+    x: cOffset[0] + r*Math.sin(phi)*Math.cos(theta),
+    y: cOffset[1] + r*Math.sin(phi)*Math.sin(theta),
+    z: cOffset[2] + r*Math.cos(phi),
+    cluster, size: 1 + Math.random() * 5, lit: false,
+  });
+}
+for (let i = 0; i < N; i++) {
+  const dists = [];
+  for (let j = 0; j < N; j++) {
+    if (i === j) continue;
+    const dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y, dz=nodes[i].z-nodes[j].z;
+    dists.push({ j, d: Math.sqrt(dx*dx+dy*dy+dz*dz) });
+  }
+  dists.sort((a,b)=>a.d-b.d);
+  for (let k = 0; k < 4; k++) {
+    const j = dists[k].j, key = Math.min(i,j)+':'+Math.max(i,j);
+    if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ key, source: i, target: j }); }
+  }
+}
+document.getElementById('sb-left').textContent = `${N} nodes · ${edges.length} edges · ${CLUSTER_COUNT} clusters`;
+
+const adj = new Map();
+for (const e of edges) {
+  if (!adj.has(e.source)) adj.set(e.source, []);
+  if (!adj.has(e.target)) adj.set(e.target, []);
+  adj.get(e.source).push(e.target);
+  adj.get(e.target).push(e.source);
+}
+
+// ── Three.js ──
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 2000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+function makeCircle() {
+  const sz=64, c=document.createElement('canvas'); c.width=c.height=sz;
+  const ctx=c.getContext('2d'), g=ctx.createRadialGradient(sz/2,sz/2,0,sz/2,sz/2,sz/2);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.3,'rgba(255,255,255,0.8)');
+  g.addColorStop(0.7,'rgba(255,255,255,0.3)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,sz,sz); return new THREE.CanvasTexture(c);
+}
+function makePulseTex() {
+  const sz=64, c=document.createElement('canvas'); c.width=c.height=sz;
+  const ctx=c.getContext('2d'), g=ctx.createRadialGradient(sz/2,sz/2,0,sz/2,sz/2,sz/2);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.2,'rgba(180,220,255,0.9)');
+  g.addColorStop(0.5,'rgba(100,180,255,0.3)'); g.addColorStop(1,'rgba(60,120,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,sz,sz); return new THREE.CanvasTexture(c);
+}
+const circleTex = makeCircle();
+const pulseTex = makePulseTex();
+
+// Nodes
+const positions = new Float32Array(N*3);
+const colors = new Float32Array(N*3);
+const sizes = new Float32Array(N);
+for (let i = 0; i < N; i++) {
+  positions[i*3]=nodes[i].x; positions[i*3+1]=nodes[i].y; positions[i*3+2]=nodes[i].z;
+  const pal = PALETTE[nodes[i].cluster % PALETTE.length];
+  const bright = Math.min((nodes[i].size-1)/6,1)*0.4;
+  colors[i*3]=Math.min(pal[0]+bright,1); colors[i*3+1]=Math.min(pal[1]+bright,1); colors[i*3+2]=Math.min(pal[2]+bright,1);
+  sizes[i] = 3+nodes[i].size*4;
+}
+const nodeGeo = new THREE.BufferGeometry();
+nodeGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+nodeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+nodeGeo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+// Glow
+const glowGeo = new THREE.BufferGeometry();
+glowGeo.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
+glowGeo.setAttribute('color', new THREE.BufferAttribute(colors.slice(), 3));
+scene.add(new THREE.Points(glowGeo, new THREE.PointsMaterial({
+  vertexColors:true, transparent:true, opacity:0.25, depthWrite:false,
+  blending:THREE.AdditiveBlending, sizeAttenuation:true, size:18, map:circleTex, alphaTest:0.05,
+})));
+
+const nodePoints = new THREE.Points(nodeGeo, new THREE.PointsMaterial({
+  vertexColors:true, transparent:true, opacity:0.9, depthWrite:false,
+  blending:THREE.AdditiveBlending, sizeAttenuation:true, size:8, map:circleTex, alphaTest:0.02,
+}));
+scene.add(nodePoints);
+
+// Edges (dim)
+const edgePos = new Float32Array(edges.length*6);
+for (let i=0;i<edges.length;i++) {
+  const s=nodes[edges[i].source], t=nodes[edges[i].target];
+  edgePos[i*6]=s.x; edgePos[i*6+1]=s.y; edgePos[i*6+2]=s.z;
+  edgePos[i*6+3]=t.x; edgePos[i*6+4]=t.y; edgePos[i*6+5]=t.z;
+}
+const edgeGeo = new THREE.BufferGeometry();
+edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePos, 3));
+const edgeMat = new THREE.LineBasicMaterial({ color:'#4466aa', transparent:true, opacity:0.1, depthWrite:false, blending:THREE.AdditiveBlending });
+scene.add(new THREE.LineSegments(edgeGeo, edgeMat));
+
+// Lit edges
+const litEdgeGeo = new THREE.BufferGeometry();
+litEdgeGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+const litEdgeMat = new THREE.LineBasicMaterial({ color:'#66ddff', transparent:true, opacity:0.2, depthWrite:false, blending:THREE.AdditiveBlending });
+const litEdgeLines = new THREE.LineSegments(litEdgeGeo, litEdgeMat);
+scene.add(litEdgeLines);
+
+// Pulse core + glow
+const pulseGeo = new THREE.BufferGeometry();
+pulseGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3),3));
+const pulseMat = new THREE.PointsMaterial({ color:'#ffffff', size:8, transparent:true, opacity:0.95, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true, map:pulseTex });
+const pulsePoint = new THREE.Points(pulseGeo, pulseMat);
+scene.add(pulsePoint);
+
+const pulseGlowGeo = new THREE.BufferGeometry();
+pulseGlowGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3),3));
+const pulseGlowMat = new THREE.PointsMaterial({ color:'#66ddff', size:20, transparent:true, opacity:0.25, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true, map:pulseTex });
+scene.add(new THREE.Points(pulseGlowGeo, pulseGlowMat));
+
+// Trail
+const TRAIL_LEN = 60;
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_LEN*3),3));
+const trailMat = new THREE.LineBasicMaterial({ color:'#44bbff', transparent:true, opacity:0.25, depthWrite:false, blending:THREE.AdditiveBlending });
+const trailLine = new THREE.Line(trailGeo, trailMat);
+scene.add(trailLine);
+const trailBuf = new Float32Array(TRAIL_LEN*3);
+let trailHead = 0, trailCount = 0;
+
+// ── Auto-pulse state ──
+let visitOrder = [], pulseStep = 0, pulseT = 0, flash = 0;
+const litNodes = new Set();
+let cooldownTimer = 0;
+
+function startNewPulse() {
+  const startId = Math.floor(Math.random() * N);
+  const visited = new Set();
+  visitOrder = [];
+  const queue = [startId];
+  visited.add(startId);
+  while (queue.length > 0 && visitOrder.length < 50) {
+    const id = queue.shift();
+    visitOrder.push(id);
+    for (const nid of (adj.get(id) ?? [])) {
+      if (!visited.has(nid)) { visited.add(nid); queue.push(nid); }
+    }
+  }
+  pulseStep = 0; pulseT = 0; flash = 0;
+  litNodes.clear(); trailHead = 0; trailCount = 0;
+  for (const n of nodes) n.lit = false;
+  cooldownTimer = 0;
+}
+startNewPulse(); // auto-start
+
+// ── Tooltip ──
+const tooltip = document.getElementById('tooltip');
+const ttLabel = document.getElementById('tt-label');
+const ttTags = document.getElementById('tt-tags');
+
+// ── Orbit ──
+let isDrag = false, prevX=0, prevY=0, rotX=0, rotY=0, camDist=650;
+renderer.domElement.addEventListener('mousedown', e => { isDrag=true; prevX=e.clientX; prevY=e.clientY; });
+renderer.domElement.addEventListener('mousemove', e => {
+  if (!isDrag) return;
+  rotY += (e.clientX-prevX)*0.003; rotX += (e.clientY-prevY)*0.003;
+  rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+  prevX=e.clientX; prevY=e.clientY;
+});
+window.addEventListener('mouseup', () => isDrag=false);
+renderer.domElement.addEventListener('wheel', e => { camDist = Math.max(200,Math.min(900,camDist+e.deltaY*0.5)); });
+
+// ── Animate ──
+let time = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  time += 0.005;
+  if (!isDrag) rotY += 0.0008;
+
+  camera.position.set(Math.sin(rotY)*Math.cos(rotX)*camDist, Math.sin(rotX)*camDist, Math.cos(rotY)*Math.cos(rotX)*camDist);
+  camera.lookAt(0,0,0);
+
+  const isPulsing = visitOrder.length > 1 && pulseStep < visitOrder.length - 1;
+  const colAttr = nodeGeo.getAttribute('color');
+  const sizeAttr = nodeGeo.getAttribute('size');
+
+  for (let i = 0; i < N; i++) {
+    const pal = PALETTE[nodes[i].cluster % PALETTE.length];
+    const bright = Math.min((nodes[i].size-1)/6,1)*0.4;
+    let r = Math.min(pal[0]+bright,1), g = Math.min(pal[1]+bright,1), b = Math.min(pal[2]+bright,1);
+    let sz = 3 + nodes[i].size*4;
+
+    if (litNodes.size > 0 && nodes[i].lit) {
+      const breath = 0.85 + Math.sin(time*8+i)*0.15;
+      r = Math.min(r*1.3, 1)*breath; g = Math.min(g*1.3, 1)*breath; b = Math.min(b*1.3, 1)*breath;
+      sz *= 1.4 + Math.sin(time*8)*0.3;
+    }
+    colAttr.setXYZ(i, r, g, b);
+    sizeAttr.setX(i, sz);
+  }
+  colAttr.needsUpdate = true;
+  sizeAttr.needsUpdate = true;
+
+  // Edges always visible — lit edges brighter on top
+  edgeMat.opacity = 0.1;
+
+  // Lit edges overlay
+  if (litNodes.size > 1) {
+    const lp = [];
+    for (const e of edges) {
+      if (litNodes.has(e.source) && litNodes.has(e.target)) {
+        const s=nodes[e.source], t=nodes[e.target];
+        lp.push(s.x,s.y,s.z, t.x,t.y,t.z);
+      }
+    }
+    if (lp.length) { litEdgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(lp,3)); litEdgeLines.visible=true; }
+    else litEdgeLines.visible = false;
+  } else litEdgeLines.visible = false;
+
+  // ── Pulse ──
+  if (isPulsing) {
+    const from = nodes[visitOrder[pulseStep]], to = nodes[visitOrder[pulseStep+1]];
+    pulseT += 0.03;
+    const t = pulseT, ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+    const px = from.x+(to.x-from.x)*ease, py = from.y+(to.y-from.y)*ease, pz = from.z+(to.z-from.z)*ease;
+
+    pulseGeo.getAttribute('position').setXYZ(0,px,py,pz); pulseGeo.getAttribute('position').needsUpdate = true;
+    pulseGlowGeo.getAttribute('position').setXYZ(0,px,py,pz); pulseGlowGeo.getAttribute('position').needsUpdate = true;
+    flash *= 0.88;
+    pulseMat.size = 8+flash*6; pulseGlowMat.size = 20+flash*15; pulseGlowMat.opacity = 0.25+flash*0.2;
+
+    const hi=trailHead%TRAIL_LEN;
+    trailBuf[hi*3]=px; trailBuf[hi*3+1]=py; trailBuf[hi*3+2]=pz;
+    trailHead++; trailCount=Math.min(trailCount+1,TRAIL_LEN);
+    const tPos=trailGeo.getAttribute('position');
+    for (let i=0;i<TRAIL_LEN;i++) {
+      if (i<trailCount) { const idx=((trailHead-trailCount+i)%TRAIL_LEN+TRAIL_LEN)%TRAIL_LEN; tPos.setXYZ(i,trailBuf[idx*3],trailBuf[idx*3+1],trailBuf[idx*3+2]); }
+      else tPos.setXYZ(i,px,py,pz);
+    }
+    tPos.needsUpdate=true; trailGeo.setDrawRange(0,trailCount);
+
+    if (t >= 1) {
+      pulseT=0; pulseStep++;
+      const aid=visitOrder[Math.min(pulseStep,visitOrder.length-1)];
+      nodes[aid].lit=true; litNodes.add(aid);
+      flash=1;
+      // tooltip flash
+      const v = new THREE.Vector3(nodes[aid].x,nodes[aid].y,nodes[aid].z).project(camera);
+      ttLabel.textContent = nodes[aid].label;
+      ttTags.textContent = nodes[aid].tags.map(t=>'#'+t).join(' ');
+      tooltip.style.left = ((v.x+1)/2*innerWidth+14)+'px';
+      tooltip.style.top = ((-v.y+1)/2*innerHeight-10)+'px';
+      tooltip.style.opacity = '1';
+      setTimeout(() => tooltip.style.opacity='0', 600);
+    }
+  } else {
+    // Cooldown → start new pulse
+    cooldownTimer++;
+    if (cooldownTimer > 180) { // ~3 seconds at 60fps
+      startNewPulse();
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
