@@ -74,6 +74,18 @@ export function createFederationRouter(
   });
 
   router.post('/join', requireAuth, async (req, res) => {
+    // Experimental gate (codex ship condition, 2026-05-12 final review):
+    // federation is off-by-default; operator must set
+    // STELLAVAULT_FEDERATION_EXPERIMENTAL=1 to enable.
+    const { isFederationExperimentalEnabled } = await import('../../federation/index.js');
+    if (!isFederationExperimentalEnabled()) {
+      return res.status(503).json({
+        success: false,
+        error: 'federation-experimental-disabled',
+        message: 'Federation is experimental and disabled by default. Set STELLAVAULT_FEDERATION_EXPERIMENTAL=1 in the environment to enable.',
+      });
+    }
+
     const available = await probeFederationAvailable();
     if (!available) {
       return res.status(501).json({

@@ -8,15 +8,30 @@ import {
   FederationNode, FederatedSearch, getOrCreateIdentity,
   getSharingSummary, setTagLevel, setFolderLevel, setNodeLevel, getPendingRequests, approveRequest, denyRequest,
   loadSharingConfig,
+  isFederationExperimentalEnabled,
 } from '@stellavault/core';
 import type { SharingLevel } from '@stellavault/core';
 
 export async function federateJoinCommand(options: { name?: string }) {
+  // Experimental gate (codex ship condition): federation is off-by-default.
+  if (!isFederationExperimentalEnabled()) {
+    console.log('');
+    console.log(chalk.red('  ✦ Federation is experimental and disabled by default.'));
+    console.log('');
+    console.log(chalk.dim('  Enable it by setting an environment variable:'));
+    console.log(chalk.dim('    PowerShell:  $env:STELLAVAULT_FEDERATION_EXPERIMENTAL = "1"'));
+    console.log(chalk.dim('    bash/zsh:    export STELLAVAULT_FEDERATION_EXPERIMENTAL=1'));
+    console.log('');
+    console.log(chalk.dim('  Then re-run `stellavault federate join`.'));
+    console.log('');
+    process.exit(2);
+  }
+
   const config = loadConfig();
   const identity = getOrCreateIdentity(options.name);
 
   console.log('');
-  console.log(chalk.bold('  ✦ Stellavault Federation'));
+  console.log(chalk.bold('  ✦ Stellavault Federation') + chalk.yellow(' (experimental)'));
   console.log(chalk.dim(`  Node: ${identity.displayName} (${identity.peerId})`));
   console.log('');
 

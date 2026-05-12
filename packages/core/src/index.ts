@@ -100,7 +100,7 @@ export { searchMarketplace, createPackageJson, getPublishInstructions } from './
 export type { PackListing } from './pack/marketplace.js';
 
 // Federation
-export { FederationNode, FederatedSearch, getOrCreateIdentity } from './federation/index.js';
+export { FederationNode, FederatedSearch, getOrCreateIdentity, isFederationExperimentalEnabled } from './federation/index.js';
 export type { PeerInfo, FederatedSearchResult, FederationMessage, NodeIdentity } from './federation/index.js';
 export { vouch, revoke, block, getTrustLevel, isBlocked, listTrusted, computeTrustScore } from './federation/trust.js';
 export { loadSharingConfig, saveSharingConfig, isDocumentShareable, sanitizeSnippet, getSharingSummary, addBlockedTag, removeBlockedTag, addBlockedFolder, blockDocument, unblockDocument, getDocumentLevel, getAccessibleLevel, buildLeveledResult, setTagLevel, setFolderLevel, setNodeLevel, setDefaultLevel, createFullTextRequest, approveRequest, denyRequest, getPendingRequests, LEVEL_LABELS, LEVEL_ICONS, LEVEL_CREDIT_MULTIPLIER } from './federation/sharing.js';
