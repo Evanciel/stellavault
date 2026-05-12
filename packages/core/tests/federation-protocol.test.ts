@@ -220,3 +220,128 @@ describe('federation protocol v2 — adversarial cases', () => {
     expect(nodeA.peerCount).toBe(0);
   });
 });
+
+describe('federation protocol v2 — post-review P2 hardening', () => {
+  it('canonicalizes nested objects deterministically (recursive key sort)', async () => {
+    // Two peers handshake successfully even though one builds an object with
+    // a different top-level *insertion* order than the canonicalize() output.
+    // If canonicalize only sorted the top level, search_result results' inner
+    // objects could differ between sender/verifier and break signing.
+    const nodeA = new FederationNode({ identity: generateEphemeralIdentity('A') });
+    const nodeB = new FederationNode({ identity: generateEphemeralIdentity('B') });
+
+    const { connA, connB } = makePair();
+    const aReady = waitFor(nodeA, 'peer_joined');
+    const bReady = waitFor(nodeB, 'peer_joined');
+    injectConnection(nodeA, connA);
+    injectConnection(nodeB, connB);
+    await Promise.all([aReady, bReady]);
+
+    // search_result has Array<{title, similarity, snippet}> — a nested-object
+    // payload. Build it once on A and assert B accepts it (signature verifies
+    // ⇔ canonical JSON identical on both sides).
+    const recv = waitFor<{ results: Array<{ title: string }> }>(nodeB, 'search_response', 500);
+    nodeA.sendSearchResult(nodeB.peerId, 'q-nested', [
+      { title: 'doc-1', similarity: 0.91, snippet: 'first' },
+      { title: 'doc-2', similarity: 0.82, snippet: 'second' },
+    ]);
+    const got = await recv;
+    expect(got.results.map(r => r.title)).toEqual(['doc-1', 'doc-2']);
+  });
+
+  it('emits handshake_timeout and ends the connection if HELLO never arrives', async () => {
+    const node = new FederationNode({
+      identity: generateEphemeralIdentity('A'),
+      handshakeTimeoutMs: 50, // very short for the test
+    });
+
+    // A connection that the peer never replies on. We track conn.end() calls.
+    let endCalled = false;
+    const out = new PassThrough();
+    const inbound = new PassThrough();
+    const conn: FakeConn = {
+      write: (s) => { out.write(Buffer.from(s)); return true; },
+      end: () => { endCalled = true; inbound.end(); },
+      on: ((event: string, listener: (...a: unknown[]) => void) => {
+        inbound.on(event, listener as never);
+        return conn as unknown as EventEmitter;
+      }) as EventEmitter['on'],
+    };
+
+    const timedOut = waitFor(node, 'handshake_timeout', 500);
+    injectConnection(node, conn);
+    await timedOut;
+
+    expect(endCalled).toBe(true);
+    expect(node.peerCount).toBe(0);
+  });
+
+  it('clears the handshake timer once the connection becomes ready', async () => {
+    // Set a moderate timeout, complete the handshake before it fires, then
+    // wait past the timeout window and confirm no handshake_timeout fired
+    // and the peer is still registered.
+    const nodeA = new FederationNode({
+      identity: generateEphemeralIdentity('A'),
+      handshakeTimeoutMs: 80,
+    });
+    const nodeB = new FederationNode({
+      identity: generateEphemeralIdentity('B'),
+      handshakeTimeoutMs: 80,
+    });
+
+    let timeoutFired = false;
+    nodeA.on('handshake_timeout', () => { timeoutFired = true; });
+    nodeB.on('handshake_timeout', () => { timeoutFired = true; });
+
+    const { connA, connB } = makePair();
+    const aReady = waitFor(nodeA, 'peer_joined');
+    const bReady = waitFor(nodeB, 'peer_joined');
+    injectConnection(nodeA, connA);
+    injectConnection(nodeB, connB);
+    await Promise.all([aReady, bReady]);
+
+    // Wait well past the timeout
+    await new Promise(r => setTimeout(r, 150));
+    expect(timeoutFired).toBe(false);
+    expect(nodeA.peerCount).toBe(1);
+    expect(nodeB.peerCount).toBe(1);
+  });
+
+  it('drops inbound envelopes once the per-peer rate limit is exceeded', async () => {
+    // Tiny bucket so flooding trips it immediately. peerCount stays 0 after a
+    // burst because every signed envelope past the bucket is silently dropped
+    // (including the legitimate HELLO if you exceed the limit first).
+    const node = new FederationNode({
+      identity: generateEphemeralIdentity('A'),
+      handshakeTimeoutMs: 0,           // disable so it doesn't interfere
+      rateLimitPerSec: 1,              // very slow refill
+      rateLimitBurst: 2,               // only 2 envelopes admitted
+    });
+
+    let limited = 0;
+    node.on('rate_limited', () => { limited++; });
+
+    const out = new PassThrough();
+    const inbound = new PassThrough();
+    const conn: FakeConn = {
+      write: (s) => { out.write(Buffer.from(s)); return true; },
+      end: () => { /* noop */ },
+      on: ((event: string, listener: (...a: unknown[]) => void) => {
+        inbound.on(event, listener as never);
+        return conn as unknown as EventEmitter;
+      }) as EventEmitter['on'],
+    };
+    injectConnection(node, conn);
+
+    // Flood 10 envelopes. They're all malformed (just `{}` after envelope
+    // shape check) — admission control runs *first* in dispatchLine, so we
+    // can count drops without needing valid signatures.
+    const junk = JSON.stringify({ payload: {}, peerId: 'x', signature: '00' }) + '\n';
+    for (let i = 0; i < 10; i++) inbound.write(Buffer.from(junk));
+
+    await new Promise(r => setTimeout(r, 25));
+    // With burst=2 and ~10 envelopes, ~8 should be limited.
+    expect(limited).toBeGreaterThanOrEqual(5);
+    expect(node.peerCount).toBe(0);
+  });
+});

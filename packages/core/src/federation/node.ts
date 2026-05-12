@@ -38,6 +38,13 @@ const FEDERATION_TOPIC = createHash('sha256').update('stellavault-federation-v1'
 // reuse one. LRU bounded at 1000 entries (~32KB).
 const REPLAY_CACHE_LIMIT = 1000;
 
+// Plan SC: federation-security-v2 §5 — post-review P2 hardening.
+// Defaults are tuned for production peers (hyperswarm); tests override
+// via `new FederationNode({ handshakeTimeoutMs, rateLimitPerSec, rateLimitBurst })`.
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 30_000;   // peers that don't reach `ready` within 30s are dropped
+const DEFAULT_RATE_LIMIT_PER_SEC = 50;          // sustained per-peer envelope rate
+const DEFAULT_RATE_LIMIT_BURST = 100;           // bucket capacity
+
 /** Minimal Duplex stream interface shared by Hyperswarm and net.Socket */
 interface PeerConnection {
   write(data: string): boolean;
@@ -71,6 +78,11 @@ interface ConnectionState {
   pendingPeerInfo: PeerInfo | null;
   /** True once both sides have verified each other and the peer is registered. */
   ready: boolean;
+  /** Drops the connection if the handshake hasn't completed in time. */
+  handshakeTimer: ReturnType<typeof setTimeout> | null;
+  /** Token-bucket counters for inbound envelope rate limiting. */
+  rlTokens: number;
+  rlLastRefill: number;
 }
 
 export class FederationNode extends EventEmitter {
@@ -84,17 +96,42 @@ export class FederationNode extends EventEmitter {
   private documentCount = 0;
   private topTopics: string[] = [];
 
+  // Configurable per-instance — see constructor options.
+  private readonly handshakeTimeoutMs: number;
+  private readonly rateLimitPerSec: number;
+  private readonly rateLimitBurst: number;
+
   /**
    * @param init Either a displayName string (legacy positional form) or an
    *             options object. Pass `{ identity }` to skip the on-disk identity
    *             load — useful for tests that need many ephemeral peers.
+   *             `handshakeTimeoutMs` drops connections stuck in handshake
+   *             (set to 0 to disable; default 30s).
+   *             `rateLimitPerSec` / `rateLimitBurst` cap per-peer envelope
+   *             processing rate (set rateLimitPerSec=0 to disable).
    */
-  constructor(init?: string | { displayName?: string; identity?: NodeIdentity }) {
+  constructor(
+    init?:
+      | string
+      | {
+          displayName?: string;
+          identity?: NodeIdentity;
+          handshakeTimeoutMs?: number;
+          rateLimitPerSec?: number;
+          rateLimitBurst?: number;
+        },
+  ) {
     super();
     if (init && typeof init === 'object') {
       this.identity = init.identity ?? getOrCreateIdentity(init.displayName);
+      this.handshakeTimeoutMs = init.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
+      this.rateLimitPerSec = init.rateLimitPerSec ?? DEFAULT_RATE_LIMIT_PER_SEC;
+      this.rateLimitBurst = init.rateLimitBurst ?? DEFAULT_RATE_LIMIT_BURST;
     } else {
       this.identity = getOrCreateIdentity(init);
+      this.handshakeTimeoutMs = DEFAULT_HANDSHAKE_TIMEOUT_MS;
+      this.rateLimitPerSec = DEFAULT_RATE_LIMIT_PER_SEC;
+      this.rateLimitBurst = DEFAULT_RATE_LIMIT_BURST;
     }
   }
 
@@ -180,9 +217,22 @@ export class FederationNode extends EventEmitter {
 
   // --- Private ---
 
-  /** Stable JSON for signing. Sorts top-level keys so both sides hash identically. */
-  private canonicalize(payload: FederationMessage): string {
-    return JSON.stringify(payload, Object.keys(payload).sort());
+  /**
+   * Stable JSON for signing. Sorts keys recursively so nested objects
+   * produced by different JS runtimes (or by future code paths that build
+   * objects in a different insertion order) still hash identically on
+   * both sides. RFC 8785-style canonicalization, scoped to what
+   * FederationMessage actually carries (strings/numbers/booleans/null,
+   * arrays, plain objects).
+   */
+  private canonicalize(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return '[' + value.map(v => this.canonicalize(v)).join(',') + ']';
+    }
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + this.canonicalize(obj[k])).join(',') + '}';
   }
 
   private sendSigned(conn: PeerConnection, payload: FederationMessage, includePublicKey = false) {
@@ -221,8 +271,26 @@ export class FederationNode extends EventEmitter {
       peerId: null,
       pendingPeerInfo: null,
       ready: false,
+      handshakeTimer: null,
+      rlTokens: this.rateLimitBurst,
+      rlLastRefill: Date.now(),
     };
     this.connStates.set(conn, state);
+
+    // Drop the connection if the handshake hasn't completed by the deadline.
+    // Otherwise a peer that opens a socket and never sends HELLO would pin a
+    // ConnectionState in memory forever.
+    if (this.handshakeTimeoutMs > 0) {
+      state.handshakeTimer = setTimeout(() => {
+        if (state.ready) return;
+        try { conn.end(); } catch { /* already closed */ }
+        this.emit('handshake_timeout', { peerId: state.peerId });
+      }, this.handshakeTimeoutMs);
+      // Don't keep the event loop alive purely for this timer (server lifetime
+      // is managed by the swarm or the explicit `leave()` call).
+      const timer = state.handshakeTimer as unknown as { unref?: () => void };
+      timer.unref?.();
+    }
 
     // Send our HELLO with our publicKey + a fresh challenge for the peer to sign.
     this.sendSigned(
@@ -265,6 +333,7 @@ export class FederationNode extends EventEmitter {
 
     conn.on('close', () => {
       const st = this.connStates.get(conn);
+      if (st?.handshakeTimer) clearTimeout(st.handshakeTimer);
       this.connStates.delete(conn);
       if (st?.peerId && this.peers.get(st.peerId)?.conn === conn) {
         this.peers.delete(st.peerId);
@@ -275,7 +344,33 @@ export class FederationNode extends EventEmitter {
     conn.on('error', () => { /* swallow */ });
   }
 
+  /**
+   * Token-bucket admission control. Returns false when the inbound rate
+   * exceeds the configured limit; the caller should drop the envelope
+   * silently (we don't disconnect — the peer might be momentarily bursty,
+   * not malicious, and a real attacker would just reconnect).
+   */
+  private admitEnvelope(state: ConnectionState): boolean {
+    if (this.rateLimitPerSec <= 0) return true;
+    const now = Date.now();
+    const elapsed = (now - state.rlLastRefill) / 1000;
+    if (elapsed > 0) {
+      state.rlTokens = Math.min(this.rateLimitBurst, state.rlTokens + elapsed * this.rateLimitPerSec);
+      state.rlLastRefill = now;
+    }
+    if (state.rlTokens < 1) {
+      this.emit('rate_limited', { peerId: state.peerId });
+      return false;
+    }
+    state.rlTokens -= 1;
+    return true;
+  }
+
   private dispatchLine(conn: PeerConnection, line: string) {
+    const state = this.connStates.get(conn);
+    if (!state) return;
+    if (!this.admitEnvelope(state)) return;
+
     let envelope: SignedEnvelope;
     try {
       envelope = JSON.parse(line) as SignedEnvelope;
@@ -285,9 +380,6 @@ export class FederationNode extends EventEmitter {
     if (typeof envelope.peerId !== 'string') return;
     if (typeof envelope.signature !== 'string') return;
     if (!envelope.payload || typeof envelope.payload !== 'object') return;
-
-    const state = this.connStates.get(conn);
-    if (!state) return;
 
     // Resolve the public key we should verify against.
     // - Before HELLO: use publicKeyHex from envelope (and validate peerId binding).
@@ -416,6 +508,10 @@ export class FederationNode extends EventEmitter {
     if (!state.weResponded || !state.peerVerified) return;
     if (!state.peerId || !state.pendingPeerInfo) return;
     state.ready = true;
+    if (state.handshakeTimer) {
+      clearTimeout(state.handshakeTimer);
+      state.handshakeTimer = null;
+    }
     this.peers.set(state.peerId, { info: state.pendingPeerInfo, conn });
     this.emit('peer_joined', state.pendingPeerInfo);
   }
