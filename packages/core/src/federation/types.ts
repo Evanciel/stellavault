@@ -18,17 +18,24 @@ export interface FederatedSearchResult {
   peerName: string;
 }
 
-// Wire protocol v2: every message body lives inside an envelope that carries
-// a sender identifier and an Ed25519 detached signature over the payload.
+// Wire protocol v2.1: every message body lives inside an envelope that carries
+// a sender identifier, a per-envelope nonce, and an Ed25519 detached signature
+// over the canonical(envelope-without-signature) bytes.
 //
 // `publicKeyHex` is only sent in the first HELLO of a connection; subsequent
 // messages omit it and the recipient looks the key up by peerId from cache.
+//
+// The per-envelope `nonce` is what stops post-handshake replay: a captured
+// signed search_query/search_result can no longer be re-sent because the
+// receiver remembers recent nonces and drops duplicates.
 export interface SignedEnvelope<T = FederationMessage> {
   payload: T;
   peerId: string;
+  /** 16-byte random nonce, hex-encoded. Recipient tracks recently seen values. */
+  nonce: string;
   /** Hex-encoded SPKI DER public key. Present only on first HELLO per connection. */
   publicKeyHex?: string;
-  /** Hex-encoded 64-byte Ed25519 signature over canonical(payload). */
+  /** Hex-encoded 64-byte Ed25519 signature over canonical({payload,peerId,nonce,publicKeyHex?}). */
   signature: string;
 }
 

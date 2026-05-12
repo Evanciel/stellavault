@@ -35,8 +35,10 @@ import type {
 const FEDERATION_TOPIC = createHash('sha256').update('stellavault-federation-v1').digest();
 
 // Replay defence: remember recently consumed inbound nonces so a peer cannot
-// reuse one. LRU bounded at 1000 entries (~32KB).
-const REPLAY_CACHE_LIMIT = 1000;
+// reuse one. The cache now holds both HELLO challenge nonces and every
+// post-handshake envelope nonce, so the bound is larger than v2 (~320KB at
+// peak — acceptable per peer-limit of 50).
+const REPLAY_CACHE_LIMIT = 10_000;
 
 // Plan SC: federation-security-v2 §5 — post-review P2 hardening.
 // Defaults are tuned for production peers (hyperswarm); tests override
@@ -222,8 +224,9 @@ export class FederationNode extends EventEmitter {
    * produced by different JS runtimes (or by future code paths that build
    * objects in a different insertion order) still hash identically on
    * both sides. RFC 8785-style canonicalization, scoped to what
-   * FederationMessage actually carries (strings/numbers/booleans/null,
-   * arrays, plain objects).
+   * FederationMessage / SignedEnvelope actually carry. Keys whose value
+   * is `undefined` are omitted (matches JSON.stringify semantics), so
+   * sender and receiver agree on optional fields like `publicKeyHex`.
    */
   private canonicalize(value: unknown): string {
     if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -231,20 +234,21 @@ export class FederationNode extends EventEmitter {
       return '[' + value.map(v => this.canonicalize(v)).join(',') + ']';
     }
     const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+    const keys = Object.keys(obj).filter(k => obj[k] !== undefined).sort();
     return '{' + keys.map(k => JSON.stringify(k) + ':' + this.canonicalize(obj[k])).join(',') + '}';
   }
 
   private sendSigned(conn: PeerConnection, payload: FederationMessage, includePublicKey = false) {
     try {
-      const canonical = Buffer.from(this.canonicalize(payload), 'utf-8');
-      const sig = signMessage(this.identity.secretKey, canonical);
-      const envelope: SignedEnvelope = {
+      const envBase: Omit<SignedEnvelope, 'signature'> = {
         payload,
         peerId: this.peerId,
-        signature: sig.toString('hex'),
+        nonce: randomBytes(16).toString('hex'),
         ...(includePublicKey ? { publicKeyHex: this.identity.publicKey.toString('hex') } : {}),
       };
+      const canonical = Buffer.from(this.canonicalize(envBase), 'utf-8');
+      const sig = signMessage(this.identity.secretKey, canonical);
+      const envelope: SignedEnvelope = { ...envBase, signature: sig.toString('hex') };
       conn.write(JSON.stringify(envelope) + '\n');
     } catch { /* connection may be closed */ }
   }
@@ -379,7 +383,14 @@ export class FederationNode extends EventEmitter {
     if (!envelope || typeof envelope !== 'object') return;
     if (typeof envelope.peerId !== 'string') return;
     if (typeof envelope.signature !== 'string') return;
+    if (typeof envelope.nonce !== 'string') return;
+    if (envelope.nonce.length < 16 || envelope.nonce.length > 128) return;
     if (!envelope.payload || typeof envelope.payload !== 'object') return;
+
+    // Replay defence — every envelope (HELLO, search_query, search_result, leave,
+    // …) is protected by a per-envelope nonce. If we've seen this nonce in the
+    // recent past, drop the envelope before any signature work.
+    if (!this.rememberNonce(envelope.nonce)) return;
 
     // Resolve the public key we should verify against.
     // - Before HELLO: use publicKeyHex from envelope (and validate peerId binding).
@@ -396,10 +407,13 @@ export class FederationNode extends EventEmitter {
       publicKey = state.peerPublicKey;
     }
 
-    // Verify the envelope signature.
-    const canonical = Buffer.from(this.canonicalize(envelope.payload as FederationMessage), 'utf-8');
+    // Verify the envelope signature — signed over the entire envelope minus
+    // the signature itself, so a peer cannot mutate peerId/nonce/publicKeyHex
+    // and keep a valid signature.
+    const { signature, ...envBase } = envelope;
+    const canonical = Buffer.from(this.canonicalize(envBase), 'utf-8');
     let sigBuf: Buffer;
-    try { sigBuf = Buffer.from(envelope.signature, 'hex'); } catch { return; }
+    try { sigBuf = Buffer.from(signature, 'hex'); } catch { return; }
     if (sigBuf.length !== 64) return;
     if (!verifySignature(publicKey, canonical, sigBuf)) return;
 

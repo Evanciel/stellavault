@@ -307,6 +307,63 @@ describe('federation protocol v2 — post-review P2 hardening', () => {
     expect(nodeB.peerCount).toBe(1);
   });
 
+  it('drops a replayed post-handshake envelope (per-envelope nonce defence)', async () => {
+    // Two nodes complete the handshake, A sends a search_query, then we
+    // replay the exact bytes A sent to B. B must fire the first
+    // search_request and drop the second (same envelope nonce).
+    const nodeA = new FederationNode({ identity: generateEphemeralIdentity('A') });
+    const nodeB = new FederationNode({ identity: generateEphemeralIdentity('B') });
+
+    // Capture outbound bytes from A so we can replay them verbatim later.
+    const aOut = new PassThrough();
+    const bOut = new PassThrough();
+    const aSent: string[] = [];
+    const connA: FakeConn = {
+      write: (s) => { aSent.push(s); aOut.write(Buffer.from(s, 'utf-8')); return true; },
+      end: () => { aOut.end(); },
+      on: ((event: string, listener: (...a: unknown[]) => void) => {
+        bOut.on(event, listener as never);
+        return connA as unknown as EventEmitter;
+      }) as EventEmitter['on'],
+    };
+    const connB: FakeConn = {
+      write: (s) => { bOut.write(Buffer.from(s, 'utf-8')); return true; },
+      end: () => { bOut.end(); },
+      on: ((event: string, listener: (...a: unknown[]) => void) => {
+        aOut.on(event, listener as never);
+        return connB as unknown as EventEmitter;
+      }) as EventEmitter['on'],
+    };
+
+    const aReady = waitFor(nodeA, 'peer_joined');
+    const bReady = waitFor(nodeB, 'peer_joined');
+    injectConnection(nodeA, connA);
+    injectConnection(nodeB, connB);
+    await Promise.all([aReady, bReady]);
+
+    // Count search_request emissions on B. Should be exactly 1 even though we
+    // inject the captured envelope twice.
+    let requests = 0;
+    nodeB.on('search_request', () => { requests++; });
+
+    // A sends a real, signed search_query to B.
+    aSent.length = 0; // start capturing from this point
+    nodeA.sendSearchQuery(nodeB.peerId, 'q-replay', new Array(384).fill(0.1), 5);
+
+    // Wait a tick for B to process the original.
+    await new Promise(r => setTimeout(r, 25));
+    expect(requests).toBe(1);
+
+    // Locate the search_query envelope A sent and replay it through B's
+    // inbound stream (which is A's outbound stream from B's POV).
+    const replayLine = aSent.find(s => s.includes('"search_query"'));
+    expect(replayLine).toBeDefined();
+    aOut.write(Buffer.from(replayLine!, 'utf-8'));
+
+    await new Promise(r => setTimeout(r, 25));
+    expect(requests).toBe(1); // still 1 — replay dropped
+  });
+
   it('drops inbound envelopes once the per-peer rate limit is exceeded', async () => {
     // Tiny bucket so flooding trips it immediately. peerCount stays 0 after a
     // burst because every signed envelope past the bucket is silently dropped
