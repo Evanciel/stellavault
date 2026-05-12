@@ -7,7 +7,7 @@ import type { VectorStore } from '../store/types.js';
 import type { Embedder } from '../indexer/embedder.js';
 import type { FederatedSearchResult } from './types.js';
 import { maskSnippet } from './privacy.js';
-import { isDocumentShareable, sanitizeSnippet } from './sharing.js';
+import { isDocumentShareable, loadSharingConfig, sanitizeSnippet } from './sharing.js';
 
 export interface FederatedSearchOptions {
   limit?: number;
@@ -91,6 +91,15 @@ export class FederatedSearch {
       respondTo: string | null;
     }) => {
       if (!req.respondTo) return;
+
+      // Receive-only gate: the operator hasn't opted in to sharing yet
+      // (myNodeLevel===0). Send an empty result rather than silently
+      // exposing titles/snippets via the default rules.
+      const cfg = loadSharingConfig();
+      if (cfg.myNodeLevel === 0) {
+        this.node.sendSearchResult(req.respondTo, req.queryId, []);
+        return;
+      }
 
       try {
         // 받은 임베딩으로 모든 로컬 vault DB 검색 (multi-vault)

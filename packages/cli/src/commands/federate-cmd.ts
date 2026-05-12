@@ -7,6 +7,7 @@ import {
   loadConfig, createSqliteVecStore, createLocalEmbedder,
   FederationNode, FederatedSearch, getOrCreateIdentity,
   getSharingSummary, setTagLevel, setFolderLevel, setNodeLevel, getPendingRequests, approveRequest, denyRequest,
+  loadSharingConfig,
 } from '@stellavault/core';
 import type { SharingLevel } from '@stellavault/core';
 
@@ -36,6 +37,17 @@ export async function federateJoinCommand(options: { name?: string }) {
 
   const search = new FederatedSearch(node, store, embedder);
   search.startResponder();
+
+  // Sharing-level disclosure: receive-only mode (level 0) is the default for
+  // new nodes after the post-codex hardening. Surface the state so users
+  // understand they are not exposing data until they opt in.
+  const sharingCfg = loadSharingConfig();
+  if (sharingCfg.myNodeLevel === 0) {
+    console.log(chalk.yellow('  ⚠ Receive-only mode (my node level = 0).'));
+    console.log(chalk.dim('    Run `set-level 1` or higher in the federation prompt to share.'));
+  } else {
+    console.log(chalk.dim(`  Sharing level: ${sharingCfg.myNodeLevel} (set-level <0-4> to change)`));
+  }
 
   // 이벤트 리스너
   node.on('joined', (info: { topic: string }) => {

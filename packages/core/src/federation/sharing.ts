@@ -65,9 +65,15 @@ const SENSITIVE_PATTERNS = [
   /\b\d{6}[-]\d{7}\b/,
 ];
 
+// Safer defaults — see codex re-review P2 finding.
+//   - myNodeLevel=0 means "receive-only" by default. The user has to opt in
+//     (`set-level 1+` in the CLI, or edit ~/.stellavault/federation/sharing.json)
+//     before this node will share anything with peers.
+//   - defaultLevel=1 means newly-classified documents share titles+similarity
+//     only, never snippets. Users can raise it explicitly.
 const DEFAULT_CONFIG: SharingConfig = {
-  defaultLevel: 2,     // 기본: 스니펫까지
-  myNodeLevel: 2,      // 내 노드 기본: 스니펫까지
+  defaultLevel: 1,     // 기본: 제목+유사도까지만 (스니펫 안 보냄)
+  myNodeLevel: 0,      // 내 노드 기본: 수신 전용 (명시적 set-level 필요)
   rules: [
     // 기본 규칙
     { pattern: 'public', type: 'tag', level: 4 },

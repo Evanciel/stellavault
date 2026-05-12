@@ -471,8 +471,12 @@ export class FederationNode extends EventEmitter {
 
       case 'search_query': {
         if (!state.ready) return; // refuse before handshake completes
+        // peerId carries the *sender's* identity for audit/trust/rate consumers
+        // (state.peerId is verified during the handshake). The previous code
+        // wrote `peerId: msg.queryId`, which is the request id, not a peer id —
+        // a v1 bug carried through the v2 rewrite. Fixed in the codex P2 sweep.
         this.emit('search_request', {
-          peerId: msg.queryId,
+          peerId: state.peerId,
           queryId: msg.queryId,
           embedding: msg.embedding,
           limit: msg.limit,

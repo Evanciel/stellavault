@@ -97,11 +97,20 @@ describe('federation protocol v2 — mutual handshake', () => {
     injectConnection(nodeB, connB);
     await Promise.all([aReady, bReady]);
 
-    const requestSeen = waitFor<{ queryId: string; embedding: number[] }>(nodeB, 'search_request', 500);
+    const requestSeen = waitFor<{
+      queryId: string;
+      peerId: string;
+      respondTo: string;
+      embedding: number[];
+    }>(nodeB, 'search_request', 500);
     nodeA.sendSearchQuery(nodeB.peerId, 'q-42', new Array(384).fill(0.1), 5);
     const req = await requestSeen;
     expect(req.queryId).toBe('q-42');
     expect(req.embedding.length).toBe(384);
+    // search_request.peerId must be the SENDER's verified peer id, not the
+    // queryId (which was the v1 bug). respondTo points to the same peer.
+    expect(req.peerId).toBe(nodeA.peerId);
+    expect(req.respondTo).toBe(nodeA.peerId);
   });
 });
 

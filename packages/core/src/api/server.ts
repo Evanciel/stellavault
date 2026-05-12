@@ -586,7 +586,7 @@ export function createApiServer(options: ApiServerOptions) {
 
   // ───── Federation ─────────────────────────────────────────
   // Design Ref: §4 — Extracted to routes/federation.ts
-  app.use('/api/federate', createFederationRouter(store));
+  app.use('/api/federate', createFederationRouter(store, requireAuth));
 
   // SPA fallback — any non-/api route without a file extension serves
   // the built index.html. URLs that look like static file requests

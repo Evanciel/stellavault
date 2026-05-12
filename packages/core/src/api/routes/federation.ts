@@ -2,6 +2,7 @@
 // Extracted from server.ts for modular architecture.
 
 import { Router } from 'express';
+import type express from 'express';
 import type { VectorStore } from '../../store/types.js';
 import type { PeerInfo } from '../../federation/types.js';
 
@@ -17,7 +18,16 @@ interface FederationNodeLike {
   leave(): Promise<void>;
 }
 
-export function createFederationRouter(store: VectorStore): Router {
+/**
+ * Mutation endpoints (`/join`, `/leave`) require the session auth token —
+ * otherwise any same-origin browser page can flip the federation state by
+ * issuing a POST. Read-only `/status` stays public so the graph UI can
+ * render the badge without obtaining a token first.
+ */
+export function createFederationRouter(
+  store: VectorStore,
+  requireAuth: express.RequestHandler,
+): Router {
   const router = Router();
 
   let federationNode: FederationNodeLike | null = null;
@@ -63,7 +73,7 @@ export function createFederationRouter(store: VectorStore): Router {
     }
   });
 
-  router.post('/join', async (req, res) => {
+  router.post('/join', requireAuth, async (req, res) => {
     const available = await probeFederationAvailable();
     if (!available) {
       return res.status(501).json({
@@ -107,7 +117,7 @@ export function createFederationRouter(store: VectorStore): Router {
     }
   });
 
-  router.post('/leave', async (_req, res) => {
+  router.post('/leave', requireAuth, async (_req, res) => {
     if (!federationNode || !federationNode.isRunning) {
       return res.json({ success: true, active: false, message: 'Not active' });
     }
