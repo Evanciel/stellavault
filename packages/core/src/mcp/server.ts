@@ -36,6 +36,10 @@ export interface McpServerOptions {
    *  Tool handlers await this before running any query.
    *  Default: already-resolved Promise (backward compatible). */
   ready?: Promise<void>;
+  /** Allowed CORS origins for startHttp(). Exact matches only.
+   *  Default: ['http://localhost', 'http://127.0.0.1'] (any port).
+   *  Pass [] to disable CORS entirely; pass ['*'] to opt-in to wildcard. */
+  corsOrigins?: string[];
 }
 
 export function createMcpServer(options: McpServerOptions) {
@@ -174,8 +178,21 @@ export function createMcpServer(options: McpServerOptions) {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => `sv-${Date.now()}` });
       await server.connect(transport);
 
+      const allowedOrigins = options.corsOrigins ?? ['http://localhost', 'http://127.0.0.1'];
+      const allowWildcard = allowedOrigins.includes('*');
+
       const httpServer = createServer(async (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        const origin = req.headers.origin;
+        if (origin) {
+          if (allowWildcard) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+          } else if (allowedOrigins.some(allowed => origin === allowed || origin.startsWith(allowed + ':'))) {
+            // Exact match or "scheme://host:port" where host prefix matches an allowed entry
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+          }
+          // Origin not allowed → no CORS header → browser blocks the response
+        }
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
         if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }

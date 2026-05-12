@@ -3,6 +3,7 @@
 
 import { Router } from 'express';
 import type express from 'express';
+import { createHash } from 'node:crypto';
 import type { VectorStore } from '../../store/types.js';
 
 interface IngestRouterOptions {
@@ -91,7 +92,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
 
       try {
         const doc = {
-          id: require('node:crypto').createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
+          id: createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
           filePath: result.savedTo,
           title: result.title,
           content: content,
@@ -204,7 +205,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
 
           try {
             const doc = {
-              id: require('node:crypto').createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
+              id: createHash('sha256').update(result.savedTo).digest('hex').slice(0, 16),
               filePath: result.savedTo,
               title: result.title,
               content,

@@ -4,7 +4,7 @@
 import type { VectorStore } from '../../store/types.js';
 import type { Embedder } from '../../indexer/embedder.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 
 export function createAgenticGraphTools(store: VectorStore, embedder: Embedder, vaultPath: string) {
   // Rate limit: max 50 node creations per hour per session
@@ -91,8 +91,8 @@ export function createAgenticGraphTools(store: VectorStore, embedder: Embedder, 
         const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
         const dir = join(vaultPath, folder);
         const filePath = join(dir, `${safeTitle}.md`);
-        const resolvedPath = require('node:path').resolve(filePath);
-        const resolvedVault = require('node:path').resolve(vaultPath);
+        const resolvedPath = resolvePath(filePath);
+        const resolvedVault = resolvePath(vaultPath);
         if (!resolvedPath.startsWith(resolvedVault)) {
           return { content: [{ type: 'text' as const, text: 'Error: invalid folder path.' }] };
         }

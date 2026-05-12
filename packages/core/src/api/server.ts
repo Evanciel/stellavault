@@ -82,17 +82,28 @@ export function createApiServer(options: ApiServerOptions) {
     return true;
   }
 
-  // Auth middleware for mutating endpoints
+  // Auth middleware for mutating endpoints.
+  // Tokens are accepted ONLY via the X-Stellavault-Token header — never via
+  // query strings (which can leak through referer headers, browser history,
+  // and server logs).
   function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
     const token = req.headers['x-stellavault-token'] as string | undefined;
     if (token === authToken) return next();
-    // Also accept token in query for simple browser usage
-    if (req.query.token === authToken) return next();
-    res.status(403).json({ error: 'Invalid or missing auth token. GET /api/token first.' });
+    res.status(403).json({ error: 'Invalid or missing auth token. Send X-Stellavault-Token header.' });
   }
 
-  // Token endpoint — any local process can retrieve the session token
-  app.get('/api/token', (_req, res) => { res.json({ token: authToken }); });
+  // Token endpoint — only served to same-origin browser requests (origin in the
+  // CORS allow-list). Local CLI/curl invocations have no Origin header and are
+  // rejected, so a hostile process on the same machine cannot harvest the token
+  // by simply hitting GET /api/token.
+  app.get('/api/token', (req, res) => {
+    const origin = req.headers.origin;
+    if (!origin || !allowedOrigins.includes(origin)) {
+      res.status(403).json({ error: 'Token endpoint requires a same-origin browser request.' });
+      return;
+    }
+    res.json({ token: authToken });
+  });
 
   // HIGH-01: Shared SSRF protection — blocks private/internal IPs
   function assertNotPrivateUrl(url: string): void {
