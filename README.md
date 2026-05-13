@@ -264,9 +264,30 @@ Key optimizations:
 - **Vault files never modified** — indexes into SQLite, originals untouched
 - **Electron sandbox enabled** — renderer runs with reduced OS privileges
 - **IPC path validation** — all file operations stay inside vault root
-- **API auth token** — per-session random token for mutating endpoints
+- **API auth token** — per-session, header-only (`X-Stellavault-Token`). Token endpoint is same-origin-only
+- **CORS allow-list** — `localhost` / `127.0.0.1` only by default; MCP HTTP transport opt-in
 - **SSRF protection** — private IPs blocked on URL ingest
 - **E2E encryption** — AES-256-GCM for cloud sync
+
+### Federation (experimental, off by default)
+
+Peer-to-peer semantic search is shipped as an **opt-in experimental feature**. The default install does **not** join any swarm and never shares data.
+
+Enable explicitly:
+
+```bash
+# PowerShell
+$env:STELLAVAULT_FEDERATION_EXPERIMENTAL = "1"
+
+# bash / zsh
+export STELLAVAULT_FEDERATION_EXPERIMENTAL=1
+
+stellavault federate join
+```
+
+When enabled, federation uses Ed25519 identities with signed envelopes, mutual challenge-response handshake, per-envelope replay nonces, handshake timeout, per-peer rate limiting, and a receive-only sharing default (`myNodeLevel=0`). Run `set-level 1+` in the federation prompt to actually share titles/snippets with peers.
+
+> **Upgrade note (v0.7.4)** — federation wire format bumped from v2.0 to v2.1 (envelope-level nonce). v0.7.3 federation nodes are not compatible. Existing `~/.stellavault/federation/sharing.json` files are **not** auto-downgraded to the safer defaults; review your `myNodeLevel` if you previously opted in.
 
 See [SECURITY.md](SECURITY.md) for full details.
 

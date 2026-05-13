@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.7.4] - 2026-05-13
+
+### Security (codex review sweep — SECURITY score 3/10 → 8/10)
+
+Three rounds of independent review by OpenAI codex CLI, plus a self-review.
+Every critical (P1) and high (P2) finding is fixed.
+
+#### Critical
+- **ESM `require('node:crypto'|'node:path')` removed** — `packages/core/src/api/routes/ingest.ts`, `packages/core/src/mcp/tools/agentic-graph.ts`. Would crash on stricter runtimes.
+- **MCP HTTP wildcard CORS** → `corsOrigins` allow-list (`packages/core/src/mcp/server.ts`). Default: `localhost` + `127.0.0.1` (any port). Pass `['*']` to opt back in.
+- **REST token hardening** (`packages/core/src/api/server.ts`)
+  - `req.query.token` fallback removed — header (`X-Stellavault-Token`) only.
+  - `/api/token` now refuses requests without a same-origin browser Origin header, so a hostile local process can no longer scrape the token.
+- **Federation Ed25519 + signed protocol** — full rewrite of `packages/core/src/federation/{identity,node,types}.ts`:
+  - Real Ed25519 keypair. `verifySignature(publicKey, message, signature)` no longer requires the secret key.
+  - Wire format v2.1 — every envelope carries `{ payload, peerId, nonce, publicKeyHex?, signature }`; signature covers the entire envelope minus the signature itself.
+  - Mutual challenge-response handshake binds `peerId` to `publicKey` before any message is accepted.
+  - Per-envelope replay nonce defends against post-handshake message replay; HELLO nonce defends the handshake.
+  - 30s handshake timeout drops connections that never complete the handshake.
+  - Per-peer token bucket (50 rps / 100 burst) rate-limits inbound envelopes before signature work.
+  - Recursive canonical JSON for signing — nested objects hash identically across runtimes.
+  - v1 identity files (`identity.json` without `version`) are auto-backed-up to `identity.v1.bak.json` and replaced with a fresh Ed25519 key.
+
+#### High
+- **Federation REST mutations require auth** — `POST /api/federate/{join,leave}` now goes through `requireAuth`. `/status` stays public for the graph UI badge.
+- **Sharing defaults are safe** — `DEFAULT_CONFIG.myNodeLevel: 2 → 0` (receive-only) and `defaultLevel: 2 → 1` (titles + similarity, no snippets). `FederatedSearch.startResponder` short-circuits to empty results until the operator opts in with `set-level 1+`. The CLI surfaces the current sharing level on `federate join`.
+- **`search_request` peerId attribution** — emit now uses the handshake-verified `state.peerId` instead of `msg.queryId` (carried over from v1). No behaviour change for the bundled responder, but future audit/trust/rate consumers receive the right peer id.
+
+#### Ship gate
+- **`STELLAVAULT_FEDERATION_EXPERIMENTAL` toggle** — federation is off-by-default. The REST `POST /api/federate/join` returns `503 federation-experimental-disabled` and the CLI exits with code 2 unless the env var is set to a truthy value (`1`/`true`/`yes`/`on`, case-insensitive).
+
+### Tests
+- `packages/core/tests/federation-identity.test.ts` (+11 cases)
+- `packages/core/tests/federation-protocol.test.ts` (+10 cases — handshake, replay, timeout, rate limit, peerId attribution)
+- `packages/core/tests/federation-experimental-toggle.test.ts` (+4 cases)
+- Suite: **192 → 206 PASS**. `tests/smoke.mjs` 11/11 unchanged.
+
+### Breaking
+- **Federation v2.0 wire format incompatible** — v0.7.3 federation nodes cannot peer with v0.7.4. Federation has had zero production users to date, so no migration path is shipped.
+- **Identity file v1 auto-migrated** — old `~/.stellavault/federation/identity.json` is backed up to `identity.v1.bak.json`; a new Ed25519 key is minted on first use. Existing peers will need to re-pair.
+
+### Housekeeping
+- `.gitignore` hardened — `*.bak`, `*.bak.*`, `.autopilot-state.json`, `.context/`.
+- `.autopilot-state.json` is no longer tracked (per-machine runtime state).
+- `demo/explore.html` and `docs/LAZY_INIT_MCP_SPEC.md` brought under version control.
+
+### Commits
+`0c2a9ee` `88626b5` `18ed93e` `cb7bde8` `3f32225` `fa277cc` `aad45e4`
+
 ## [0.7.3] - 2026-04-14
 
 ### Performance
