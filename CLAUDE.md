@@ -2,12 +2,15 @@
 
 ## Project Info
 - **Name**: Stellavault — Self-compiling knowledge MCP server
-- **Version**: 0.4.2
+- **Version**: 0.7.4
 - **GitHub**: https://github.com/Evanciel/stellavault
-- **npm**: stellavault (171KB)
+- **npm**: stellavault (688KB published, 2.4MB unpacked)
 - **Stack**: Node.js 20+, TypeScript, ESM, Monorepo (npm workspaces)
-- **Packages**: core (21 MCP tools), cli (39+ commands), graph (3D UI), sync
+- **Packages**:
+  - **Bundled into root (same version)**: `@stellavault/core` (21 MCP tools), `@stellavault/cli` (39+ commands), `@stellavault/graph` (3D UI)
+  - **Independent versioning**: `@stellavault/sync` (1.x — Notion↔Obsidian daemon), `@stellavault/desktop` (0.1.x — Electron app, separate GitHub release)
 - **Architecture**: Karpathy self-compiling KB (ingest→compile→wiki→session→flush loop)
+- **Security baseline (v0.7.4)**: Codex SECURITY 8/10. Ed25519 federation + signed envelopes, header-only API token, CORS allow-list, federation experimental off-by-default (`STELLAVAULT_FEDERATION_EXPERIMENTAL=1` to enable).
 
 ## Autopilot 추가 규칙
 
