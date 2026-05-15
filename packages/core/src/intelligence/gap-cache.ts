@@ -23,12 +23,10 @@ interface GapCacheRow {
   computed_at: string;
 }
 
-// Codex round 2: db-keyed singleflight (WeakMap) — module-scoped 단일 promise
-// 면 multi-vault concurrent 호출 시 B vault 가 A vault 의 GapReport 받는
-// risk. db 인스턴스 별로 분리.
-const inflightByDb = new WeakMap<Database, Promise<GapReport>>();
-// Codex round 2: invalidate 가 in-flight write 를 무효화하도록 generation
-// 토큰. compute 시작 시 캡처 → write 직전 generation 변했으면 skip.
+// Codex round 2-3: db-keyed singleflight + generation-bound inflight.
+// inflight 에 generation 도 함께 저장해서 invalidate 후 들어온 caller 가
+// stale promise 받지 않게 함 (round 3 stale-return race 해소).
+const inflightByDb = new WeakMap<Database, { generation: number; promise: Promise<GapReport> }>();
 const generationByDb = new WeakMap<Database, number>();
 function bumpGeneration(db: Database): number {
   const cur = generationByDb.get(db) ?? 0;
@@ -72,16 +70,21 @@ export function readCachedGapReport(db: Database, maxAgeMs = DEFAULT_MAX_AGE_MS)
  *  duplicating. Generation token ensures stale write skip when invalidate
  *  happened mid-flight. */
 export async function computeAndCacheGaps(store: VectorStore, db: Database): Promise<GapReport> {
+  const currentGeneration = getGeneration(db);
   const existing = inflightByDb.get(db);
-  if (existing) return existing;
-  const startGeneration = getGeneration(db);
-  const p = (async () => {
+  // 같은 generation 의 inflight 면 share (round 2 singleflight).
+  // 다른 generation (invalidate 이후 새 caller) → 새 compute 시작 (round 3
+  // stale-return race 해소).
+  if (existing && existing.generation === currentGeneration) {
+    return existing.promise;
+  }
+  const startGeneration = currentGeneration;
+  const promise = (async () => {
     try {
       ensureGapCacheTable(db);
       const report = await detectKnowledgeGaps(store);
-      // 시작 시 캡처한 generation 과 비교 — invalidateGapCache 가 사이에
-      // 호출됐다면 generation 이 bumped → write skip (fresh recompute 는
-      // 다음 호출에서). 결과는 caller 에게 반환만, cache 에 안 박힘.
+      // write 직전 generation 비교 — invalidate 가 사이에 호출됐다면
+      // generation bumped → write skip (fresh recompute 는 다음 호출에서).
       if (getGeneration(db) === startGeneration) {
         const payload = JSON.stringify(report);
         const now = new Date().toISOString();
@@ -92,11 +95,14 @@ export async function computeAndCacheGaps(store: VectorStore, db: Database): Pro
       }
       return report;
     } finally {
-      inflightByDb.delete(db);
+      // 같은 generation 으로 등록된 entry 만 삭제 (newer caller 의 promise
+      // 덮어쓰기 방지).
+      const cur = inflightByDb.get(db);
+      if (cur?.generation === startGeneration) inflightByDb.delete(db);
     }
   })();
-  inflightByDb.set(db, p);
-  return p;
+  inflightByDb.set(db, { generation: startGeneration, promise });
+  return promise;
 }
 
 /** Drop cache row + bump generation — in-flight compute 의 write 를 무효화.
