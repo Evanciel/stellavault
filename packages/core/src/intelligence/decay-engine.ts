@@ -45,6 +45,12 @@ export class DecayEngine {
         retrievability REAL NOT NULL DEFAULT 1.0,
         updated_at TEXT NOT NULL
       );
+      -- 2026-05-15: getDecaying() 의 'WHERE retrievability < ? ORDER BY
+      -- retrievability ASC' 가 full table scan 으로 1215+ docs vault 에서
+      -- 무거움. index 추가로 sort+filter 둘 다 가속.
+      CREATE INDEX IF NOT EXISTS idx_decay_state_retrievability ON decay_state(retrievability);
+      -- recompute 시 stale row 빠르게 찾기.
+      CREATE INDEX IF NOT EXISTS idx_decay_state_updated_at ON decay_state(updated_at);
     `);
   }
 

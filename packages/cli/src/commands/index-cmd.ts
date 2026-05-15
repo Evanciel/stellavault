@@ -22,6 +22,22 @@ function getVaultDbPath(vaultPath: string): string {
   return join(dir, `${hash}.db`);
 }
 
+/** Resolve final DB path with explicit precedence (2026-05-15):
+ *    1. STELLAVAULT_DB_PATH env (explicit override — wins always)
+ *    2. config.dbPath (from .stellavault.json)
+ *    3. vault-hash-based path (~/.stellavault/vaults/<hash>.db) — fallback
+ *
+ *  Before this fix the CLI ignored the env entirely when a vault path
+ *  argument was passed, forcing downstream consumers (e.g. embedded MCP
+ *  servers, daily reindex scripts) to copy the DB file between locations.
+ */
+function resolveDbPath(vault: string, configDbPath: string | undefined): string {
+  const envDbPath = process.env.STELLAVAULT_DB_PATH?.trim();
+  if (envDbPath) return envDbPath;
+  if (configDbPath) return configDbPath;
+  return getVaultDbPath(vault);
+}
+
 export async function indexCommand(vaultPath?: string, opts: IndexOpts = {}) {
   if (opts.profileMemory) process.env.STELLAVAULT_PROFILE_MEMORY = '1';
 
@@ -32,7 +48,7 @@ export async function indexCommand(vaultPath?: string, opts: IndexOpts = {}) {
     process.exit(1);
   }
 
-  const dbPath = vaultPath ? getVaultDbPath(vault) : config.dbPath;
+  const dbPath = resolveDbPath(vault, config.dbPath);
 
   const existingVaults = listVaults();
   const vaultName = vault.split(/[/\\]/).filter(Boolean).pop() ?? 'vault';

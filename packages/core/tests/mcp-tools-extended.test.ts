@@ -102,9 +102,27 @@ describe('export tool', () => {
 });
 
 // ─── Detect Gaps Tool ────────────────────────────────────
+// 2026-05-15: createDetectGapsTool 시그니처에 db 인자 추가 (gap-cache 통합).
+// test 도 minimal db mock 전달. real test 는 packages/core 의 integration
+// 테스트에서 sqlite-vec 실제 인스턴스로 검증.
+function createMockDb(): any {
+  // gap-cache 가 호출하는 메서드만 stub. 실제 SELECT/INSERT 는 ensureGapCacheTable
+  // + readCached + INSERT 에서 일어남. test 에서는 cache miss 후 live compute
+  // 경로 검증 — 따라서 SELECT 결과 undefined → fallthrough 로 진행.
+  return {
+    exec: () => {},
+    prepare: (_sql: string) => ({
+      get: () => undefined,
+      run: () => {},
+      all: () => [],
+    }),
+  };
+}
+
 describe('detect-gaps tool', () => {
   it('schema 유효', () => {
-    const tool = createDetectGapsTool(createMockStore());
+    const db = createMockDb();
+    const tool = createDetectGapsTool(createMockStore(), () => db);
     expect(tool.name).toBe('detect-gaps');
     expect(tool.inputSchema.properties.minSeverity).toBeDefined();
   });
@@ -115,7 +133,8 @@ describe('detect-gaps tool', () => {
     (store as any).getAllDocuments = async () => [mockDoc];
     (store as any).searchSemantic = async () => [];
 
-    const tool = createDetectGapsTool(store);
+    const db = createMockDb();
+    const tool = createDetectGapsTool(store, () => db);
     const result = await tool.handler({});
     expect(result.content).toBeDefined();
     expect(result.content[0].type).toBe('text');

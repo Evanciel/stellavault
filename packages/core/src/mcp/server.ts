@@ -47,7 +47,10 @@ export function createMcpServer(options: McpServerOptions) {
   const ready = options.ready ?? Promise.resolve();
 
   const learningPathTool = createLearningPathTool(store);
-  const detectGapsTool = createDetectGapsTool(store);
+  // 2026-05-15: detect-gaps 가 SQLite gap_cache 사용. lazy db getter —
+  // lazy init 구조에서 server boot 시점엔 db 미초기화이므로 handler 실행
+  // 시점에 resolve. Codex review #2.
+  const detectGapsTool = createDetectGapsTool(store, () => store.getDb() as any);
   const getEvolutionTool = createGetEvolutionTool(store);
   const linkCodeTool = createLinkCodeTool(searchEngine);
   const askTool = createAskTool(searchEngine, vaultPath);

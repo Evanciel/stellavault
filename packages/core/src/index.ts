@@ -22,7 +22,7 @@ export type { Embedder } from './indexer/embedder.js';
 export { createSqliteVecStore } from './store/index.js';
 
 // Indexer
-export { indexVault, scanVault, chunkDocument, createLocalEmbedder } from './indexer/index.js';
+export { indexVault, scanVault, chunkDocument, createLocalEmbedder, createWatcher } from './indexer/index.js';
 export type { IndexResult, IndexerOptions, SkipReason, SkippedFile } from './indexer/index.js';
 
 // Search
@@ -31,6 +31,9 @@ export type { SearchEngine } from './search/index.js';
 
 // MCP
 export { createMcpServer } from './mcp/index.js';
+
+// Intelligence (gap cache for explicit invalidation by callers — 2026-05-15)
+export { invalidateGapCache, readCachedGapReport, computeAndCacheGaps, getGapReport } from './intelligence/gap-cache.js';
 
 // Pack (Phase 3)
 export { createPack, exportPack, importPack, packToSummary, maskPII } from './pack/index.js';
