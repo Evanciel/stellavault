@@ -23,9 +23,22 @@ interface GapCacheRow {
   computed_at: string;
 }
 
-// Codex 2026-05-15: in-process singleflight — 동시 cache miss / forceRefresh
-// 가 같은 graph build 를 중복 호출하지 않도록 inflight Promise 공유.
-let inflightCompute: Promise<GapReport> | null = null;
+// Codex round 2: db-keyed singleflight (WeakMap) — module-scoped 단일 promise
+// 면 multi-vault concurrent 호출 시 B vault 가 A vault 의 GapReport 받는
+// risk. db 인스턴스 별로 분리.
+const inflightByDb = new WeakMap<Database, Promise<GapReport>>();
+// Codex round 2: invalidate 가 in-flight write 를 무효화하도록 generation
+// 토큰. compute 시작 시 캡처 → write 직전 generation 변했으면 skip.
+const generationByDb = new WeakMap<Database, number>();
+function bumpGeneration(db: Database): number {
+  const cur = generationByDb.get(db) ?? 0;
+  const next = cur + 1;
+  generationByDb.set(db, next);
+  return next;
+}
+function getGeneration(db: Database): number {
+  return generationByDb.get(db) ?? 0;
+}
 
 export function ensureGapCacheTable(db: Database): void {
   db.exec(`
@@ -55,33 +68,44 @@ export function readCachedGapReport(db: Database, maxAgeMs = DEFAULT_MAX_AGE_MS)
 }
 
 /** Compute fresh gap report + persist to cache (atomic upsert). Singleflight
- *  so concurrent callers share one graph-build (30s+) instead of duplicating. */
+ *  per-db so concurrent callers share one graph-build (30s+) instead of
+ *  duplicating. Generation token ensures stale write skip when invalidate
+ *  happened mid-flight. */
 export async function computeAndCacheGaps(store: VectorStore, db: Database): Promise<GapReport> {
-  if (inflightCompute) return inflightCompute;
-  inflightCompute = (async () => {
+  const existing = inflightByDb.get(db);
+  if (existing) return existing;
+  const startGeneration = getGeneration(db);
+  const p = (async () => {
     try {
       ensureGapCacheTable(db);
       const report = await detectKnowledgeGaps(store);
-      const payload = JSON.stringify(report);
-      const now = new Date().toISOString();
-      db.prepare(
-        `INSERT INTO gap_cache (id, payload, version, computed_at) VALUES (1, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, version = excluded.version, computed_at = excluded.computed_at`,
-      ).run(payload, CACHE_VERSION, now);
+      // 시작 시 캡처한 generation 과 비교 — invalidateGapCache 가 사이에
+      // 호출됐다면 generation 이 bumped → write skip (fresh recompute 는
+      // 다음 호출에서). 결과는 caller 에게 반환만, cache 에 안 박힘.
+      if (getGeneration(db) === startGeneration) {
+        const payload = JSON.stringify(report);
+        const now = new Date().toISOString();
+        db.prepare(
+          `INSERT INTO gap_cache (id, payload, version, computed_at) VALUES (1, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, version = excluded.version, computed_at = excluded.computed_at`,
+        ).run(payload, CACHE_VERSION, now);
+      }
       return report;
     } finally {
-      inflightCompute = null;
+      inflightByDb.delete(db);
     }
   })();
-  return inflightCompute;
+  inflightByDb.set(db, p);
+  return p;
 }
 
-/** Drop cache row — caller should invoke after reindex to force fresh compute
- *  on next request. Idempotent. */
+/** Drop cache row + bump generation — in-flight compute 의 write 를 무효화.
+ *  Caller should invoke after reindex. Idempotent. */
 export function invalidateGapCache(db: Database): void {
   try {
     ensureGapCacheTable(db);
     db.prepare('DELETE FROM gap_cache WHERE id = 1').run();
+    bumpGeneration(db); // in-flight compute 가 끝났을 때 stale write skip
   } catch { /* ignore */ }
 }
 
