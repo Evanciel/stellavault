@@ -13,13 +13,14 @@ const cfg = (
   ({ search: { defaultLimit: 10, rrfK: 60, weights, recencyWeight } } as unknown as StellavaultConfig);
 
 describe('search weight config (B3)', () => {
-  it('11. defaults are weights {1,1,0.5} + recencyWeight 0.2', () => {
+  it('11. defaults are weights {1,1,1.5} + recencyWeight 0.2', () => {
+    // explicit config values pass through unchanged
     expect(resolveSearchWeights(cfg({ semantic: 1, bm25: 1, entity: 0.5 }, 0.2), {})).toEqual({
       semantic: 1, bm25: 1, entity: 0.5, recency: 0.2,
     });
-    // missing config falls back to the built-in research defaults
+    // missing config falls back to the built-in defaults (entity 1.5 since B2.1)
     expect(resolveSearchWeights(cfg(undefined, undefined), {})).toEqual({
-      semantic: 1, bm25: 1, entity: 0.5, recency: 0.2,
+      semantic: 1, bm25: 1, entity: 1.5, recency: 0.2,
     });
   });
 

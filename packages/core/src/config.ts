@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: StellavaultConfig = {
   search: {
     defaultLimit: 10,
     rrfK: 60,
-    weights: { semantic: 1.0, bm25: 1.0, entity: 0.5 }, // B3 §1.2
+    weights: { semantic: 1.0, bm25: 1.0, entity: 1.5 }, // B2.1: entity leads (per-doc cap prevents flooding)
     recencyWeight: 0.2,                                  // B3 §1.3 (±10% bound)
   },
   mcp: {
@@ -130,7 +130,7 @@ export function resolveSearchWeights(
   const base: SearchWeightConfig = {
     semantic: config.search.weights?.semantic ?? 1.0,
     bm25: config.search.weights?.bm25 ?? 1.0,
-    entity: config.search.weights?.entity ?? 0.5,
+    entity: config.search.weights?.entity ?? 1.5,
     recency: config.search.recencyWeight ?? 0.2,
   };
   const parse = (raw: string | undefined, min: number, max: number): number | undefined => {

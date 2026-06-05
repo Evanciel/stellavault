@@ -132,39 +132,41 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
         .filter(t => t.length >= 4 && (/\s/.test(t) || /[^\x00-\x7f]/.test(t) || t.length >= 6))
         .slice(0, 16);
 
+      // Inner "matched (chunk_id, score)". exact weighted 1.0, fuzzy-only 0.4; the
+      // NOT IN guard avoids counting an exact hit again via its own substring.
+      let matched: string;
+      let matchedParams: unknown[];
       if (fuzzy.length === 0) {
-        const rows = db.prepare(`
-          SELECT chunk_id, COUNT(*) AS score
-          FROM chunk_entities
-          WHERE entity IN (${exactPH})
-          GROUP BY chunk_id
-          ORDER BY score DESC
-          LIMIT ?
-        `).all(...entities, limit) as Array<{ chunk_id: string; score: number }>;
-        return rows.map(r => ({ chunkId: r.chunk_id, score: r.score }));
+        matched = `SELECT chunk_id, CAST(COUNT(*) AS REAL) AS score FROM chunk_entities WHERE entity IN (${exactPH}) GROUP BY chunk_id`;
+        matchedParams = [...entities];
+      } else {
+        const esc = (t: string) => t.replace(/[\\%_]/g, '\\$&');
+        const likeClause = fuzzy.map(() => `entity LIKE ? ESCAPE '\\'`).join(' OR ');
+        matched = `
+          SELECT chunk_id, SUM(w) AS score FROM (
+            SELECT chunk_id, 1.0 AS w FROM chunk_entities WHERE entity IN (${exactPH})
+            UNION ALL
+            SELECT chunk_id, 0.4 AS w FROM chunk_entities
+              WHERE (${likeClause}) AND entity NOT IN (${exactPH})
+          ) GROUP BY chunk_id`;
+        matchedParams = [...entities, ...fuzzy.map(t => `%${esc(t)}%`), ...entities];
       }
 
-      // exact match weighted 1.0, fuzzy-only 0.4. rrfFusionN ranks by position, so
-      // this orders exact-matched chunks ahead of fuzzy-only ones. The NOT IN guard
-      // avoids counting an exact hit a second time via its own substring.
-      const esc = (t: string) => t.replace(/[\\%_]/g, '\\$&');
-      const likeClause = fuzzy.map(() => `entity LIKE ? ESCAPE '\\'`).join(' OR ');
+      // B2.1 — document-diversity cap: keep at most 2 chunks per document so a single
+      // large note can't monopolize the entity signal (the cause of top-k "flooding"
+      // when the entity weight is raised). Then take the top `limit` overall. rrfFusionN
+      // ranks by position, so higher-scoring (exact > fuzzy, more matches) chunks lead.
       const rows = db.prepare(`
-        SELECT chunk_id, SUM(w) AS score FROM (
-          SELECT chunk_id, 1.0 AS w FROM chunk_entities WHERE entity IN (${exactPH})
-          UNION ALL
-          SELECT chunk_id, 0.4 AS w FROM chunk_entities
-            WHERE (${likeClause}) AND entity NOT IN (${exactPH})
+        SELECT chunk_id, score FROM (
+          SELECT m.chunk_id AS chunk_id, m.score AS score,
+                 ROW_NUMBER() OVER (PARTITION BY c.document_id ORDER BY m.score DESC, m.chunk_id) AS rn
+          FROM (${matched}) m
+          JOIN chunks c ON c.id = m.chunk_id
         )
-        GROUP BY chunk_id
-        ORDER BY score DESC
+        WHERE rn <= 2
+        ORDER BY score DESC, chunk_id
         LIMIT ?
-      `).all(
-        ...entities,
-        ...fuzzy.map(t => `%${esc(t)}%`),
-        ...entities,
-        limit,
-      ) as Array<{ chunk_id: string; score: number }>;
+      `).all(...matchedParams, limit) as Array<{ chunk_id: string; score: number }>;
       return rows.map(r => ({ chunkId: r.chunk_id, score: r.score }));
     },
 

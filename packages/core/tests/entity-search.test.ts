@@ -89,6 +89,20 @@ describe('fuzzy entity matching (B2.1)', () => {
     expect(ei).toBeLessThan(fi); // exact (1.0) ranks above fuzzy-only (0.4)
   });
 
+  it('caps entity results to 2 chunks per document (diversity, anti-flooding)', async () => {
+    await store.upsertDocument({
+      id: 'big', filePath: 'big.md', title: 'Big', content: 'c', frontmatter: {},
+      tags: [], lastModified: '2026-01-01', contentHash: 'b',
+    });
+    await store.upsertChunks([0, 1, 2, 3].map(i => ({
+      id: `big#${i}`, documentId: 'big', content: 'x', heading: '', startLine: 0, endLine: 1,
+      tokenCount: 1, embedding: [0.1, 0.1, 0.1, 0.1], entities: ['quantum ledger'],
+    })));
+    const r = await store.searchEntities(['quantum ledger'], 10);
+    const fromBig = r.filter(x => x.chunkId.startsWith('big#'));
+    expect(fromBig.length).toBe(2); // 4 matching chunks in one doc → capped at 2
+  });
+
   it('keeps short/common tokens exact-only (no fuzzy noise)', async () => {
     await store.upsertChunks([
       { id: 'd1#0', documentId: 'd1', content: 'x', heading: '', startLine: 0, endLine: 1, tokenCount: 1, embedding: [0.1, 0.1, 0.1, 0.1], entities: ['ai destiny (운명 프리즘)'] },

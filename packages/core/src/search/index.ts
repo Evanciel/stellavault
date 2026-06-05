@@ -30,7 +30,9 @@ export interface SignalWeights {
 export const DEFAULT_SIGNAL_WEIGHTS: Required<SignalWeights> = {
   semantic: 1.0,
   bm25: 1.0,
-  entity: 0.5,   // conservative: ~20% candidate coverage (arxiv 2508.01405)
+  entity: 1.5,   // B2.1: leading curated-graph signal. Per-doc cap in searchEntities
+                 // prevents one large note flooding top-k. Tune via STELLAVAULT_W_ENTITY
+                 // (e.g. 2.0 for aggressive project-name surfacing, 0.5 for conservative).
   recency: 0.2,  // ±10% bound on relevance
 };
 
