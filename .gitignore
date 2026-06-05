@@ -40,6 +40,8 @@ run-sync.bat
 # OS
 .DS_Store
 Thumbs.db
+# PowerShell module-analysis cache (leaks into cwd when LOCALAPPDATA unset)
+Microsoft/
 
 # IDE
 .idea/
