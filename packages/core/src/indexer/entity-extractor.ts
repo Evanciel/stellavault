@@ -28,9 +28,16 @@ const STOPWORDS = new Set([
   'who', 'where', 'a', 'an', 'of', 'to', 'in', 'on', 'is', 'it', 'or', 'as',
 ]);
 
-/** Normalize an entity string: collapse whitespace, trim, lowercase. */
+/**
+ * Normalize an entity string: strip punctuation to spaces, collapse whitespace,
+ * trim, lowercase. (B2.1) Punctuation stripping makes stored entities symmetric
+ * with query tokenization (extractQueryTerms also strips non-alphanumerics), so a
+ * heading/title like "AI Destiny (운명 프리즘)" stores as "ai destiny 운명 프리즘"
+ * instead of keeping the parens that blocked exact matching. Takes effect on the
+ * next reindex; existing indexes are bridged by fuzzy matching in searchEntities.
+ */
 function normalize(s: string): string {
-  return s.replace(/\s+/g, ' ').trim().toLowerCase();
+  return s.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function isMeaningful(n: string): boolean {

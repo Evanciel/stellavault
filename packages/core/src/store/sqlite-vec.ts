@@ -121,17 +121,51 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
 
     async searchEntities(entities: string[], limit: number): Promise<ScoredChunk[]> {
       if (!entities || entities.length === 0) return [];
-      const placeholders = entities.map(() => '?').join(',');
-      const rows = db.prepare(`
-        SELECT chunk_id, COUNT(*) as matches
-        FROM chunk_entities
-        WHERE entity IN (${placeholders})
-        GROUP BY chunk_id
-        ORDER BY matches DESC
-        LIMIT ?
-      `).all(...entities, limit) as Array<{ chunk_id: string; matches: number }>;
+      const exactPH = entities.map(() => '?').join(',');
 
-      return rows.map(r => ({ chunkId: r.chunk_id, score: r.matches }));
+      // B2.1 — fuzzy substring matching for substantial terms (multi-word, non-Latin,
+      // or long single tokens), so a natural-language query phrase still matches a
+      // longer stored entity (e.g. "운명 프리즘" ⊂ "ai destiny (운명 프리즘)") without a
+      // reindex. Short/common tokens (e.g. "ai", "db", "운명") stay exact-only to
+      // avoid noise + a costly LIKE scan.
+      const fuzzy = entities
+        .filter(t => t.length >= 4 && (/\s/.test(t) || /[^\x00-\x7f]/.test(t) || t.length >= 6))
+        .slice(0, 16);
+
+      if (fuzzy.length === 0) {
+        const rows = db.prepare(`
+          SELECT chunk_id, COUNT(*) AS score
+          FROM chunk_entities
+          WHERE entity IN (${exactPH})
+          GROUP BY chunk_id
+          ORDER BY score DESC
+          LIMIT ?
+        `).all(...entities, limit) as Array<{ chunk_id: string; score: number }>;
+        return rows.map(r => ({ chunkId: r.chunk_id, score: r.score }));
+      }
+
+      // exact match weighted 1.0, fuzzy-only 0.4. rrfFusionN ranks by position, so
+      // this orders exact-matched chunks ahead of fuzzy-only ones. The NOT IN guard
+      // avoids counting an exact hit a second time via its own substring.
+      const esc = (t: string) => t.replace(/[\\%_]/g, '\\$&');
+      const likeClause = fuzzy.map(() => `entity LIKE ? ESCAPE '\\'`).join(' OR ');
+      const rows = db.prepare(`
+        SELECT chunk_id, SUM(w) AS score FROM (
+          SELECT chunk_id, 1.0 AS w FROM chunk_entities WHERE entity IN (${exactPH})
+          UNION ALL
+          SELECT chunk_id, 0.4 AS w FROM chunk_entities
+            WHERE (${likeClause}) AND entity NOT IN (${exactPH})
+        )
+        GROUP BY chunk_id
+        ORDER BY score DESC
+        LIMIT ?
+      `).all(
+        ...entities,
+        ...fuzzy.map(t => `%${esc(t)}%`),
+        ...entities,
+        limit,
+      ) as Array<{ chunk_id: string; score: number }>;
+      return rows.map(r => ({ chunkId: r.chunk_id, score: r.score }));
     },
 
     async getDocument(documentId: string): Promise<Document | null> {

@@ -51,6 +51,13 @@ describe('extractEntities (index-time)', () => {
     expect(e).not.toContain('the');
     expect(e).not.toContain('and');
   });
+
+  it('strips punctuation from entities (B2.1 normalization)', () => {
+    const e = extractEntities({ content: '', title: 'AI Destiny (운명 프리즘)', heading: 'Plan: Fate-Window!' });
+    expect(e).toContain('ai destiny 운명 프리즘'); // parens stripped → space
+    expect(e).toContain('plan fate window');       // colon/hyphen/bang → space
+    expect(e).not.toContain('ai destiny (운명 프리즘)');
+  });
 });
 
 describe('extractQueryTerms (query-time)', () => {
