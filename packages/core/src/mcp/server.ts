@@ -65,7 +65,7 @@ export function createMcpServer(options: McpServerOptions) {
   const agenticTools = embedder ? createAgenticGraphTools(store, embedder, vaultPath) : [];
 
   const server = new Server(
-    { name: 'stellavault', version: '0.8.2' },
+    { name: 'stellavault', version: '0.8.3' },
     { capabilities: { tools: {} } },
   );
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.3] - 2026-06-05
+
+### Added
+- **Optional entity synonym/alias groups (B2.2)** — `search.entityAliases` maps synonym groups for the (lexical) entity signal, e.g. `{ "자비스": ["jarvis"], "k8s": ["kubernetes"] }`. Query terms expand to their synonyms (bidirectional, transitive within a group), enabling cross-lingual and abbreviation matching that transliteration can't recover deterministically. Alias terms match **exact-only** (never fuzzy-broadened) for precision. **Off by default** (empty) — zero behavior change unless configured.
+
+### Notes
+- Broad cross-lingual *recall* is already provided by the **multilingual embedding (semantic)** signal — a Korean query surfaces English-titled notes with no config (e.g. "자비스" already finds the Jarvis notes). `entityAliases` is a precise opt-in boost for the curated entity graph across languages/abbreviations; most effective for **bare-term entities** (tags / `[[wikilinks]]`) rather than full-title entities.
+
+### Tests
+- `@stellavault/core`: 241 → **245** (alias index build/expand + exact-only cross-lingual bridge).
+
 ## [0.8.2] - 2026-06-05
 
 ### Improved
