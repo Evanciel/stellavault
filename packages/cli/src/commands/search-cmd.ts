@@ -20,6 +20,7 @@ export async function searchCommand(query: string, options: { limit?: string }, 
   const engine = createSearchEngine({
     store, embedder, rrfK: config.search.rrfK,
     weights: { semantic: sw.semantic, bm25: sw.bm25, entity: sw.entity, recency: sw.recency },
+    entityAliases: config.search.entityAliases, // B2.2
   });
   const results = await engine.search({ query, limit });
 

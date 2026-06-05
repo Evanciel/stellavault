@@ -31,6 +31,9 @@ export interface StellavaultConfig {
     weights?: { semantic?: number; bm25?: number; entity?: number };
     /** B3 §1.3 — strength of the FSRS recency multiplier (0 = off). */
     recencyWeight?: number;
+    /** B2.2 — cross-lingual / abbreviation synonym groups for entity matching,
+     *  e.g. { "자비스": ["jarvis"] }. Query terms expand to their synonyms. */
+    entityAliases?: Record<string, string[]>;
   };
   mcp: {
     mode: 'stdio' | 'sse';
@@ -63,6 +66,7 @@ const DEFAULT_CONFIG: StellavaultConfig = {
     rrfK: 60,
     weights: { semantic: 1.0, bm25: 1.0, entity: 1.5 }, // B2.1: entity leads (per-doc cap prevents flooding)
     recencyWeight: 0.2,                                  // B3 §1.3 (±10% bound)
+    entityAliases: {},                                   // B2.2 — user-defined synonym groups
   },
   mcp: {
     mode: 'stdio',
@@ -104,6 +108,8 @@ function mergeConfig(defaults: StellavaultConfig, overrides: Partial<Stellavault
       ...overrides.search,
       // B3 §4 — deep-merge weights so a partial override keeps the other defaults.
       weights: { ...defaults.search.weights, ...overrides.search?.weights },
+      // B2.2 — merge alias groups (override wins per-key).
+      entityAliases: { ...defaults.search.entityAliases, ...overrides.search?.entityAliases },
     },
     mcp: { ...defaults.mcp, ...overrides.mcp },
   };

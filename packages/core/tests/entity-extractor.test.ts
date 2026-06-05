@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractEntities, extractQueryTerms } from '../src/indexer/entity-extractor.js';
+import { extractEntities, extractQueryTerms, buildAliasIndex, expandWithAliases } from '../src/indexer/entity-extractor.js';
 
 describe('extractEntities (index-time)', () => {
   it('extracts wikilink targets, stripping alias and section', () => {
@@ -89,5 +89,24 @@ describe('extractQueryTerms (query-time)', () => {
     const t = extractQueryTerms('지식 관리 방법');
     expect(t).toContain('지식');
     expect(t).toContain('지식 관리');
+  });
+});
+
+describe('entity aliases (B2.2 cross-lingual)', () => {
+  it('builds a bidirectional, normalized synonym index', () => {
+    const idx = buildAliasIndex({ '자비스': ['Jarvis'] });
+    expect(idx.get('자비스')).toContain('jarvis'); // value normalized to lowercase
+    expect(idx.get('jarvis')).toContain('자비스'); // bidirectional
+  });
+
+  it('ignores singleton/empty groups', () => {
+    expect(buildAliasIndex({ lonely: [] }).size).toBe(0);
+    expect(buildAliasIndex(undefined).size).toBe(0);
+  });
+
+  it('expandWithAliases adds synonyms; no-op without an index', () => {
+    const idx = buildAliasIndex({ '자비스': ['jarvis'] });
+    expect(expandWithAliases(['자비스', '음성'], idx)).toContain('jarvis');
+    expect(expandWithAliases(['자비스'], undefined)).toEqual(['자비스']);
   });
 });

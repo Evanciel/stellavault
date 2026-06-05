@@ -7,6 +7,7 @@ import { searchBm25 } from './bm25.js';
 import { searchSemantic } from './semantic.js';
 import { searchEntities } from './entity.js';
 import { rrfFusionN } from './rrf.js';
+import { buildAliasIndex } from '../indexer/entity-extractor.js';
 import type { ScoredChunk } from '../types/chunk.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 
@@ -48,9 +49,13 @@ export function createSearchEngine(deps: {
    *  DB is initialized (lazy-init arch) or when recency is unavailable (e.g. the
    *  CLI fresh-process path) → recency cleanly disabled, weights still apply. (B3 §3.4) */
   getDecayEngine?: () => DecayEngine | undefined;
+  /** Synonym groups for cross-lingual / abbreviation entity matching, e.g.
+   *  { "자비스": ["jarvis"] }. Expands query terms before the entity lookup. (B2.2) */
+  entityAliases?: Record<string, string[]>;
 }): SearchEngine {
   const { store, embedder, rrfK = 60, getDecayEngine } = deps;
   const baseWeights = { ...DEFAULT_SIGNAL_WEIGHTS, ...deps.weights };
+  const aliasIndex = buildAliasIndex(deps.entityAliases); // B2.2 — empty → no-op
   const FETCH_LIMIT = 30; // 각 검색에서 가져올 후보 수
 
   return {
@@ -64,7 +69,7 @@ export function createSearchEngine(deps: {
       const [bm25Results, semanticResults, entityResults] = await Promise.all([
         searchBm25(store, query, FETCH_LIMIT),
         searchSemantic(store, embedder, query, FETCH_LIMIT),
-        searchEntities(store, query, FETCH_LIMIT),
+        searchEntities(store, query, FETCH_LIMIT, aliasIndex),
       ]);
 
       // POSITIONAL: [semantic, bm25, entity] — the weights array MUST match this order.

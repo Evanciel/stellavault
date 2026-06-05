@@ -176,6 +176,7 @@ export function createKnowledgeHub(
     rrfK: config.search.rrfK,
     weights: { semantic: sw.semantic, bm25: sw.bm25, entity: sw.entity, recency: sw.recency },
     getDecayEngine,
+    entityAliases: config.search.entityAliases, // B2.2 — cross-lingual/synonym groups
   });
   const mcpServer = _createMcp({ store, searchEngine, vaultPath: config.vaultPath, ready: options.ready });
 

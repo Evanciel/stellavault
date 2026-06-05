@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createSqliteVecStore } from '../src/store/sqlite-vec.js';
 import { createSearchEngine } from '../src/search/index.js';
+import { buildAliasIndex, expandWithAliases, extractQueryTerms } from '../src/indexer/entity-extractor.js';
 import type { VectorStore } from '../src/store/types.js';
 import type { Embedder } from '../src/indexer/embedder.js';
 
@@ -101,6 +102,20 @@ describe('fuzzy entity matching (B2.1)', () => {
     const r = await store.searchEntities(['quantum ledger'], 10);
     const fromBig = r.filter(x => x.chunkId.startsWith('big#'));
     expect(fromBig.length).toBe(2); // 4 matching chunks in one doc → capped at 2
+  });
+
+  it('bridges a Korean query to an English entity via alias (B2.2)', async () => {
+    await store.upsertChunks([
+      { id: 'j#0', documentId: 'd1', content: 'voice assistant', heading: '', startLine: 0, endLine: 1, tokenCount: 2, embedding: [0.3, 0.3, 0.3, 0.3], entities: ['jarvis'] },
+    ]);
+    const idx = buildAliasIndex({ '자비스': ['jarvis'] });
+    const terms = extractQueryTerms('자비스 음성');
+    const aliasExact = expandWithAliases(terms, idx).filter(t => !terms.includes(t)); // ['jarvis']
+    const withAlias = await store.searchEntities(terms, 10, aliasExact);
+    const without = await store.searchEntities(terms, 10);
+    expect(aliasExact).toContain('jarvis');
+    expect(withAlias.some(x => x.chunkId === 'j#0')).toBe(true);  // alias bridges 자비스 → jarvis (exact)
+    expect(without.some(x => x.chunkId === 'j#0')).toBe(false);   // no bridge → no entity match
   });
 
   it('keeps short/common tokens exact-only (no fuzzy noise)', async () => {

@@ -145,3 +145,40 @@ export function extractQueryTerms(query: string): string[] {
 
   return [...set].slice(0, MAX_QUERY_TERMS);
 }
+
+/**
+ * B2.2 — build a normalized synonym index from config aliases. Each group (a key
+ * plus its aliases) becomes fully connected: any member expands to all the others.
+ * This is the cross-lingual / abbreviation bridge for the (lexical) entity signal —
+ * e.g. { "자비스": ["jarvis"] } lets a Korean query "자비스" also match the stored
+ * English entity "jarvis", which transliteration cannot recover deterministically.
+ * Bidirectional and transitive within a group; entries are normalized like query terms.
+ */
+export function buildAliasIndex(aliases?: Record<string, string[]>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  if (!aliases) return index;
+  for (const [key, arr] of Object.entries(aliases)) {
+    const group = [normalize(key), ...(Array.isArray(arr) ? arr : []).map(normalize)].filter(Boolean);
+    const uniq = [...new Set(group)];
+    if (uniq.length < 2) continue; // a group needs >=2 members to bridge anything
+    for (const term of uniq) {
+      const others = uniq.filter((t) => t !== term);
+      index.set(term, [...new Set([...(index.get(term) ?? []), ...others])]);
+    }
+  }
+  return index;
+}
+
+/**
+ * B2.2 — expand query terms with their configured synonyms (normalized, deduped,
+ * capped). No-op when the index is empty, so the default path is unchanged.
+ */
+export function expandWithAliases(terms: string[], aliasIndex?: Map<string, string[]>): string[] {
+  if (!aliasIndex || aliasIndex.size === 0) return terms;
+  const out = new Set(terms);
+  for (const t of terms) {
+    const syn = aliasIndex.get(t);
+    if (syn) for (const s of syn) out.add(s);
+  }
+  return [...out].slice(0, MAX_QUERY_TERMS);
+}

@@ -119,15 +119,19 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
       }));
     },
 
-    async searchEntities(entities: string[], limit: number): Promise<ScoredChunk[]> {
-      if (!entities || entities.length === 0) return [];
-      const exactPH = entities.map(() => '?').join(',');
+    async searchEntities(entities: string[], limit: number, exactExtra: string[] = []): Promise<ScoredChunk[]> {
+      if ((!entities || entities.length === 0) && exactExtra.length === 0) return [];
+      // B2.2 — alias/synonym terms (exactExtra, e.g. "jarvis" from a "자비스" query)
+      // match EXACT only. They are precise synonyms, so they must NOT go through the
+      // fuzzy substring path (which would broadly match "jarvis agent core", etc.).
+      const allExact = [...entities, ...exactExtra];
+      const exactPH = allExact.map(() => '?').join(',');
 
-      // B2.1 — fuzzy substring matching for substantial terms (multi-word, non-Latin,
-      // or long single tokens), so a natural-language query phrase still matches a
-      // longer stored entity (e.g. "운명 프리즘" ⊂ "ai destiny (운명 프리즘)") without a
-      // reindex. Short/common tokens (e.g. "ai", "db", "운명") stay exact-only to
-      // avoid noise + a costly LIKE scan.
+      // B2.1 — fuzzy substring matching for substantial *query* terms (multi-word,
+      // non-Latin, or long single tokens), so a natural-language phrase still matches
+      // a longer stored entity (e.g. "운명 프리즘" ⊂ "ai destiny (운명 프리즘)") without
+      // a reindex. Short/common tokens (e.g. "ai", "db", "운명") and alias terms stay
+      // exact-only to avoid noise + a costly LIKE scan.
       const fuzzy = entities
         .filter(t => t.length >= 4 && (/\s/.test(t) || /[^\x00-\x7f]/.test(t) || t.length >= 6))
         .slice(0, 16);
@@ -138,7 +142,7 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
       let matchedParams: unknown[];
       if (fuzzy.length === 0) {
         matched = `SELECT chunk_id, CAST(COUNT(*) AS REAL) AS score FROM chunk_entities WHERE entity IN (${exactPH}) GROUP BY chunk_id`;
-        matchedParams = [...entities];
+        matchedParams = [...allExact];
       } else {
         const esc = (t: string) => t.replace(/[\\%_]/g, '\\$&');
         const likeClause = fuzzy.map(() => `entity LIKE ? ESCAPE '\\'`).join(' OR ');
@@ -149,7 +153,7 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
             SELECT chunk_id, 0.4 AS w FROM chunk_entities
               WHERE (${likeClause}) AND entity NOT IN (${exactPH})
           ) GROUP BY chunk_id`;
-        matchedParams = [...entities, ...fuzzy.map(t => `%${esc(t)}%`), ...entities];
+        matchedParams = [...allExact, ...fuzzy.map(t => `%${esc(t)}%`), ...allExact];
       }
 
       // B2.1 — document-diversity cap: keep at most 2 chunks per document so a single

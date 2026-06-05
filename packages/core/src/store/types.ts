@@ -9,8 +9,9 @@ export interface VectorStore {
   deleteByDocumentId(documentId: string): Promise<void>;
   searchSemantic(embedding: number[], limit: number): Promise<ScoredChunk[]>;
   searchKeyword(query: string, limit: number): Promise<ScoredChunk[]>;
-  /** 엔티티(위키링크/태그/명사구) 겹침 기반 검색 — Upgrade B2 */
-  searchEntities(entities: string[], limit: number): Promise<ScoredChunk[]>;
+  /** 엔티티(위키링크/태그/명사구) 겹침 기반 검색 — Upgrade B2.
+   *  exactExtra: alias/synonym terms matched EXACT-only (no fuzzy broadening). B2.2 */
+  searchEntities(entities: string[], limit: number, exactExtra?: string[]): Promise<ScoredChunk[]>;
   getDocument(documentId: string): Promise<Document | null>;
   getChunk(chunkId: string): Promise<Chunk | null>;
   getAllDocuments(): Promise<Document[]>;
