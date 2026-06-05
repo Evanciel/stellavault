@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.2] - 2026-06-05
+
+### Improved
+- **Entity signal — document-diversity cap + higher default weight (B2.1)**. Raising the entity weight so it actually re-ranks results previously caused **flooding** (top-k filled with many chunks of one large note). Fixed by capping the entity signal to **2 chunks per document** (window function in `searchEntities`) so a single note can't monopolize. With flooding solved, the default entity weight is raised **0.5 → 1.5** — entity is now the leading curated-graph signal (semantic/BM25 stay 1.0). Tune via `STELLAVAULT_W_ENTITY` (e.g. `2.0` for aggressive project-name surfacing, `0.5` for conservative).
+- Net: tag/heading and many natural-language queries now visibly re-rank toward entity-relevant notes by default (e.g. "PDCA 워크플로우" surfaces a different, more entity-relevant top-5), while a held-out general query stays stable (no over-boost) and results stay diverse. Large single-note project queries (e.g. "운명 프리즘") surface their project notes at `STELLAVAULT_W_ENTITY=2.0`, now flood-safe via the per-doc cap.
+
+### Tests
+- `@stellavault/core`: 240 → **241** (per-document diversity cap).
+
 ## [0.8.1] - 2026-06-05
 
 ### Improved
