@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.1] - 2026-06-05
+
+### Improved
+- **Entity matching — normalization + fuzzy substring (B2.1)**. The entity signal previously matched query n-grams against stored entities by **exact equality**, so natural-language queries rarely fired it (stored headings/titles like `ai destiny (운명 프리즘)` keep punctuation that query tokenization strips). Now:
+  - `searchEntities` adds **fuzzy substring matching** for substantial terms (multi-word, non-Latin, or ≥6 chars): a query phrase matches a longer stored entity (`"운명 프리즘"` ⊂ `"ai destiny (운명 프리즘)"`) — **no reindex required** (works on existing indexes). Exact matches are weighted 1.0, fuzzy-only 0.4, so exact-matched chunks still rank first. Short/common tokens (`ai`, `db`, `운명`) stay exact-only to avoid noise.
+  - Entity `normalize()` now **strips punctuation** (symmetric with query tokenization), so future reindexes store cleaner entities (`ai destiny 운명 프리즘`). Takes effect on next reindex; existing indexes are bridged by the fuzzy match above.
+- Net effect: the entity signal now fires for natural-language queries (verified: `LIKE '%운명 프리즘%'` → 1,883 matches vs 0 exact). Visible re-ranking remains gated by the conservative default entity weight (0.5, tune via `STELLAVAULT_W_ENTITY`).
+
+### Tests
+- `@stellavault/core`: 236 → **240** (fuzzy substring + exact-over-fuzzy ranking + short-token guard + punctuation-strip normalization).
+
+### Commits
+(entity fuzzy/normalization follow-up to 0.8.0)
+
 ## [0.8.0] - 2026-06-05
 
 ### Added
