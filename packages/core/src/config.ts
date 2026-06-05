@@ -27,6 +27,10 @@ export interface StellavaultConfig {
   search: {
     defaultLimit: number;
     rrfK: number;
+    /** B3 §4 — per-signal RRF weights (semantic/bm25/entity). */
+    weights?: { semantic?: number; bm25?: number; entity?: number };
+    /** B3 §1.3 — strength of the FSRS recency multiplier (0 = off). */
+    recencyWeight?: number;
   };
   mcp: {
     mode: 'stdio' | 'sse';
@@ -57,6 +61,8 @@ const DEFAULT_CONFIG: StellavaultConfig = {
   search: {
     defaultLimit: 10,
     rrfK: 60,
+    weights: { semantic: 1.0, bm25: 1.0, entity: 0.5 }, // B3 §1.2
+    recencyWeight: 0.2,                                  // B3 §1.3 (±10% bound)
   },
   mcp: {
     mode: 'stdio',
@@ -93,7 +99,51 @@ function mergeConfig(defaults: StellavaultConfig, overrides: Partial<Stellavault
     folders: { ...defaults.folders, ...overrides.folders },
     embedding: { ...defaults.embedding, ...overrides.embedding },
     chunking: { ...defaults.chunking, ...overrides.chunking },
-    search: { ...defaults.search, ...overrides.search },
+    search: {
+      ...defaults.search,
+      ...overrides.search,
+      // B3 §4 — deep-merge weights so a partial override keeps the other defaults.
+      weights: { ...defaults.search.weights, ...overrides.search?.weights },
+    },
     mcp: { ...defaults.mcp, ...overrides.mcp },
+  };
+}
+
+export interface SearchWeightConfig {
+  semantic: number;
+  bm25: number;
+  entity: number;
+  recency: number;
+}
+
+/**
+ * Design Ref: B3 §4 — resolve final search weights from config + env overrides.
+ * Pure and env-injectable for testability. Env vars override config; invalid,
+ * empty, or out-of-range values fall back to config (then research-backed
+ * defaults). Per project rule env values are .trim()'d and guarded;
+ * recency is clamped to [0, 1].
+ */
+export function resolveSearchWeights(
+  config: StellavaultConfig,
+  env: Record<string, string | undefined> = process.env,
+): SearchWeightConfig {
+  const base: SearchWeightConfig = {
+    semantic: config.search.weights?.semantic ?? 1.0,
+    bm25: config.search.weights?.bm25 ?? 1.0,
+    entity: config.search.weights?.entity ?? 0.5,
+    recency: config.search.recencyWeight ?? 0.2,
+  };
+  const parse = (raw: string | undefined, min: number, max: number): number | undefined => {
+    const s = String(raw ?? '').trim();
+    if (s === '') return undefined; // unset/empty → keep config (Number('') is 0, not NaN)
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < min) return undefined;
+    return Math.min(n, max);
+  };
+  return {
+    semantic: parse(env.STELLAVAULT_W_SEMANTIC, 0, Infinity) ?? base.semantic,
+    bm25: parse(env.STELLAVAULT_W_BM25, 0, Infinity) ?? base.bm25,
+    entity: parse(env.STELLAVAULT_W_ENTITY, 0, Infinity) ?? base.entity,
+    recency: parse(env.STELLAVAULT_RECENCY_WEIGHT, 0, 1) ?? base.recency,
   };
 }

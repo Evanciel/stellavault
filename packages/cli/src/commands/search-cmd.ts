@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { loadConfig, createSqliteVecStore, createLocalEmbedder, createSearchEngine } from '@stellavault/core';
+import { loadConfig, createSqliteVecStore, createLocalEmbedder, createSearchEngine, resolveSearchWeights } from '@stellavault/core';
 import type { CliCommand } from '../types.js';
 
 export async function searchCommand(query: string, options: { limit?: string }, cmd: CliCommand) {
@@ -14,7 +14,13 @@ export async function searchCommand(query: string, options: { limit?: string }, 
   const embedder = createLocalEmbedder(config.embedding.localModel);
   await embedder.initialize();
 
-  const engine = createSearchEngine({ store, embedder, rrfK: config.search.rrfK });
+  // CLI is a fresh process → no decay engine → recency disabled; config/env
+  // weights still apply so CLI and MCP search rank consistently. (B3 §3.4)
+  const sw = resolveSearchWeights(config);
+  const engine = createSearchEngine({
+    store, embedder, rrfK: config.search.rrfK,
+    weights: { semantic: sw.semantic, bm25: sw.bm25, entity: sw.entity, recency: sw.recency },
+  });
   const results = await engine.search({ query, limit });
 
   await store.close();

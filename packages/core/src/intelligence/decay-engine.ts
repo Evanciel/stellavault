@@ -209,6 +209,27 @@ export class DecayEngine {
   }
 
   /**
+   * Design Ref: §B3.3.3 — read-only live retrievability for a set of documents.
+   * Reuses persisted stability + last_access and recomputes R fresh, ignoring the
+   * stale decay_state.retrievability snapshot column. No writes → no contention
+   * with recordAccess. Single parametrized IN(...) query (bounded by ≤90 fused
+   * candidates); documents without a decay_state row are simply absent from the map.
+   */
+  async getRetrievabilityForDocs(documentIds: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (documentIds.length === 0) return out;
+    const now = new Date().toISOString();
+    const placeholders = documentIds.map(() => '?').join(',');
+    const rows = this.db.prepare(
+      `SELECT document_id, stability, last_access FROM decay_state WHERE document_id IN (${placeholders})`
+    ).all(...documentIds) as Array<{ document_id: string; stability: number; last_access: string }>;
+    for (const r of rows) {
+      out.set(r.document_id, computeRetrievability(r.stability, elapsedDays(r.last_access, now)));
+    }
+    return out;
+  }
+
+  /**
    * Initialize decay state for documents that don't have one yet.
    */
   async initializeNewDocuments(): Promise<number> {

@@ -22,6 +22,8 @@ export interface SearchOptions {
   tags?: string[];
   /** 날짜 범위 필터 */
   dateRange?: { from?: string; to?: string };
+  /** B3 §3.5 — per-query weight override. Merges over engine/config defaults. */
+  signalWeights?: { semantic?: number; bm25?: number; entity?: number; recency?: number };
 }
 
 export interface TopicInfo {

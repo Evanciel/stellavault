@@ -1,8 +1,8 @@
 // Design Ref: §4.2 — Core Internal API (Facade)
 // Design Ref: §9.3 — Dependency Injection Pattern
 
-export { loadConfig, DEFAULT_FOLDERS } from './config.js';
-export type { StellavaultConfig, FolderNames } from './config.js';
+export { loadConfig, DEFAULT_FOLDERS, resolveSearchWeights } from './config.js';
+export type { StellavaultConfig, FolderNames, SearchWeightConfig } from './config.js';
 
 // Types
 export type { Document } from './types/document.js';
@@ -26,8 +26,8 @@ export { indexVault, scanVault, chunkDocument, createLocalEmbedder, createWatche
 export type { IndexResult, IndexerOptions, SkipReason, SkippedFile } from './indexer/index.js';
 
 // Search
-export { createSearchEngine } from './search/index.js';
-export type { SearchEngine } from './search/index.js';
+export { createSearchEngine, DEFAULT_SIGNAL_WEIGHTS } from './search/index.js';
+export type { SearchEngine, SignalWeights } from './search/index.js';
 
 // MCP
 export { createMcpServer } from './mcp/index.js';
@@ -140,6 +140,8 @@ import { createSqliteVecStore as _createStore } from './store/index.js';
 import { createLocalEmbedder as _createEmbedder } from './indexer/index.js';
 import { createSearchEngine as _createSearch } from './search/index.js';
 import { createMcpServer as _createMcp } from './mcp/index.js';
+import { DecayEngine as _DecayEngine } from './intelligence/decay-engine.js';
+import { resolveSearchWeights as _resolveSearchWeights } from './config.js';
 
 export function createKnowledgeHub(
   config: import('./config.js').StellavaultConfig,
@@ -148,7 +150,33 @@ export function createKnowledgeHub(
   const embedder = _createEmbedder(config.embedding.localModel);
   const dims = embedder.dimensions;
   const store = _createStore(config.dbPath, dims);
-  const searchEngine = _createSearch({ store, embedder, rrfK: config.search.rrfK });
+
+  // B3 §3.4 — lazy, memoized DecayEngine for the recency signal. store.getDb() is
+  // only valid after store.initialize() (lazy-init arch); search runs only after
+  // `ready` resolves, so resolving the engine at first query is safe. Mirrors the
+  // detect-gaps lazy db getter in mcp/server.ts. Returns undefined until ready.
+  let _decay: _DecayEngine | null = null;
+  const getDecayEngine = (): _DecayEngine | undefined => {
+    if (_decay) return _decay;
+    try {
+      const db = store.getDb();
+      if (!db) return undefined;
+      _decay = new _DecayEngine(db as any);
+      return _decay;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // B3 §4 — config + env-resolved per-signal weights (entity 0.5, recency 0.2 defaults).
+  const sw = _resolveSearchWeights(config);
+  const searchEngine = _createSearch({
+    store,
+    embedder,
+    rrfK: config.search.rrfK,
+    weights: { semantic: sw.semantic, bm25: sw.bm25, entity: sw.entity, recency: sw.recency },
+    getDecayEngine,
+  });
   const mcpServer = _createMcp({ store, searchEngine, vaultPath: config.vaultPath, ready: options.ready });
 
   return { store, embedder, searchEngine, mcpServer, config };
