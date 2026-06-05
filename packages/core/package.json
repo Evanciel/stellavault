@@ -1,6 +1,6 @@
 {
   "name": "@stellavault/core",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "Stellavault core engine — indexer, hybrid search, vector store, MCP server",
   "type": "module",
   "main": "./dist/index.js",

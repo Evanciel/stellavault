@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.8.0] - 2026-06-05
+
+### Added
+- **Weighted RRF + FSRS recency ranking (B3)** — hybrid search now supports per-signal weights (`score(d)=Σ wᵢ·1/(k+rankᵢ)`; defaults semantic 1.0 / BM25 1.0 / entity 0.5) and a bounded post-fusion recency multiplier driven by the existing FSRS retrievability (`final = rrf·(1 + w·(R−0.5))`, default ±10%, centered at R=0.5). Config knobs `search.weights.*` / `search.recencyWeight` + env overrides `STELLAVAULT_W_SEMANTIC|BM25|ENTITY` / `STELLAVAULT_RECENCY_WEIGHT` (finite/range-guarded). Backward compatible — `rrfFusionN` gains an optional options arg; all existing callers and 27 core test suites pass unmodified. Design: `docs/02-design/b3-weighted-rrf-recency.md`.
+- **One-command MCP setup** (`stellavault setup`) — auto-detects and writes MCP config for 5 clients: Claude Code (via `claude mcp add -s user`), Claude Desktop, Cursor, Windsurf, and VS Code. Flags: `-c/--client <id>` (repeatable), `--all`, `--command`, `--args`. Idempotent, non-destructive JSON merge (VS Code uses `servers` + `type:"stdio"`). Adds `SKILL.md` for assistant onboarding.
+- **Entity-linking search signal** — entity extractor (wikilinks `[[…]]`, `#tags`, headings, title, Title-Case / ALL-CAPS fallback; Korean supported; cap 30/chunk) + new `chunk_entities` table (FK `ON DELETE CASCADE`). Entity match added as a 3rd RRF signal alongside semantic + keyword.
+- **Adaptive reranking wired into MCP** — the MCP `search` tool now emits the adaptively reranked ordering.
+- **4-stage upgrade** — `STELLAVAULT_DB_PATH`-respecting DB path resolution (env → `config.dbPath` → vault-hash fallback), decay index, chokidar watcher hook (auto incremental reindex while `serve` runs; `STELLAVAULT_WATCH=0` to disable), and a generation-bound gap-detection cache.
+
+### Changed
+- MCP `search` result ordering improved (weighted RRF + adaptive rerank). Result shape unchanged — callers are unaffected.
+
+### Fixed
+- Gap-cache stale-return race under concurrent calls — generation-bound inflight + db-keyed singleflight.
+- Search→decay access recording (handleSearch array shape + missing documentId) — was dead since introduced.
+- `resolveSearchWeights` empty-env guard: `Number('')===0` no longer zeroes weights when env vars are unset.
+
+### Housekeeping
+- `.gitignore`: PowerShell `ModuleAnalysisCache` artifact.
+
+### Notes
+- **Real vaults must be reindexed** for the entity signal to populate `chunk_entities`. A **full rebuild** is required to backfill entities onto pre-existing (unchanged) notes; an incremental reindex only extracts entities for changed/new files. See `docs/02-design/execution-runbook.md`.
+
+### Tests
+- `@stellavault/core`: 206 → **236** PASS (entity-extractor, entity-search, rrf-weighted, search-recency, config-weights suites).
+- `tests/smoke.mjs`: **12** files / ALL PASS.
+
+### Commits
+`8a5ff6f` `94e718c` `fb29248` `d5931de` `bcebfa1` `dc0b06c`
+
 ## [0.7.4] - 2026-05-13
 
 ### Security (codex review sweep — SECURITY score 3/10 → 8/10)
