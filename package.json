@@ -21,6 +21,7 @@
     "dist/stellavault.js",
     "dist/graph-ui/**",
     "README.md",
+    "SKILL.md",
     "LICENSE",
     "SECURITY.md"
   ],

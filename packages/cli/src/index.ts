@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { indexCommand } from './commands/index-cmd.js';
 import { searchCommand } from './commands/search-cmd.js';
 import { serveCommand } from './commands/serve-cmd.js';
+import { setupCommand } from './commands/setup-cmd.js';
 import { statusCommand } from './commands/status-cmd.js';
 import { graphCommand } from './commands/graph-cmd.js';
 import { cardCommand } from './commands/card-cmd.js';
@@ -124,6 +125,15 @@ program
   .alias('mcp')
   .description('Start MCP server (for Claude Code / Claude Desktop). Alias: mcp')
   .action(serveCommand);
+
+program
+  .command('setup')
+  .description('Connect Stellavault to your AI clients (Claude Code/Desktop, Cursor, Windsurf, VS Code) in one command')
+  .option('-c, --client <id>', 'Target a specific client (repeatable): claude-code, claude-desktop, cursor, windsurf, vscode', (val: string, prev: string[]) => [...prev, val], [] as string[])
+  .option('--all', 'Write configs to all supported clients, even if not detected')
+  .option('--command <cmd>', 'Override the server command (advanced/dev)')
+  .option('--args <args>', 'Override server args (space-separated; default: serve)')
+  .action((opts) => setupCommand(opts));
 
 // ─── Intelligence ────────────────────────────────────────────
 

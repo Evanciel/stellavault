@@ -25,6 +25,7 @@ export async function handleSearch(
   });
 
   return results.map(r => ({
+    documentId: r.document.id,
     title: r.document.title,
     filePath: r.document.filePath,
     heading: r.chunk.heading,

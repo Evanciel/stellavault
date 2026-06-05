@@ -17,6 +17,8 @@ export interface Chunk {
   tokenCount: number;
   /** 768차원 벡터 (로딩 시 선택적) */
   embedding?: number[];
+  /** 엔티티 링킹 신호용 추출 엔티티 (인덱싱 시 선택적) — Upgrade B2 */
+  entities?: string[];
 }
 
 export interface ScoredChunk {

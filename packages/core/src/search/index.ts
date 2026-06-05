@@ -5,7 +5,8 @@ import type { VectorStore } from '../store/types.js';
 import type { SearchResult, SearchOptions } from '../types/search.js';
 import { searchBm25 } from './bm25.js';
 import { searchSemantic } from './semantic.js';
-import { rrfFusion } from './rrf.js';
+import { searchEntities } from './entity.js';
+import { rrfFusionN } from './rrf.js';
 
 export { rrfFusion } from './rrf.js';
 export { createAdaptiveSearch } from './adaptive.js';
@@ -27,14 +28,15 @@ export function createSearchEngine(deps: {
     async search(options: SearchOptions): Promise<SearchResult[]> {
       const { query, limit = 10, threshold = 0.0, tags } = options;
 
-      // 병렬로 BM25 + Semantic 검색
-      const [bm25Results, semanticResults] = await Promise.all([
+      // 병렬로 BM25 + Semantic + Entity 검색
+      const [bm25Results, semanticResults, entityResults] = await Promise.all([
         searchBm25(store, query, FETCH_LIMIT),
         searchSemantic(store, embedder, query, FETCH_LIMIT),
+        searchEntities(store, query, FETCH_LIMIT),
       ]);
 
-      // RRF Fusion
-      const fused = rrfFusion(semanticResults, bm25Results, rrfK, limit * 2);
+      // RRF Fusion (semantic + BM25 + entity). Empty entity list → no-op. (B2)
+      const fused = rrfFusionN([semanticResults, bm25Results, entityResults], rrfK, limit * 2);
 
       // 청크+문서 조회 + 필터링
       const results: SearchResult[] = [];

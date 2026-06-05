@@ -56,6 +56,12 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
           INSERT INTO chunk_embeddings (chunk_id, embedding)
           VALUES (?, ?)
         `);
+        // Stale chunk_entities are cleared via ON DELETE CASCADE when the old
+        // chunks are deleted above; here we only insert the fresh set. (B2)
+        const insertEntity = db.prepare(`
+          INSERT INTO chunk_entities (chunk_id, entity)
+          VALUES (?, ?)
+        `);
 
         for (const chunk of chunks) {
           insertChunk.run(
@@ -64,6 +70,9 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
           );
           if (chunk.embedding) {
             insertEmbedding.run(chunk.id, float32Buffer(chunk.embedding));
+          }
+          if (chunk.entities) {
+            for (const entity of chunk.entities) insertEntity.run(chunk.id, entity);
           }
         }
       });
@@ -108,6 +117,21 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
         chunkId: r.chunk_id,
         score: -r.rank,  // FTS5 rank is negative (lower = better)
       }));
+    },
+
+    async searchEntities(entities: string[], limit: number): Promise<ScoredChunk[]> {
+      if (!entities || entities.length === 0) return [];
+      const placeholders = entities.map(() => '?').join(',');
+      const rows = db.prepare(`
+        SELECT chunk_id, COUNT(*) as matches
+        FROM chunk_entities
+        WHERE entity IN (${placeholders})
+        GROUP BY chunk_id
+        ORDER BY matches DESC
+        LIMIT ?
+      `).all(...entities, limit) as Array<{ chunk_id: string; matches: number }>;
+
+      return rows.map(r => ({ chunkId: r.chunk_id, score: r.matches }));
     },
 
     async getDocument(documentId: string): Promise<Document | null> {
@@ -261,6 +285,13 @@ function createTables(db: Database.Database, dimensions: number = 384) {
 
     CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
     CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
+
+    CREATE TABLE IF NOT EXISTS chunk_entities (
+      chunk_id TEXT NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+      entity TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chunk_entities_entity ON chunk_entities(entity);
+    CREATE INDEX IF NOT EXISTS idx_chunk_entities_chunk ON chunk_entities(chunk_id);
   `);
 
   // FTS5 트리거: chunks INSERT/DELETE 시 자동 동기화

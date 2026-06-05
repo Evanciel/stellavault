@@ -6,6 +6,7 @@ import type { Document } from '../types/document.js';
 import type { Chunk } from '../types/chunk.js';
 import { scanVault, type SkippedFile } from './scanner.js';
 import { chunkDocument, type ChunkOptions } from './chunker.js';
+import { extractEntities } from './entity-extractor.js';
 import { withRetry, errors } from '../utils/retry.js';
 
 export { type Embedder } from './embedder.js';
@@ -83,6 +84,12 @@ export async function indexVault(
       const chunksWithEmbeddings: Chunk[] = chunks.map((c, j) => ({
         ...c,
         embedding: embeddings[j],
+        entities: extractEntities({
+          content: c.content,
+          heading: c.heading,
+          title: doc.title,
+          tags: doc.tags,
+        }),
       }));
 
       // 저장 (document → chunks)

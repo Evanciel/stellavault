@@ -173,6 +173,13 @@ export async function initCommand() {
     console.log(`  ${chalk.cyan('stellavault serve')}     Connect AI agents via MCP`);
     console.log('');
 
+    // Connect to AI clients (Upgrade A3) — the "3-minute Obsidian → Claude" finish line
+    const doConnect = await ask(rl, '  Connect Stellavault to your AI clients now? [Y/n]', 'Y');
+    if (doConnect.toLowerCase() !== 'n') {
+      const { setupCommand } = await import('./setup-cmd.js');
+      await setupCommand({});
+    }
+
     // Day 2 Experience — 습관화 제안
     console.log(chalk.cyan('  ─── Build a habit ───\n'));
     const setupCron = await ask(rl, '  Auto-run daily briefing? (adds cron job) [Y/n]', 'Y');

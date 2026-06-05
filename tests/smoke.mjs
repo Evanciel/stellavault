@@ -87,6 +87,27 @@ await test('cli: doctor runs without crash', () => {
   }
 });
 
+await test('cli: setup writes MCP client config (isolated, non-destructive)', () => {
+  // Upgrade A1 regression: `setup --client cursor` must write a valid mcp.json
+  // into an isolated HOME without touching the real user config.
+  const tmpHome = mkdtempSync(join(tmpdir(), 'sv-setup-'));
+  try {
+    execSync(`node "${CLI}" setup --client cursor`, {
+      encoding: 'utf8',
+      timeout: 20000,
+      stdio: 'pipe',
+      env: { ...process.env, USERPROFILE: tmpHome, HOME: tmpHome, APPDATA: join(tmpHome, 'AppData', 'Roaming') },
+    });
+    const cfg = join(tmpHome, '.cursor', 'mcp.json');
+    assert(existsSync(cfg), 'cursor mcp.json was not written');
+    const json = JSON.parse(readFileSync(cfg, 'utf-8'));
+    assert(json.mcpServers && json.mcpServers.stellavault, 'stellavault entry missing from mcpServers');
+    assert(Array.isArray(json.mcpServers.stellavault.args), 'stellavault entry missing args[]');
+  } finally {
+    rmSync(tmpHome, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 2. Core module tests
 // ---------------------------------------------------------------------------

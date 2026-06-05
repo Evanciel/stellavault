@@ -1,6 +1,6 @@
 # Stellavault
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-177%20passing-brightgreen)]()
+[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)]()
 
 > **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
 
@@ -29,7 +29,8 @@ Self-compiling knowledge base with a full-featured editor, 3D neural graph, AI-p
 
 ```bash
 npm install -g stellavault    # or: npx stellavault
-stellavault init              # Interactive setup wizard (3 min)
+stellavault init              # Interactive setup (3 min): index vault + connect AI clients
+stellavault setup             # Connect to Claude Code/Desktop, Cursor, Windsurf, VS Code (one command)
 stellavault graph             # Launch 3D graph in browser
 ```
 
@@ -122,14 +123,18 @@ These features do **not exist** in Obsidian — even with plugins.
 ## MCP Integration (21 Tools)
 
 ```bash
+stellavault setup            # one command → Claude Code, Claude Desktop, Cursor, Windsurf, VS Code
+# or, for Claude Code only:
 claude mcp add stellavault -- stellavault serve
 ```
 
-Claude can search, ask, draft, lint, and analyze your vault directly.
+Claude can search, ask, draft, lint, and analyze your vault directly. Search
+fuses **semantic + BM25 + entity-linking** — your `[[wikilinks]]`, tags, and
+headings become retrieval signals — with session-adaptive reranking.
 
 | Tool | What it does |
 |------|-------------|
-| `search` | Hybrid BM25 + vector + RRF |
+| `search` | Hybrid semantic + BM25 + entity-linking, adaptive rerank |
 | `ask` | Vault-grounded Q&A |
 | `generate-draft` | AI drafts from your knowledge |
 | `get-decay-status` | Memory decay report (FSRS) |

@@ -6,6 +6,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
+import { createAdaptiveSearch } from '../search/index.js';
 import { searchToolDef, handleSearch } from './tools/search.js';
 import { getDocumentToolDef, handleGetDocument } from './tools/get-document.js';
 import { listTopicsToolDef, handleListTopics } from './tools/list-topics.js';
@@ -46,6 +47,12 @@ export function createMcpServer(options: McpServerOptions) {
   const { store, searchEngine, embedder, vaultPath = '', decayEngine } = options;
   const ready = options.ready ?? Promise.resolve();
 
+  // Adaptive reranking lives in the long-running MCP server: session-scoped
+  // recentSearches + recentDocTags boost results across calls. First query == base
+  // (empty history); later queries get tag-overlap / path-proximity boosts.
+  // CLI search stays on the base engine (each invocation is a fresh process).
+  const adaptiveSearch = createAdaptiveSearch({ baseSearch: searchEngine });
+
   const learningPathTool = createLearningPathTool(store);
   // 2026-05-15: detect-gaps 가 SQLite gap_cache 사용. lazy db getter —
   // lazy init 구조에서 server boot 시점엔 db 미초기화이므로 handler 실행
@@ -58,7 +65,7 @@ export function createMcpServer(options: McpServerOptions) {
   const agenticTools = embedder ? createAgenticGraphTools(store, embedder, vaultPath) : [];
 
   const server = new Server(
-    { name: 'stellavault', version: '0.7.3' },
+    { name: 'stellavault', version: '0.7.4' },
     { capabilities: { tools: {} } },
   );
 
@@ -88,11 +95,12 @@ export function createMcpServer(options: McpServerOptions) {
       let result: unknown;
       switch (name) {
         case 'search':
-          result = await handleSearch(searchEngine, args as any);
-          // MCP 검색 이벤트 기록
-          if (decayEngine && result && typeof result === 'object' && 'results' in (result as any)) {
+          result = await handleSearch(adaptiveSearch, args as any);
+          // MCP 검색 이벤트 기록 — handleSearch는 배열 반환, 각 항목에 documentId 포함 (B3 fix:
+          // 기존엔 `'results' in result`로 배열을 잘못 검사 + documentId 누락 → decay 기록이 죽어 있었음)
+          if (decayEngine && Array.isArray(result)) {
             const now = new Date().toISOString();
-            for (const r of (result as any).results ?? []) {
+            for (const r of result as Array<{ documentId?: string }>) {
               if (r.documentId) decayEngine.recordAccess({ documentId: r.documentId, type: 'mcp_query', timestamp: now }).catch(() => {});
             }
           }
