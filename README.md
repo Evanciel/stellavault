@@ -1,6 +1,6 @@
 # Stellavault
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)]()
+[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 > **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
 
@@ -10,6 +10,10 @@ Self-compiling knowledge base with a full-featured editor, 3D neural graph, AI-p
   <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="800" />
   <br><em>Your vault as a neural network. Local-first, no cloud required.</em>
 </p>
+
+## Contents
+
+[Install](#install) · [Editor](#editor) · [Pipeline](#the-pipeline) · [Intelligence](#intelligence-what-makes-stellavault-unique) · [Search & Ranking](#search--ranking) · [MCP Integration](#mcp-integration-21-tools) · [3D Visualization](#3d-visualization) · [Configuration](#configuration) · [Performance](#performance) · [Tech Stack](#tech-stack) · [Security](#security) · [Troubleshooting](#troubleshooting)
 
 ## Install
 
@@ -120,6 +124,24 @@ These features do **not exist** in Obsidian — even with plugins.
 
 ---
 
+## Search & Ranking
+
+Hybrid retrieval that fuses multiple signals with **weighted Reciprocal Rank Fusion (RRF)** — tuned for a personal knowledge vault, fully local, zero API keys:
+
+| Signal | What it captures | Default weight |
+|--------|------------------|---------------:|
+| **Semantic** (dense) | meaning; multilingual (50+ languages) | `1.0` |
+| **BM25** (keyword) | exact terms, code, names | `1.0` |
+| **Entity-linking** | your `[[wikilinks]]`, `#tags`, headings, titles — the curated graph | `1.5` |
+| **FSRS recency** | gently surfaces notes you're actively using / forgetting | `±10%` |
+
+- **Entity matching** resolves natural-language queries via fuzzy substring + punctuation-normalized matching (Korean / CJK friendly), with a **per-document diversity cap** so one large note can't flood the top results.
+- **Recency** reuses the same FSRS memory model as the decay engine (not raw file mtime) — a note you're forgetting resurfaces; a mastered evergreen note isn't buried just for being old.
+- **Adaptive rerank** (long-running MCP server) further boosts results by your current session context (recent tags / paths).
+- Every weight is **tunable** per vault or via env vars — see [Configuration](#configuration).
+
+---
+
 ## MCP Integration (21 Tools)
 
 ```bash
@@ -128,13 +150,13 @@ stellavault setup            # one command → Claude Code, Claude Desktop, Curs
 claude mcp add stellavault -- stellavault serve
 ```
 
-Claude can search, ask, draft, lint, and analyze your vault directly. Search
-fuses **semantic + BM25 + entity-linking** — your `[[wikilinks]]`, tags, and
-headings become retrieval signals — with session-adaptive reranking.
+Claude can search, ask, draft, lint, and analyze your vault directly. Search runs
+the full hybrid pipeline — **weighted RRF** over semantic + BM25 + entity-linking,
+plus **FSRS recency** and session-adaptive reranking (see [Search & Ranking](#search--ranking)).
 
 | Tool | What it does |
 |------|-------------|
-| `search` | Hybrid semantic + BM25 + entity-linking, adaptive rerank |
+| `search` | Weighted RRF (semantic + BM25 + entity) + FSRS recency + adaptive rerank |
 | `ask` | Vault-grounded Q&A |
 | `generate-draft` | AI drafts from your knowledge |
 | `get-decay-status` | Memory decay report (FSRS) |
@@ -218,6 +240,34 @@ stellavault decay                         # What are you forgetting?
 
 ---
 
+## Configuration
+
+Stellavault reads `./.stellavault.json` (or `~/.stellavault.json`). Search ranking is fully tunable — sensible defaults work out of the box:
+
+```jsonc
+{
+  "search": {
+    "rrfK": 60,
+    "weights": { "semantic": 1.0, "bm25": 1.0, "entity": 1.5 },
+    "recencyWeight": 0.2,                          // FSRS recency strength; 0 = off
+    "entityAliases": { "k8s": ["kubernetes"] }     // synonym / cross-lingual groups (exact-only)
+  }
+}
+```
+
+Environment variables override config (parsed with guards):
+
+| Env var | Effect |
+|---------|--------|
+| `STELLAVAULT_W_SEMANTIC` / `_BM25` / `_ENTITY` | per-signal RRF weight (e.g. `STELLAVAULT_W_ENTITY=2.0` for aggressive entity surfacing) |
+| `STELLAVAULT_RECENCY_WEIGHT` | recency strength `0`–`1` (`0` disables) |
+| `STELLAVAULT_DB_PATH` | override the index DB location |
+| `STELLAVAULT_WATCH` | `0` to disable the auto-reindex file watcher while `serve` runs |
+
+> Note: cross-lingual recall (e.g. a Korean query finding English notes) is handled automatically by the multilingual embedding model — `entityAliases` is an optional precision boost for the curated entity graph (tags / wikilinks) and abbreviations.
+
+---
+
 ## Performance
 
 Tested on synthetic vaults — all operations under 1 second for typical use cases:
@@ -253,7 +303,7 @@ Key optimizations:
 | Runtime | Node.js 20+ (ESM, TypeScript) |
 | Vector Store | SQLite-vec (local, zero config) |
 | Embedding | MiniLM-L12-v2 (local, 50+ languages, batch processing) |
-| Search | BM25 + Cosine + RRF Fusion |
+| Search | Weighted RRF (semantic + BM25 + entity) + FSRS recency |
 | Math | KaTeX (inline + display) |
 | Code | lowlight / highlight.js (40+ languages) |
 | 3D | React Three Fiber + Three.js |
