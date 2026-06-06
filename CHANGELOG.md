@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.4] - 2026-06-07
+
+### Documentation
+- README refresh (no code changes since 0.8.3): new **Search & Ranking** section (weighted RRF — semantic 1.0 / BM25 1.0 / entity 1.5 — + FSRS recency + fuzzy entity matching + per-document diversity cap + adaptive rerank) and new **Configuration** section (`.stellavault.json` search knobs + `STELLAVAULT_W_*` / `STELLAVAULT_RECENCY_WEIGHT` / `STELLAVAULT_DB_PATH` / `STELLAVAULT_WATCH` env vars + `entityAliases`). Added Contents ToC, node/license badges, tests badge 223 → 245, and updated the MCP/Tech-Stack search descriptions to reflect 0.8.0–0.8.3.
+
 ## [0.8.3] - 2026-06-05
 
 ### Added
