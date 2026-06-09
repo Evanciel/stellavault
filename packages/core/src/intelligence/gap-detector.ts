@@ -28,9 +28,10 @@ export async function detectKnowledgeGaps(
   store: VectorStore,
   graphData?: GraphData,
 ): Promise<GapReport> {
-  const docs = await store.getAllDocuments();
-  const embeddings = await store.getDocumentEmbeddings();
-
+  // perf(2026-06-09): 과거 여기서 store.getAllDocuments()+getDocumentEmbeddings() 를
+  //   불렀으나 둘 다 이후 전혀 참조되지 않는 dead load 였다(gd 는 buildGraphData 로 별도 구성).
+  //   1M 규모에서 getAllDocuments 는 전체 content 를 힙에 올려 OOM 유발 → 제거.
+  //   갭 위상은 graphData.nodes/edges 만으로 충분.
   let gd: GraphData;
   if (!graphData) {
     const { buildGraphData } = await import('../api/graph-data.js');
