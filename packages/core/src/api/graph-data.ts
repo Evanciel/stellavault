@@ -30,11 +30,20 @@ export async function buildGraphData(
     maxEdgesPerNode = 5,
   } = options;
 
-  // 1. 모든 문서 + 임베딩 로드
+  // 1. 문서 메타(content-free) + 임베딩 로드.
+  //   ★2026-06-10 1M 대비: getAllDocuments() 는 전 문서 *본문*을 힙에 적재 → 대규모 OOM 의
+  //   진짜 원인. 그래프는 본문 불요(id/title/path/tags/source/type/lastModified 만) → content-free
+  //   getDocumentsMeta() 로 교체(다운스트림 17개 content 소비자는 getAllDocuments 그대로 유지).
+  //   임베딩 상한은 env 로 조절(기본 20000 = 현재 11k 볼트 전부 커버 → 과거 10k 하드캡의 무음
+  //   truncation 버그 해소). 초과 시 경고.
+  const EMB_CAP = Math.max(1000, Math.floor(Number(process.env.GRAPH_EMBEDDING_CAP) || 20000));
   const [docs, embeddings] = await Promise.all([
-    store.getAllDocuments(),
-    store.getDocumentEmbeddings(),
+    store.getDocumentsMeta(),
+    store.getDocumentEmbeddings(EMB_CAP),
   ]);
+  if (docs.length > EMB_CAP) {
+    console.warn(`[graph] docs ${docs.length} > embedding cap ${EMB_CAP} — 엣지/클러스터가 상위 ${EMB_CAP}개로 제한됨. GRAPH_EMBEDDING_CAP 상향 권장(메모리/빌드시간 trade-off).`);
+  }
 
   // 2. k-NN 엣지 생성 — 인메모리 brute-force (getDocumentEmbeddings로 이미 전부 로드됨)
   // 이전 HNSW 전략은 1,215× 개별 SQL KNN 쿼리 → 60초 소요. 인메모리 dot product O(n²/2)이

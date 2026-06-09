@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { VectorStore } from './types.js';
+import type { VectorStore, DocumentMeta } from './types.js';
 import type { Chunk, ScoredChunk, Document, TopicInfo, StoreStats } from '../types/index.js';
 
 export function createSqliteVecStore(dbPath: string, dimensions: number = 384): VectorStore {
@@ -189,6 +189,22 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     async getAllDocuments(): Promise<Document[]> {
       const rows = db.prepare('SELECT * FROM documents ORDER BY last_modified DESC').all() as DocumentRow[];
       return rows.map(rowToDocument);
+    },
+
+    async getDocumentsMeta(maxDocs?: number): Promise<DocumentMeta[]> {
+      // content/content_hash 컬럼 제외 — 본문을 힙에 올리지 않아 대규모 볼트 OOM 회피.
+      const lim = typeof maxDocs === 'number' && Number.isFinite(maxDocs) && maxDocs > 0 ? Math.floor(maxDocs) : 0;
+      const sql = 'SELECT id, file_path, title, frontmatter, tags, last_modified FROM documents ORDER BY last_modified DESC'
+        + (lim > 0 ? ` LIMIT ${lim}` : '');
+      const rows = db.prepare(sql).all() as Array<Pick<DocumentRow, 'id' | 'file_path' | 'title' | 'frontmatter' | 'tags' | 'last_modified'>>;
+      return rows.map((r) => ({
+        id: r.id,
+        filePath: r.file_path,
+        title: r.title,
+        frontmatter: JSON.parse(r.frontmatter || '{}'),
+        tags: JSON.parse(r.tags || '[]'),
+        lastModified: r.last_modified,
+      }));
     },
 
     async getTopics(): Promise<TopicInfo[]> {

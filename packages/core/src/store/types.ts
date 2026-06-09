@@ -2,6 +2,19 @@
 
 import type { Chunk, ScoredChunk, Document, TopicInfo, StoreStats } from '../types/index.js';
 
+/** content-free 문서 투영 — 그래프/통계용. 본문(content)을 힙에 적재하지 않아
+ *  대규모(수십만~) 볼트에서 getAllDocuments() 의 OOM 을 회피한다(그래프는 본문 불요). */
+export interface DocumentMeta {
+  id: string;
+  filePath: string;
+  title: string;
+  frontmatter: Record<string, unknown>;
+  tags: string[];
+  lastModified: string;
+  source?: string;
+  type?: string;
+}
+
 export interface VectorStore {
   initialize(): Promise<void>;
   upsertDocument(doc: Document): Promise<void>;
@@ -15,6 +28,8 @@ export interface VectorStore {
   getDocument(documentId: string): Promise<Document | null>;
   getChunk(chunkId: string): Promise<Chunk | null>;
   getAllDocuments(): Promise<Document[]>;
+  /** content-free 문서 메타 목록 (그래프 노드용 — 본문 미적재로 대규모 OOM 회피). */
+  getDocumentsMeta(maxDocs?: number): Promise<DocumentMeta[]>;
   getTopics(): Promise<TopicInfo[]>;
   getStats(): Promise<StoreStats>;
   /** 각 문서의 첫 청크 임베딩 반환 (graph용) */
