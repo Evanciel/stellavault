@@ -115,16 +115,50 @@ export function invalidateGapCache(db: Database): void {
   } catch { /* ignore */ }
 }
 
-/** Read cache or fall through to live compute + cache. Stable for tool handlers. */
+const EMPTY_REPORT: GapReport = { totalClusters: 0, totalGaps: 0, gaps: [], isolatedNodes: [] };
+
+/** Read cached row IGNORING age (for stale-while-revalidate). null on miss/version/error. */
+export function readAnyCachedGapReport(db: Database): GapReport | null {
+  try {
+    ensureGapCacheTable(db);
+    const row = db.prepare('SELECT * FROM gap_cache WHERE id = 1').get() as GapCacheRow | undefined;
+    if (!row || row.version !== CACHE_VERSION) return null;
+    return JSON.parse(row.payload) as GapReport;
+  } catch {
+    return null;
+  }
+}
+
+/** Fire-and-forget background recompute (singleflight per-db). Never throws to caller. */
+function triggerBackgroundCompute(store: VectorStore, db: Database): void {
+  void computeAndCacheGaps(store, db).catch((err) => {
+    console.warn('[gap-cache] background recompute failed:', (err as Error)?.message ?? err);
+  });
+}
+
+/**
+ * Read cache or — on miss/stale — serve stale-if-any + recompute in BACKGROUND.
+ *
+ * ★2026-06-09 non-blocking SWR: the graph build (detectKnowledgeGaps) grew to
+ * 30s→180s+ on 11k+ doc vaults; awaiting it on the request path blocked the MCP
+ * tool call past its timeout and choked the server (connection drops). Now the
+ * handler NEVER awaits the heavy compute — it returns the freshest available
+ * cache immediately (empty on first-ever call) and lets a singleflight
+ * background job refresh the cache for the next call. computing=true signals the
+ * report may be stale/empty while a refresh runs.
+ */
 export async function getGapReport(
   store: VectorStore,
   db: Database,
   opts: { maxAgeMs?: number; forceRefresh?: boolean } = {},
-): Promise<{ report: GapReport; fromCache: boolean }> {
+): Promise<{ report: GapReport; fromCache: boolean; computing: boolean }> {
   if (!opts.forceRefresh) {
-    const cached = readCachedGapReport(db, opts.maxAgeMs ?? DEFAULT_MAX_AGE_MS);
-    if (cached) return { report: cached, fromCache: true };
+    const fresh = readCachedGapReport(db, opts.maxAgeMs ?? DEFAULT_MAX_AGE_MS);
+    if (fresh) return { report: fresh, fromCache: true, computing: false };
   }
-  const fresh = await computeAndCacheGaps(store, db);
-  return { report: fresh, fromCache: false };
+  // stale/miss/forceRefresh → kick background recompute, return best-available now.
+  triggerBackgroundCompute(store, db);
+  const stale = readAnyCachedGapReport(db);
+  if (stale) return { report: stale, fromCache: true, computing: true };
+  return { report: EMPTY_REPORT, fromCache: false, computing: true };
 }

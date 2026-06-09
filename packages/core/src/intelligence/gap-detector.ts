@@ -41,11 +41,16 @@ export async function detectKnowledgeGaps(
 
   const { nodes, edges, clusters } = gd;
 
+  // perf(2026-06-09): nodes.find() 를 edge 루프 안에서 돌리면 O(edges×nodes) — 11k+ 노드 볼트에서
+  //   gap 계산이 수십~수백 초로 폭증(MCP timeout 의 한 원인). id→node Map 1회 구성으로 O(edges) 화.
+  const nodeById = new Map<string, (typeof nodes)[number]>();
+  for (const n of nodes) nodeById.set(n.id, n);
+
   // 1. 클러스터 간 연결 수 매트릭스
   const clusterEdges = new Map<string, number>();
   for (const edge of edges) {
-    const nodeA = nodes.find(n => n.id === edge.source);
-    const nodeB = nodes.find(n => n.id === edge.target);
+    const nodeA = nodeById.get(edge.source);
+    const nodeB = nodeById.get(edge.target);
     if (!nodeA || !nodeB || nodeA.clusterId === nodeB.clusterId) continue;
 
     const key = [

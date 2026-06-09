@@ -33,7 +33,7 @@ export function createDetectGapsTool(store: VectorStore, getDb: () => Database) 
     handler: async (args: { minSeverity?: string; forceRefresh?: boolean }) => {
       const minSeverity = args.minSeverity ?? 'medium';
       const db = getDb(); // lazy resolve — ready 이후 진짜 db 인스턴스
-      const { report, fromCache } = await getGapReport(store, db, { forceRefresh: args.forceRefresh });
+      const { report, fromCache, computing } = await getGapReport(store, db, { forceRefresh: args.forceRefresh });
 
       const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
       const threshold = sevOrder[minSeverity] ?? 1;
@@ -57,10 +57,12 @@ export function createDetectGapsTool(store: VectorStore, getDb: () => Database) 
             })),
             isolatedNodes: report.isolatedNodes.slice(0, 10),
             suggestion:
-              filtered.length > 0
-                ? `${filtered[0].suggestedTopic} 주제로 노트를 작성하면 지식 갭을 줄일 수 있습니다.`
-                : '현재 심각한 지식 갭이 없습니다.',
-            cacheStatus: fromCache ? 'cached' : 'fresh',
+              computing
+                ? '갭 분석을 백그라운드에서 재계산 중입니다. 잠시 후 다시 호출하면 최신 결과가 나옵니다.'
+                : filtered.length > 0
+                  ? `${filtered[0].suggestedTopic} 주제로 노트를 작성하면 지식 갭을 줄일 수 있습니다.`
+                  : '현재 심각한 지식 갭이 없습니다.',
+            cacheStatus: computing ? (fromCache ? 'stale (recomputing in background)' : 'computing in background') : (fromCache ? 'cached' : 'fresh'),
           }, null, 2),
         }],
       };
