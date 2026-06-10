@@ -1,13 +1,22 @@
-# Stellavault
+<div align="center">
+
+# ✦ Stellavault
+
+**Drop anything. It compiles itself into knowledge.**<br/>
+The local-first second brain that **Claude remembers** — no cloud, no API keys, your files untouched.
 
 [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-> **Drop anything. It compiles itself into knowledge.** Claude remembers everything you know.
+**English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
+
+[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [Quickstart](#install) · [MCP Setup](#mcp-integration-21-tools) · [Live Demo](https://evanciel.github.io/stellavault/)
+
+</div>
 
 Self-compiling knowledge base with a full-featured editor, 3D neural graph, AI-powered search, and spaced repetition — available as a **desktop app**, **CLI**, **Obsidian plugin**, and **MCP server**. Your vault files are never modified.
 
 <p align="center">
-  <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="800" />
+  <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="820" />
   <br><em>Your vault as a neural network. Local-first, no cloud required.</em>
 </p>
 
@@ -174,6 +183,17 @@ plus **FSRS recency** and session-adaptive reranking (see [Search & Ranking](#se
 - Heatmap overlay + Timeline slider + Decay overlay
 - Multiverse view — your vault as a universe in a P2P network
 - Dark/Light theme
+
+<table>
+  <tr>
+    <td width="50%"><img src="images/screenshots/graph-heatmap.png" alt="Heatmap overlay" /><br/><sub><b>Heatmap</b> — connection density across clusters</sub></td>
+    <td width="50%"><img src="images/screenshots/graph-timeline.png" alt="Timeline slider" /><br/><sub><b>Timeline</b> — watch your vault grow over time</sub></td>
+  </tr>
+  <tr>
+    <td><img src="images/screenshots/search-active.png" alt="Semantic search highlight" /><br/><sub><b>Search</b> — semantic matches highlighted in-graph</sub></td>
+    <td><img src="images/screenshots/multiverse-view.png" alt="Multiverse P2P view" /><br/><sub><b>Multiverse</b> — federated vaults as orbiting universes</sub></td>
+  </tr>
+</table>
 
 ---
 
@@ -357,6 +377,10 @@ Common issues:
 - **"API server not found"** → `npx stellavault graph`
 - **Empty graph** → `stellavault index`
 - **Slow first run** → AI model downloads ~30MB once
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [SECURITY.md](SECURITY.md) to report a vulnerability responsibly.
 
 ## License
 
