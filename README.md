@@ -13,7 +13,12 @@ The local-first second brain that **Claude remembers** — no cloud, no API keys
 
 </div>
 
-Self-compiling knowledge base with a full-featured editor, 3D neural graph, AI-powered search, and spaced repetition — available as a **desktop app**, **CLI**, **Obsidian plugin**, and **MCP server**. Your vault files are never modified.
+**A second brain that compiles itself.** Stellavault fuses two ideas about how knowledge should live and grow:
+
+- 🧠 **Karpathy's self-compiling wiki** — drop in anything (a PDF, a YouTube link, a passing thought) and it's auto-extracted into `raw/`, then **compiled** into a clean `_wiki/` of concepts and backlinks. Your knowledge re-compiles itself as it grows, instead of rotting in a folder.
+- 🕸️ **Zettelkasten** — atomic notes, `[[wikilinks]]`, and emergent connections, so a *web of ideas* (not a folder tree) becomes the real structure of how you think.
+
+The result is one local-first knowledge tool — a full markdown editor, a 3D neural graph, hybrid AI search, and spaced-repetition memory decay — shipped as a **desktop app**, **CLI**, **Obsidian plugin**, and **MCP server** that lets **Claude read your entire vault**. No cloud, no API keys, and your original files are never modified.
 
 <p align="center">
   <img src="images/screenshots/graph-main-2.png" alt="3D Knowledge Graph" width="820" />

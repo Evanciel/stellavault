@@ -13,7 +13,12 @@
 
 </div>
 
-一个集成了功能完整的编辑器、3D 神经网络图谱、AI 搜索与间隔重复(spaced repetition)的 **自编译(self-compiling)知识库**。可作为 **桌面应用**、**CLI**、**Obsidian 插件** 和 **MCP 服务器** 使用，你的仓库(vault)文件永不被修改。
+**一个会自我编译的第二大脑。** Stellavault 把两种关于"知识应当如何存活、生长"的思想融为一体：
+
+- 🧠 **Karpathy 的自编译 wiki** — 丢进任何东西(PDF、YouTube 链接、一闪而过的想法)，它都会被自动抽取进 `raw/`，再**编译**成概念与反向链接井然有序的 `_wiki/`。知识不会烂在文件夹里，而是随着积累不断自我重新编译。
+- 🕸️ **卡片盒笔记法(Zettelkasten)** — 原子化笔记、`[[wikilink]]` 与自发涌现的连接，让*一张思想之网*(而非文件夹树)成为你思考的真正骨架。
+
+二者被融合进一个本地优先的知识工具 — 功能完整的 Markdown 编辑器、3D 神经网络图谱、混合 AI 搜索，以及基于间隔重复(spaced repetition)的记忆衰减。而这一切都以 **桌面应用**、**CLI**、**Obsidian 插件**，以及**让 Claude 读取你整个仓库(vault)的 MCP 服务器**的形式提供。无需云端、无需 API 密钥，原始文件永不被修改。
 
 <p align="center">
   <img src="images/screenshots/graph-main-2.png" alt="3D 知识图谱" width="820" />
