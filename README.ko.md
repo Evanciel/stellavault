@@ -1,15 +1,15 @@
 <div align="center">
 
-# ✦ Stellavault
+<img src="images/banner.svg" alt="Stellavault — 무엇이든 던지면 스스로 지식으로 컴파일됩니다" width="100%" />
 
-**무엇이든 던져 넣으세요. 스스로 지식으로 컴파일됩니다.**<br/>
-**Claude가 기억하는** 로컬 우선(local-first) 세컨드 브레인 — 클라우드도, API 키도 필요 없고, 원본 파일은 건드리지 않습니다.
+**Claude가 기억하는 로컬 우선 세컨드 브레인.**<br/>
+Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트 비파괴, MCP 네이티브.
 
 [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ 데스크톱 앱 다운로드**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [빠른 시작](#설치) · [MCP 설정](#mcp-연동-21개-도구) · [라이브 데모](https://evanciel.github.io/stellavault/)
+[**⬇ 데스크톱 앱 다운로드**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ 빠른 시작**](#설치) · [**🤖 MCP 설정**](#mcp-연동-21개-도구) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -27,7 +27,34 @@
 
 ## 목차
 
-[설치](#설치) · [에디터](#에디터) · [파이프라인](#파이프라인) · [인텔리전스](#인텔리전스) · [검색과 랭킹](#검색과-랭킹) · [MCP 연동](#mcp-연동-21개-도구) · [3D 시각화](#3d-시각화) · [설정](#설정) · [성능](#성능) · [기술 스택](#기술-스택) · [보안](#보안) · [문제 해결](#문제-해결)
+[하이라이트](#하이라이트) · [왜 Stellavault?](#왜-stellavault인가) · [설치](#설치) · [에디터](#에디터) · [파이프라인](#파이프라인) · [인텔리전스](#인텔리전스) · [검색과 랭킹](#검색과-랭킹) · [MCP 연동](#mcp-연동-21개-도구) · [3D 시각화](#3d-시각화) · [설정](#설정) · [성능](#성능) · [기술 스택](#기술-스택) · [보안](#보안) · [문제 해결](#문제-해결)
+
+## 하이라이트
+
+- 🧠 **스스로 컴파일됩니다.** PDF, 유튜브 링크, 어설픈 메모 한 줄 — 무엇이든 던지면 `raw/`로 추출한 뒤 개념과 백링크가 정리된 깔끔한 `_wiki/`로 *컴파일*합니다. 쌓일수록 스스로 정리되는 지식.
+- 🔍 **진짜로 찾아내는 검색.** 의미(시맨틱) + 정확한 키워드(BM25) + 당신의 `[[위키링크]]` / `#태그`를 **가중 RRF**로 융합하고, FSRS 기억 모델로 재정렬해 *지금 쓰고 있는* 노트를 위로 띄웁니다. 50+ 언어, 완전 로컬, API 키 0개.
+- 🌌 **당신의 머릿속을 3D로.** 실시간 신경망 그래프(React Three Fiber) — 클러스터 색상, 별자리, 히트맵, 타임라인, 멀티버스 P2P 뷰. 아는 것의 *형태*를 눈으로 보는 방법.
+- 🤖 **Claude가 볼트 전체를 읽습니다.** 일급 **MCP 서버**(21개 도구): Claude Code·Claude Desktop·Cursor·Windsurf·VS Code에서 검색·질의·초안·점검·분석을 바로.
+- ⏳ **절대 *조용히* 잊지 않습니다.** FSRS 기억 감쇠가 곧 잃을 진짜 노트를 띄우고, 볼트 전반의 지식 공백·모순·중복까지 탐지합니다.
+- 🔒 **로컬 우선. 볼트 비파괴. 키 0개.** 로컬 임베딩 + 온디바이스 벡터 스토어, 원본 파일은 **절대 수정되지 않습니다.** 당신이 옵트인하지 않는 한 아무것도 기기를 떠나지 않습니다.
+
+## 왜 Stellavault인가
+
+대부분의 도구는 *쓰기*, *찾기*, *기억하기* 중 하나를 고르게 만듭니다. Stellavault는 셋 다 합니다 — 로컬에서, 그리고 Claude가 읽을 수 있는 방식으로.
+
+| | **Stellavault** | Obsidian | Notion | 직접 만든 RAG |
+|---|:---:|:---:|:---:|:---:|
+| 로컬 우선, 오프라인 작동 | ✅ | ✅ | ☁️ 클라우드 | ⚠️ 대개 클라우드 |
+| API 키 없는 시맨틱 검색 | ✅ | ⚠️ 플러그인+키 | 💰 유료 AI | ⚠️ 키 필요 |
+| 원본 파일 비수정 | ✅ | ✅ | ❌ 독자 포맷 | ➖ |
+| 자기 컴파일 (수집 → 위키) | ✅ | ❌ | ❌ | ❌ |
+| 3D 지식 그래프 | ✅ | 2D / 플러그인 | ❌ | ❌ |
+| 간격 반복 감쇠 (FSRS) | ✅ | ⚠️ 플러그인 | ❌ | ❌ |
+| 공백·모순·중복 탐지 | ✅ | ❌ | ❌ | ❌ |
+| MCP 네이티브 (Claude가 볼트 읽기) | ✅ | ➖ 커뮤니티 | ☁️ 클라우드 | ➖ |
+
+> [!NOTE]
+> 양자택일이 아닙니다 — Stellavault는 **Obsidian 안에서** [플러그인](https://github.com/Evanciel/stellavault-obsidian)으로도 돌아갑니다. 쓰던 에디터는 그대로, 두뇌만 더하세요.
 
 ## 설치
 
@@ -41,6 +68,7 @@
   </tr>
 </table>
 
+> [!TIP]
 > 다운로드 → 압축 해제 → `stellavault.exe`(Windows) 또는 `stellavault`(Linux) 실행 → 노트 폴더 선택 → 완료.
 
 ### CLI (개발자용)
@@ -67,6 +95,11 @@ stellavault graph             # 브라우저에서 3D 그래프 실행
 
 본격 마크다운 에디터 — Obsidian에 견줄 수준입니다.
 
+<details>
+<summary><b>전체 서식 & 블록 지원</b> — 표, 코드, KaTeX, 슬래시 명령어, 위키링크, 분할 보기… <i>(펼치기)</i></summary>
+
+<br/>
+
 | 기능 | 상태 |
 |---------|--------|
 | 굵게, 기울임, 밑줄, 취소선 | ✅ |
@@ -83,6 +116,8 @@ stellavault graph             # 브라우저에서 3D 그래프 실행
 | 하이라이트, 위첨자, 아래첨자 | ✅ |
 | 스마트 타이포그래피 (둥근 따옴표, em/en 대시) | ✅ |
 | 수평선 | ✅ |
+
+</details>
 
 ---
 
@@ -366,6 +401,7 @@ stellavault federate join
 
 활성화되면 페더레이션은 Ed25519 신원과 서명된 봉투(signed envelope), 상호 챌린지-응답 핸드셰이크, 봉투별 리플레이 논스, 핸드셰이크 타임아웃, 피어별 레이트 리미팅, 그리고 수신 전용 공유 기본값(`myNodeLevel=0`)을 사용합니다. 실제로 제목/스니펫을 피어와 공유하려면 페더레이션 프롬프트에서 `set-level 1+`을 실행하세요.
 
+> [!WARNING]
 > **업그레이드 안내 (v0.7.4)** — 페더레이션 와이어 포맷이 v2.0 → v2.1(봉투 단위 논스)로 올라갔습니다. v0.7.3 노드와는 호환되지 않습니다. 기존 `~/.stellavault/federation/sharing.json`은 더 안전한 기본값으로 자동 다운그레이드되지 **않으니**, 이전에 옵트인했다면 `myNodeLevel`을 다시 점검하세요.
 
 전체 내용은 [SECURITY.md](SECURITY.md)를 참고하세요.
@@ -398,3 +434,13 @@ MIT — 전체 소스 코드를 감사(audit)할 수 있습니다.
 - [npm](https://www.npmjs.com/package/stellavault)
 - [GitHub 릴리스](https://github.com/Evanciel/stellavault/releases)
 - [보안 정책](SECURITY.md)
+
+---
+
+<div align="center">
+
+**도움이 되셨나요?** ⭐ [**Stellavault에 스타**](https://github.com/Evanciel/stellavault) — 연결된 노트로 사고하는 더 많은 사람에게 닿는 데 큰 힘이 됩니다.
+
+<sub>세컨드 브레인을 만드는 사람들을 위해 ✦로 빚었습니다. · <a href="https://github.com/Evanciel/stellavault/releases">다운로드</a> · <a href="#mcp-연동-21개-도구">Claude 연결</a> · <a href="https://github.com/Evanciel/stellavault/issues">이슈 제보</a></sub>
+
+</div>

@@ -1,0 +1,95 @@
+<svg viewBox="0 0 1280 400" width="1280" height="400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Stellavault — drop anything, it compiles itself into knowledge">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#1b1640"/>
+      <stop offset="55%" stop-color="#0f0c26"/>
+      <stop offset="100%" stop-color="#070611"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="30%" r="50%">
+      <stop offset="0%" stop-color="#7c5cff" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wm" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c4b5fd"/>
+      <stop offset="50%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#7dd3fc"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="rule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a78bfa" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#a78bfa" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="400" fill="url(#bg)"/>
+  <rect width="1280" height="400" fill="url(#glow)"/>
+
+  <!-- faint orbit rings behind the wordmark -->
+  <g fill="none" stroke="#8b7fd0" opacity="0.10">
+    <circle cx="640" cy="175" r="150"/>
+    <circle cx="640" cy="175" r="250"/>
+  </g>
+
+  <!-- constellation: edges then nodes (kept clear of the central text band) -->
+  <g stroke="url(#node)" stroke-width="1" opacity="0.18">
+    <line x1="120" y1="70"  x2="260"  y2="45"/>
+    <line x1="260" y1="45"  x2="430"  y2="95"/>
+    <line x1="70"  y1="200" x2="120"  y2="70"/>
+    <line x1="1040" y1="60" x2="1160" y2="100"/>
+    <line x1="1040" y1="60" x2="900"  y2="80"/>
+    <line x1="1160" y1="100" x2="1210" y2="45"/>
+    <line x1="1220" y1="200" x2="1210" y2="45"/>
+    <line x1="180" y1="330" x2="320"  y2="360"/>
+    <line x1="1080" y1="330" x2="1180" y2="355"/>
+    <line x1="1080" y1="330" x2="980"  y2="350"/>
+    <line x1="1220" y1="200" x2="1180" y2="355"/>
+  </g>
+  <g fill="url(#node)">
+    <circle cx="120"  cy="70"  r="3"/>
+    <circle cx="260"  cy="45"  r="2.5"/>
+    <circle cx="430"  cy="95"  r="2"/>
+    <circle cx="70"   cy="200" r="2.5"/>
+    <circle cx="900"  cy="80"  r="2"/>
+    <circle cx="1040" cy="60"  r="3"/>
+    <circle cx="1160" cy="100" r="2.5"/>
+    <circle cx="1210" cy="45"  r="2"/>
+    <circle cx="1220" cy="200" r="3"/>
+    <circle cx="180"  cy="330" r="3"/>
+    <circle cx="320"  cy="360" r="2"/>
+    <circle cx="980"  cy="350" r="2"/>
+    <circle cx="1080" cy="330" r="3"/>
+    <circle cx="1180" cy="355" r="2.5"/>
+    <circle cx="640"  cy="360" r="2"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="640" y="188" text-anchor="middle"
+        font-family="'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+        font-size="84" font-weight="800" letter-spacing="6" fill="url(#wm)">
+    <tspan fill="#38bdf8" font-weight="700">✦</tspan> STELLAVAULT
+  </text>
+
+  <!-- tagline -->
+  <text x="640" y="240" text-anchor="middle"
+        font-family="'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+        font-size="26" font-weight="400" fill="#aab2c5">
+    Drop anything. It compiles itself into knowledge.
+  </text>
+
+  <!-- accent rule -->
+  <rect x="450" y="262" width="380" height="2" rx="1" fill="url(#rule)"/>
+
+  <!-- sub-line -->
+  <text x="640" y="292" text-anchor="middle"
+        font-family="'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+        font-size="14.5" font-weight="600" letter-spacing="3.5" fill="#9b8fe0">
+    LOCAL-FIRST SECOND BRAIN  ·  KARPATHY WIKI × ZETTELKASTEN  ·  MCP-NATIVE
+  </text>
+</svg>

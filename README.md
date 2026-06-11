@@ -1,15 +1,15 @@
 <div align="center">
 
-# ✦ Stellavault
+<img src="images/banner.svg" alt="Stellavault — drop anything, it compiles itself into knowledge" width="100%" />
 
-**Drop anything. It compiles itself into knowledge.**<br/>
-The local-first second brain that **Claude remembers** — no cloud, no API keys, your files untouched.
+**The local-first second brain that Claude remembers.**<br/>
+Karpathy's self-compiling wiki × Zettelkasten — fully local, vault-safe, and MCP-native.
 
 [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [Quickstart](#install) · [MCP Setup](#mcp-integration-21-tools) · [Live Demo](https://evanciel.github.io/stellavault/)
+[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ Quickstart**](#install) · [**🤖 MCP Setup**](#mcp-integration-21-tools) · [**🌐 Live Demo**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -27,7 +27,34 @@ The result is one local-first knowledge tool — a full markdown editor, a 3D ne
 
 ## Contents
 
-[Install](#install) · [Editor](#editor) · [Pipeline](#the-pipeline) · [Intelligence](#intelligence-what-makes-stellavault-unique) · [Search & Ranking](#search--ranking) · [MCP Integration](#mcp-integration-21-tools) · [3D Visualization](#3d-visualization) · [Configuration](#configuration) · [Performance](#performance) · [Tech Stack](#tech-stack) · [Security](#security) · [Troubleshooting](#troubleshooting)
+[Highlights](#highlights) · [Why Stellavault?](#why-stellavault) · [Install](#install) · [Editor](#editor) · [Pipeline](#the-pipeline) · [Intelligence](#intelligence-what-makes-stellavault-unique) · [Search & Ranking](#search--ranking) · [MCP Integration](#mcp-integration-21-tools) · [3D Visualization](#3d-visualization) · [Configuration](#configuration) · [Performance](#performance) · [Tech Stack](#tech-stack) · [Security](#security) · [Troubleshooting](#troubleshooting)
+
+## Highlights
+
+- 🧠 **It compiles itself.** Drop in a PDF, a YouTube link, or a half-formed thought — Stellavault extracts it to `raw/`, then *compiles* a clean `_wiki/` with concepts and backlinks. Knowledge that organizes itself as it grows.
+- 🔍 **Search that actually finds it.** Hybrid retrieval fuses semantic meaning, exact keywords (BM25), and your own `[[wikilinks]]` / `#tags` with **weighted RRF**, then re-ranks by an FSRS memory model so what you're *actually* using resurfaces. 50+ languages, fully local, zero API keys.
+- 🌌 **Your mind, in 3D.** A real-time neural graph (React Three Fiber) — cluster coloring, constellations, heatmaps, a timeline, and a multiverse P2P view. A way to *see* the shape of what you know.
+- 🤖 **Claude reads your entire vault.** A first-class **MCP server** (21 tools): Claude can search, ask, draft, lint, and analyze your knowledge from Claude Code, Claude Desktop, Cursor, Windsurf, or VS Code.
+- ⏳ **It never *silently* forgets.** FSRS memory decay surfaces the real notes you're about to lose — plus gap, contradiction, and duplicate detection across the whole vault.
+- 🔒 **Local-first. Vault-safe. Zero keys.** Local embeddings, an on-device vector store, and your original files are **never modified**. Nothing leaves your machine unless you opt in.
+
+## Why Stellavault?
+
+Most tools make you choose between *writing*, *searching*, and *remembering*. Stellavault does all three — locally, and in a way Claude can read.
+
+| | **Stellavault** | Obsidian | Notion | Plain RAG script |
+|---|:---:|:---:|:---:|:---:|
+| Local-first, works offline | ✅ | ✅ | ☁️ cloud | ⚠️ usually cloud |
+| Semantic search, no API key | ✅ | ⚠️ plugin + key | 💰 paid AI | ⚠️ needs key |
+| Original files never modified | ✅ | ✅ | ❌ proprietary | ➖ |
+| Self-compiling (ingest → wiki) | ✅ | ❌ | ❌ | ❌ |
+| 3D knowledge graph | ✅ | 2D / plugin | ❌ | ❌ |
+| Spaced-repetition decay (FSRS) | ✅ | ⚠️ plugin | ❌ | ❌ |
+| Gap / contradiction / dup detection | ✅ | ❌ | ❌ | ❌ |
+| MCP-native (Claude reads your vault) | ✅ | ➖ community | ☁️ cloud | ➖ |
+
+> [!NOTE]
+> Not either/or — Stellavault even runs **inside Obsidian** as a [plugin](https://github.com/Evanciel/stellavault-obsidian). Keep your editor; add a brain.
 
 ## Install
 
@@ -41,6 +68,7 @@ The result is one local-first knowledge tool — a full markdown editor, a 3D ne
   </tr>
 </table>
 
+> [!TIP]
 > Download → Unzip → Run `stellavault.exe` (Windows) or `stellavault` (Linux) → Pick your notes folder → Done.
 
 ### CLI (for developers)
@@ -67,6 +95,11 @@ stellavault graph             # Launch 3D graph in browser
 
 Full-featured markdown editor — on par with Obsidian.
 
+<details>
+<summary><b>Full formatting & block support</b> — tables, code, KaTeX, slash commands, wikilinks, split view… <i>(click to expand)</i></summary>
+
+<br/>
+
 | Feature | Status |
 |---------|--------|
 | Bold, Italic, Underline, Strikethrough | ✅ |
@@ -83,6 +116,8 @@ Full-featured markdown editor — on par with Obsidian.
 | Highlight, Superscript, Subscript | ✅ |
 | Smart typography (curly quotes, em/en dashes) | ✅ |
 | Horizontal rules | ✅ |
+
+</details>
 
 ---
 
@@ -367,6 +402,7 @@ stellavault federate join
 
 When enabled, federation uses Ed25519 identities with signed envelopes, mutual challenge-response handshake, per-envelope replay nonces, handshake timeout, per-peer rate limiting, and a receive-only sharing default (`myNodeLevel=0`). Run `set-level 1+` in the federation prompt to actually share titles/snippets with peers.
 
+> [!WARNING]
 > **Upgrade note (v0.7.4)** — federation wire format bumped from v2.0 to v2.1 (envelope-level nonce). v0.7.3 federation nodes are not compatible. Existing `~/.stellavault/federation/sharing.json` files are **not** auto-downgraded to the safer defaults; review your `myNodeLevel` if you previously opted in.
 
 See [SECURITY.md](SECURITY.md) for full details.
@@ -399,3 +435,13 @@ MIT — full source code available for audit.
 - [npm](https://www.npmjs.com/package/stellavault)
 - [GitHub Releases](https://github.com/Evanciel/stellavault/releases)
 - [Security Policy](SECURITY.md)
+
+---
+
+<div align="center">
+
+**Found this useful?** ⭐ [**Star Stellavault**](https://github.com/Evanciel/stellavault) — it genuinely helps the project reach more people who think in connected notes.
+
+<sub>Built with ✦ for second-brain builders. · <a href="https://github.com/Evanciel/stellavault/releases">Download</a> · <a href="#mcp-integration-21-tools">Connect Claude</a> · <a href="https://github.com/Evanciel/stellavault/issues">Report an issue</a></sub>
+
+</div>

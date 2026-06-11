@@ -1,15 +1,15 @@
 <div align="center">
 
-# ✦ Stellavault
+<img src="images/banner.svg" alt="Stellavault — 何でも放り込むだけで自動的に知識へコンパイルされます" width="100%" />
 
-**何でも放り込むだけ。自動で知識へとコンパイルされます。**<br/>
-**Claude が記憶する** ローカルファースト(local-first)なセカンドブレイン — クラウド不要、APIキー不要、元ファイルは一切変更しません。
+**Claude が記憶するローカルファーストなセカンドブレイン。**<br/>
+Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完全ローカル、ボールト非破壊、MCP ネイティブ。
 
 [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh.md)
 
-[**⬇ デスクトップアプリをダウンロード**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [クイックスタート](#インストール) · [MCP セットアップ](#mcp-連携-21ツール) · [ライブデモ](https://evanciel.github.io/stellavault/)
+[**⬇ デスクトップアプリをダウンロード**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ クイックスタート**](#インストール) · [**🤖 MCP セットアップ**](#mcp-連携-21ツール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -27,7 +27,34 @@
 
 ## 目次
 
-[インストール](#インストール) · [エディタ](#エディタ) · [パイプライン](#パイプライン) · [インテリジェンス](#インテリジェンス) · [検索とランキング](#検索とランキング) · [MCP 連携](#mcp-連携-21ツール) · [3D ビジュアライゼーション](#3d-ビジュアライゼーション) · [設定](#設定) · [パフォーマンス](#パフォーマンス) · [技術スタック](#技術スタック) · [セキュリティ](#セキュリティ) · [トラブルシューティング](#トラブルシューティング)
+[ハイライト](#ハイライト) · [なぜ Stellavault?](#なぜ-stellavault-なのか) · [インストール](#インストール) · [エディタ](#エディタ) · [パイプライン](#パイプライン) · [インテリジェンス](#インテリジェンス) · [検索とランキング](#検索とランキング) · [MCP 連携](#mcp-連携-21ツール) · [3D ビジュアライゼーション](#3d-ビジュアライゼーション) · [設定](#設定) · [パフォーマンス](#パフォーマンス) · [技術スタック](#技術スタック) · [セキュリティ](#セキュリティ) · [トラブルシューティング](#トラブルシューティング)
+
+## ハイライト
+
+- 🧠 **自らをコンパイルします。** PDF、YouTube リンク、走り書きのメモ — 何でも放り込めば `raw/` に抽出し、概念とバックリンクが整理された綺麗な `_wiki/` へと *コンパイル* します。積み重なるほど自ら整理される知識。
+- 🔍 **本当に見つかる検索。** 意味(セマンティック)+ 正確なキーワード(BM25)+ あなたの `[[ウィキリンク]]` / `#タグ` を **重み付き RRF** で融合し、FSRS 記憶モデルで再ランキングして *いま使っている* ノートを浮上させます。50+ 言語、完全ローカル、APIキー 0。
+- 🌌 **あなたの思考を 3D で。** リアルタイムのニューラルグラフ(React Three Fiber)— クラスタ色分け、コンステレーション、ヒートマップ、タイムライン、マルチバース P2P ビュー。知っていることの *かたち* を目で見る方法。
+- 🤖 **Claude がボールト全体を読みます。** ファーストクラスの **MCP サーバー**(21 ツール): Claude Code・Claude Desktop・Cursor・Windsurf・VS Code から検索・質問・ドラフト・点検・分析を直接。
+- ⏳ **決して *静かに* 忘れません。** FSRS 記憶減衰が失いかけている本当のノートを浮上させ、ボールト全体の知識ギャップ・矛盾・重複まで検出します。
+- 🔒 **ローカルファースト。ボールト非破壊。キー 0。** ローカル埋め込み + オンデバイスのベクトルストア、元のファイルは **決して変更されません。** オプトインしない限り、何も端末を離れません。
+
+## なぜ Stellavault なのか
+
+多くのツールは *書く*・*探す*・*覚える* のどれかを選ばせます。Stellavault はその 3 つすべてを — ローカルで、しかも Claude が読める形で。
+
+| | **Stellavault** | Obsidian | Notion | 自作 RAG |
+|---|:---:|:---:|:---:|:---:|
+| ローカルファースト、オフライン動作 | ✅ | ✅ | ☁️ クラウド | ⚠️ 多くはクラウド |
+| APIキー不要のセマンティック検索 | ✅ | ⚠️ プラグイン+キー | 💰 有料 AI | ⚠️ キー必須 |
+| 元ファイル非変更 | ✅ | ✅ | ❌ 独自形式 | ➖ |
+| 自己コンパイル(取込 → wiki) | ✅ | ❌ | ❌ | ❌ |
+| 3D ナレッジグラフ | ✅ | 2D / プラグイン | ❌ | ❌ |
+| 間隔反復による減衰(FSRS) | ✅ | ⚠️ プラグイン | ❌ | ❌ |
+| ギャップ・矛盾・重複の検出 | ✅ | ❌ | ❌ | ❌ |
+| MCP ネイティブ(Claude がボールトを読む) | ✅ | ➖ コミュニティ | ☁️ クラウド | ➖ |
+
+> [!NOTE]
+> 二者択一ではありません — Stellavault は **Obsidian の中で** [プラグイン](https://github.com/Evanciel/stellavault-obsidian)としても動きます。使い慣れたエディタはそのまま、頭脳だけ足してください。
 
 ## インストール
 
@@ -41,6 +68,7 @@
   </tr>
 </table>
 
+> [!TIP]
 > ダウンロード → 解凍 → `stellavault.exe`(Windows) または `stellavault`(Linux) を実行 → ノートフォルダを選択 → 完了。
 
 ### CLI (開発者向け)
@@ -67,6 +95,11 @@ stellavault graph             # ブラウザで 3D グラフを起動
 
 本格的なマークダウンエディタ — Obsidian に匹敵します。
 
+<details>
+<summary><b>あらゆる書式 & ブロックに対応</b> — テーブル、コード、KaTeX、スラッシュコマンド、ウィキリンク、分割ビュー… <i>(クリックで展開)</i></summary>
+
+<br/>
+
 | 機能 | 状態 |
 |---------|--------|
 | 太字、斜体、下線、取り消し線 | ✅ |
@@ -83,6 +116,8 @@ stellavault graph             # ブラウザで 3D グラフを起動
 | ハイライト、上付き、下付き | ✅ |
 | スマートタイポグラフィ (丸引用符、em/en ダッシュ) | ✅ |
 | 水平線 | ✅ |
+
+</details>
 
 ---
 
@@ -366,6 +401,7 @@ stellavault federate join
 
 有効化すると、フェデレーションは Ed25519 アイデンティティと署名付きエンベロープ、相互チャレンジ・レスポンスのハンドシェイク、エンベロープごとのリプレイ用ノンス、ハンドシェイクタイムアウト、ピアごとのレート制限、そして受信専用の共有既定値(`myNodeLevel=0`)を使用します。実際にタイトル/スニペットをピアと共有するには、フェデレーションプロンプトで `set-level 1+` を実行してください。
 
+> [!WARNING]
 > **アップグレード注記 (v0.7.4)** — フェデレーションのワイヤーフォーマットが v2.0 → v2.1(エンベロープ単位のノンス)に上がりました。v0.7.3 のノードとは互換性がありません。既存の `~/.stellavault/federation/sharing.json` はより安全な既定値へ自動ダウングレード **されない** ため、以前オプトインしていた場合は `myNodeLevel` を見直してください。
 
 詳細は [SECURITY.md](SECURITY.md) を参照してください。
@@ -398,3 +434,13 @@ MIT — 全ソースコードを監査(audit)できます。
 - [npm](https://www.npmjs.com/package/stellavault)
 - [GitHub リリース](https://github.com/Evanciel/stellavault/releases)
 - [セキュリティポリシー](SECURITY.md)
+
+---
+
+<div align="center">
+
+**役に立ちましたか?** ⭐ [**Stellavault にスター**](https://github.com/Evanciel/stellavault) — つながりで考える人たちに届く大きな力になります。
+
+<sub>セカンドブレインを築く人のために ✦ で。 · <a href="https://github.com/Evanciel/stellavault/releases">ダウンロード</a> · <a href="#mcp-連携-21ツール">Claude を接続</a> · <a href="https://github.com/Evanciel/stellavault/issues">問題を報告</a></sub>
+
+</div>

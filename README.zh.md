@@ -1,15 +1,15 @@
 <div align="center">
 
-# ✦ Stellavault
+<img src="images/banner.svg" alt="Stellavault — 丢进任何东西，它会自动编译成知识" width="100%" />
 
-**丢进任何东西，它会自动编译成知识。**<br/>
-**让 Claude 记住一切** 的本地优先(local-first)第二大脑 — 无需云端、无需 API 密钥，原始文件分毫不动。
+**让 Claude 记住一切的本地优先第二大脑。**<br/>
+Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破坏、MCP 原生。
 
 [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
-[**⬇ 下载桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [快速开始](#安装) · [MCP 配置](#mcp-集成-21-个工具) · [在线演示](https://evanciel.github.io/stellavault/)
+[**⬇ 下载桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ 快速开始**](#安装) · [**🤖 MCP 配置**](#mcp-集成-21-个工具) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -27,7 +27,34 @@
 
 ## 目录
 
-[安装](#安装) · [编辑器](#编辑器) · [流水线](#流水线) · [智能功能](#智能功能) · [搜索与排名](#搜索与排名) · [MCP 集成](#mcp-集成-21-个工具) · [3D 可视化](#3d-可视化) · [配置](#配置) · [性能](#性能) · [技术栈](#技术栈) · [安全](#安全) · [故障排查](#故障排查)
+[亮点](#亮点) · [为什么选择 Stellavault?](#为什么选择-stellavault) · [安装](#安装) · [编辑器](#编辑器) · [流水线](#流水线) · [智能功能](#智能功能) · [搜索与排名](#搜索与排名) · [MCP 集成](#mcp-集成-21-个工具) · [3D 可视化](#3d-可视化) · [配置](#配置) · [性能](#性能) · [技术栈](#技术栈) · [安全](#安全) · [故障排查](#故障排查)
+
+## 亮点
+
+- 🧠 **它会自我编译。** PDF、YouTube 链接、半成形的想法 — 丢进任何东西，它都会抽取进 `raw/`，再*编译*成概念与反向链接井然有序的 `_wiki/`。随积累自我整理的知识。
+- 🔍 **真正能找到的搜索。** 用**加权 RRF** 融合语义、精确关键词(BM25)以及你自己的 `[[wikilink]]` / `#标签`，再用 FSRS 记忆模型重排序，把你*正在用*的笔记顶上来。50+ 种语言、完全本地、零 API 密钥。
+- 🌌 **把你的思维变成 3D。** 实时神经网络图谱(React Three Fiber)— 聚类着色、星座、热力图、时间轴、多元宇宙 P2P 视图。一种*看见*自己所知形状的方式。
+- 🤖 **Claude 读取你的整个仓库。** 一流的 **MCP 服务器**(21 个工具): 在 Claude Code、Claude Desktop、Cursor、Windsurf、VS Code 中直接搜索、问答、起草、检查与分析。
+- ⏳ **它绝不*悄悄*遗忘。** FSRS 记忆衰减把你即将失去的真实笔记顶上来，还能检测整个仓库的知识缺口、矛盾与重复。
+- 🔒 **本地优先。仓库非破坏。零密钥。** 本地嵌入 + 设备端向量存储，原始文件**永不被修改**。除非你主动选择，任何数据都不会离开你的机器。
+
+## 为什么选择 Stellavault
+
+大多数工具逼你在*写作*、*搜索*、*记忆*之间三选一。Stellavault 三者兼得 — 在本地，并以 Claude 能读取的方式。
+
+| | **Stellavault** | Obsidian | Notion | 自写 RAG |
+|---|:---:|:---:|:---:|:---:|
+| 本地优先、离线可用 | ✅ | ✅ | ☁️ 云端 | ⚠️ 通常云端 |
+| 无需 API 密钥的语义搜索 | ✅ | ⚠️ 插件+密钥 | 💰 付费 AI | ⚠️ 需密钥 |
+| 原始文件永不修改 | ✅ | ✅ | ❌ 专有格式 | ➖ |
+| 自编译(摄取 → wiki) | ✅ | ❌ | ❌ | ❌ |
+| 3D 知识图谱 | ✅ | 2D / 插件 | ❌ | ❌ |
+| 间隔重复衰减(FSRS) | ✅ | ⚠️ 插件 | ❌ | ❌ |
+| 缺口 / 矛盾 / 重复检测 | ✅ | ❌ | ❌ | ❌ |
+| MCP 原生(Claude 读取你的仓库) | ✅ | ➖ 社区 | ☁️ 云端 | ➖ |
+
+> [!NOTE]
+> 并非二选一 — Stellavault 甚至能**在 Obsidian 内**以[插件](https://github.com/Evanciel/stellavault-obsidian)形式运行。留住你的编辑器，加一个大脑。
 
 ## 安装
 
@@ -41,6 +68,7 @@
   </tr>
 </table>
 
+> [!TIP]
 > 下载 → 解压 → 运行 `stellavault.exe`(Windows) 或 `stellavault`(Linux) → 选择笔记文件夹 → 完成。
 
 ### CLI (面向开发者)
@@ -67,6 +95,11 @@ stellavault graph             # 在浏览器中启动 3D 图谱
 
 功能完整的 Markdown 编辑器 — 可与 Obsidian 媲美。
 
+<details>
+<summary><b>完整的格式与块支持</b> — 表格、代码、KaTeX、斜杠命令、wikilink、分屏… <i>(点击展开)</i></summary>
+
+<br/>
+
 | 功能 | 状态 |
 |---------|--------|
 | 加粗、斜体、下划线、删除线 | ✅ |
@@ -83,6 +116,8 @@ stellavault graph             # 在浏览器中启动 3D 图谱
 | 高亮、上标、下标 | ✅ |
 | 智能排版 (弯引号、em/en 破折号) | ✅ |
 | 水平分隔线 | ✅ |
+
+</details>
 
 ---
 
@@ -366,6 +401,7 @@ stellavault federate join
 
 启用后，联邦使用 Ed25519 身份与签名信封(signed envelope)、双向质询-应答握手、每信封重放随机数(nonce)、握手超时、按节点限速，以及"仅接收"的分享默认值(`myNodeLevel=0`)。要真正与对等节点分享标题/摘要，请在联邦提示符中运行 `set-level 1+`。
 
+> [!WARNING]
 > **升级提示 (v0.7.4)** — 联邦传输格式从 v2.0 升级到 v2.1(信封级 nonce)。v0.7.3 的联邦节点不兼容。现有的 `~/.stellavault/federation/sharing.json` **不会** 自动降级为更安全的默认值；若你此前曾选择加入，请复查你的 `myNodeLevel`。
 
 完整细节见 [SECURITY.md](SECURITY.md)。
@@ -398,3 +434,13 @@ MIT — 全部源代码可供审计。
 - [npm](https://www.npmjs.com/package/stellavault)
 - [GitHub Releases](https://github.com/Evanciel/stellavault/releases)
 - [安全策略](SECURITY.md)
+
+---
+
+<div align="center">
+
+**觉得有用?** ⭐ [**给 Stellavault 点星**](https://github.com/Evanciel/stellavault) — 这能实实在在帮助项目触达更多以连接方式思考的人。
+
+<sub>为构建第二大脑的人们，以 ✦ 打造。 · <a href="https://github.com/Evanciel/stellavault/releases">下载</a> · <a href="#mcp-集成-21-个工具">连接 Claude</a> · <a href="https://github.com/Evanciel/stellavault/issues">报告问题</a></sub>
+
+</div>
