@@ -1,0 +1,129 @@
+name: Desktop Release
+
+# Builds the Electron desktop app natively on each OS (so native modules like
+# better-sqlite3 / sqlite-vec are compiled against Electron's ABI per platform)
+# and publishes the ZIPs to a GitHub Release.
+#
+# Version source of truth = the git tag `desktop-vX.Y.Z`. CI stamps that version
+# into the build, so the Windows and Linux artifacts always share one version
+# and bundle the *current* @stellavault/core at that commit.
+#
+# Triggers:
+#   • push a tag `desktop-v*`            → build BOTH platforms + publish release
+#   • Actions → "Desktop Release" → Run  → choose tag + publish (default: build only, no release)
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. desktop-v0.1.1)'
+        required: true
+        default: 'desktop-v0.1.1'
+      publish:
+        description: 'Publish a GitHub Release? (false = build + verify only)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win32
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#desktop-v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$TAG" ]; then
+            echo "::error::Tag '$TAG' must look like desktop-vX.Y.Z"; exit 1
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG (version $VERSION) on ${{ matrix.platform }}"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build core (@stellavault/core)
+        run: npm run build --workspace=@stellavault/core
+
+      - name: Stamp desktop version = ${{ steps.ver.outputs.version }}
+        shell: bash
+        run: |
+          node -e "const f='packages/desktop/package.json',p=require('./'+f);p.version='${{ steps.ver.outputs.version }}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          node -p "'desktop package.json -> '+require('./packages/desktop/package.json').version"
+
+      - name: Make desktop app (ZIP target, x64)
+        working-directory: packages/desktop
+        shell: bash
+        run: npm run make -- --targets @electron-forge/maker-zip --arch x64
+
+      - name: Locate built ZIP
+        id: art
+        shell: bash
+        run: |
+          ZIP=$(find packages/desktop/out/make -name '*.zip' | head -1)
+          if [ -z "$ZIP" ]; then echo "::error::No ZIP produced under packages/desktop/out/make"; exit 1; fi
+          echo "Built: $ZIP ($(du -h "$ZIP" | cut -f1))"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stellavault-${{ matrix.platform }}-x64
+          path: ${{ steps.art.outputs.zip }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    # Tag push always publishes. Manual runs publish only when publish=true.
+    if: ${{ github.event_name == 'push' || github.event.inputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: ver
+        shell: bash
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: List downloaded files
+        run: ls -R dist-artifacts
+
+      - name: Publish release ${{ steps.ver.outputs.tag }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Stellavault Desktop ${{ steps.ver.outputs.tag }}
+          files: dist-artifacts/**/*.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true
