@@ -66,12 +66,18 @@ jobs:
           echo "Building $TAG (version $VERSION) on ${{ matrix.platform }}"
 
       - name: Install dependencies
-        # `npm install` (not `npm ci`): the committed package-lock.json is generated
-        # on Windows and omits other platforms' native optional deps (rollup/esbuild)
-        # due to npm/cli#4828, so `npm ci` fails on Linux with
-        # "Cannot find module @rollup/rollup-linux-x64-gnu". `npm install` resolves
-        # and heals the current runner's platform-native binaries on a clean checkout.
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+        # The committed package-lock.json is generated on Windows and omits other
+        # platforms' native optional deps (@rollup/rollup-linux-x64-gnu,
+        # @esbuild/linux-x64) due to npm/cli#4828. While that lockfile is present,
+        # neither `npm ci` nor `npm install` heals the missing binaries (verified:
+        # both fail on Linux with "Cannot find module @rollup/rollup-linux-x64-gnu").
+        # Remove the lockfile so npm resolves the current runner's platform binaries
+        # fresh. Dependency *ranges* stay pinned in package.json (desktop TipTap
+        # ^2.12.0, graph ^3.22.2), so resolved versions remain correct.
+        shell: bash
+        run: |
+          rm -f package-lock.json
+          npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build core (@stellavault/core)
         run: npm run build --workspace=@stellavault/core
