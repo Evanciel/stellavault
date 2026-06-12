@@ -10,11 +10,15 @@
 //   - Known limitation (documented in plan §W1-7): YAML comments and exotic
 //     formatting are lost ONLY when properties are edited, not on body edits.
 //
-// NOTE: gray-matter is CJS — default import (esModuleInterop). Its top-level
-// `require('fs')` is never exercised in the renderer because we only call
-// matter(str) / matter.stringify (never matter.read).
+// NOTE: gray-matter was replaced with direct js-yaml: gray-matter calls
+// Buffer.from() at parse time, and the sandboxed renderer has no Node globals
+// ("ReferenceError: Buffer is not defined" in the packaged app). js-yaml v4 is
+// pure JS — no Buffer, no fs.
 
-import matter from 'gray-matter';
+import yaml from 'js-yaml';
+
+// Frontmatter block at the very start of the file: ---\n ... \n---\n
+const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
 export interface ParsedNote {
   /** Parsed YAML frontmatter (empty object when none / on YAML parse error). */
@@ -54,26 +58,16 @@ function normalizeValues(data: Record<string, unknown>): Record<string, unknown>
  * original text survives the round-trip untouched).
  */
 export function parse(md: string): ParsedNote {
+  const m = FM_RE.exec(md);
+  if (!m) return { frontmatter: {}, body: md, raw: md, fmBlock: '' };
+  const fmBlock = m[0];
+  const body = md.slice(fmBlock.length);
   try {
-    // Pass an options object to bypass gray-matter's unbounded module cache.
-    const file = matter(md, {});
-    const body = file.content;
-    const data = (file.data ?? {}) as Record<string, unknown>;
-    // fmBlock = everything before the body. Guard: only trust the split when
-    // the body is a literal suffix of the input (gray-matter does not rewrite
-    // content, but stay defensive — fall back to "no frontmatter").
-    if (Object.keys(data).length > 0 && md.endsWith(body)) {
-      return {
-        frontmatter: normalizeValues(data),
-        body,
-        raw: md,
-        fmBlock: md.slice(0, md.length - body.length),
-      };
+    const data = yaml.load(m[1]);
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return { frontmatter: normalizeValues(data as Record<string, unknown>), body, raw: md, fmBlock };
     }
-    if (md.endsWith(body)) {
-      return { frontmatter: {}, body, raw: md, fmBlock: md.slice(0, md.length - body.length) };
-    }
-    return { frontmatter: {}, body: md, raw: md, fmBlock: '' };
+    return { frontmatter: {}, body, raw: md, fmBlock };
   } catch (err) {
     console.error('[frontmatter] YAML parse failed — treating file as plain body', err);
     return { frontmatter: {}, body: md, raw: md, fmBlock: '' };
@@ -88,7 +82,10 @@ export function parse(md: string): ParsedNote {
 export function stringify(body: string, frontmatter: Record<string, unknown>): string {
   if (!frontmatter || Object.keys(frontmatter).length === 0) return body;
   try {
-    return matter.stringify(body, frontmatter);
+    // dump preserves insertion order; lineWidth -1 = never wrap long values
+    // (matches gray-matter's output shape: ---\n{yaml}---\n{body}).
+    const yamlText = yaml.dump(frontmatter, { lineWidth: -1 });
+    return `---\n${yamlText}---\n${body}`;
   } catch (err) {
     console.error('[frontmatter] YAML stringify failed — saving body only', err);
     return body;
