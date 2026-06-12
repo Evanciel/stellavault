@@ -26,6 +26,7 @@ import Image from '@tiptap/extension-image';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
 import { WikilinkExtension } from './WikilinkSuggestion.js';
+import { WikilinkNode } from './WikilinkNode.js';
 import { SlashCommandExtension } from './SlashCommands.js';
 import { MathExtension } from './MathExtension.js';
 import { MarkdownSerializerExtension, MarkdownHighlight, editorToMarkdown, markdownToEditor } from '../../lib/markdown.js';
@@ -34,8 +35,10 @@ import { PromptModal } from '../ui/Modal.js';
 const lowlight = createLowlight(common);
 
 interface Props {
-  content: string;   // markdown source (never HTML)
-  onChange: (content: string) => void;  // emits markdown source
+  // W1-7: markdown BODY source (never HTML, never frontmatter — EditorArea
+  // splits/recombines the YAML block via lib/frontmatter.ts).
+  content: string;
+  onChange: (content: string) => void;  // emits markdown body source
 }
 
 export function MarkdownEditor({ content, onChange }: Props) {
@@ -63,7 +66,8 @@ export function MarkdownEditor({ content, onChange }: Props) {
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Typography,
       Image.configure({ inline: false, allowBase64: true }),
-      WikilinkExtension,
+      WikilinkNode,      // W1-9: real [[wikilink]] node (parse/serialize + click-nav)
+      WikilinkExtension, // [[ autocomplete — inserts WikilinkNode
       SlashCommandExtension,
       MathExtension,
     ],
@@ -313,6 +317,20 @@ export function MarkdownEditor({ content, onChange }: Props) {
         .sv-code-block .hljs-params { color: var(--ink); }
 
         .sv-editor a { color: var(--accent-2); text-decoration: underline; }
+        /* W1-9 wikilink node */
+        .sv-editor .sv-wikilink {
+          color: var(--accent-2);
+          cursor: pointer;
+          border-radius: 3px;
+          padding: 0 1px;
+        }
+        .sv-editor .sv-wikilink:hover {
+          text-decoration: underline;
+          background: var(--selection);
+        }
+        .sv-editor .sv-wikilink.ProseMirror-selectednode {
+          outline: 1px solid var(--accent);
+        }
         .sv-editor hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
         .sv-editor mark { background: #fbbf2440; color: inherit; padding: 1px 3px; border-radius: 2px; }
         .sv-editor img { max-width: 100%; border-radius: 6px; margin: 8px 0; }

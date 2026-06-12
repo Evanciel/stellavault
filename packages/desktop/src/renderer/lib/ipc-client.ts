@@ -71,3 +71,31 @@ export function searchQuery(query: string, opts?: SearchQueryOpts): Promise<Sear
 export function tagsList(): Promise<TagCount[]> {
   return rawInvoke('tags:list') as Promise<TagCount[]>;
 }
+
+// ─── Stage D (W1-3/W1-9/W1-10) — file operation wrappers ───
+// These channels are in the shared map + preload allowlist (same stage),
+// so they go through the fully typed ipc() helper.
+
+/** Move a file or folder to the OS trash (recoverable — §4-G). */
+export function vaultTrash(filePath: string): Promise<void> {
+  return ipc('vault:trash', filePath);
+}
+
+/** Duplicate a file/folder as "name (copy)". Returns the ABSOLUTE new path. */
+export function vaultDuplicate(filePath: string): Promise<string> {
+  return ipc('vault:duplicate', filePath);
+}
+
+export function vaultExists(path: string): Promise<boolean> {
+  return ipc('vault:exists', path);
+}
+
+/** Recursive listing under a vault folder — ABSOLUTE paths, optional ext filter ('md' or '.md'). */
+export function vaultListFiles(dirPath: string, ext?: string): Promise<string[]> {
+  return ipc('vault:list-files', dirPath, ext);
+}
+
+/** Rewrite [[oldTitle]] / [[oldTitle|…]] / [[oldTitle#…]] vault-wide (code-fence aware). Returns changed file count. */
+export function vaultUpdateLinks(oldTitle: string, newTitle: string): Promise<number> {
+  return ipc('vault:update-links', oldTitle, newTitle);
+}

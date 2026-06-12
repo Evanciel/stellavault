@@ -78,6 +78,13 @@ export interface IpcChannelMap {
   'vault:list-notes':    { args: []; result: string[] };
   'vault:get-path':      { args: []; result: string };
 
+  // File operations (W1-3 / W1-9 / W1-10 — Stage D)
+  'vault:trash':         { args: [filePath: string]; result: void };          // shell.trashItem (§4-G)
+  'vault:duplicate':     { args: [filePath: string]; result: string };        // returns ABSOLUTE new path
+  'vault:exists':        { args: [path: string]; result: boolean };
+  'vault:list-files':    { args: [dirPath: string, ext?: string]; result: string[] }; // ABSOLUTE paths, recursive
+  'vault:update-links':  { args: [oldTitle: string, newTitle: string]; result: number }; // changed file count, code-fence aware
+
   // Core
   'core:search':        { args: [query: string, limit?: number]; result: SearchResult[] };
   'core:get-stats':     { args: []; result: VaultStats };

@@ -65,6 +65,72 @@ export function markdownToEditor(md: string): string {
   return md;
 }
 
+// ─── Wikilink markdown rules (W1-9) ────────────────────────────────────────
+// Pure helpers shared by WikilinkNode.ts (TipTap node) and the round-trip
+// tests. The node's storage.markdown spec delegates here so serialize/parse
+// stay in this single module (plan §W1-9: "직렬화: 노드 ↔ [[target|alias]]").
+
+/** Split the inner text of a wikilink (`target|alias`). Verbatim, no trim —
+ *  byte-fidelity on round-trip; trimming happens only at click-resolution. */
+export function parseWikilinkInner(inner: string): { target: string; alias: string | null } {
+  const pipe = inner.indexOf('|');
+  if (pipe === -1) return { target: inner, alias: null };
+  return { target: inner.slice(0, pipe), alias: inner.slice(pipe + 1) };
+}
+
+/** Serialize a wikilink node back to markdown. alias === null → no pipe. */
+export function serializeWikilink(target: string, alias: string | null): string {
+  return alias === null ? `[[${target}]]` : `[[${target}|${alias}]]`;
+}
+
+// Minimal structural typing for the markdown-it instance tiptap-markdown
+// hands to parse.setup() — avoids a hard dep on @types/markdown-it here.
+interface MarkdownItLike {
+  inline: { ruler: { before: (name: string, ruleName: string, fn: (state: any, silent: boolean) => boolean) => void } };
+  renderer: { rules: Record<string, (tokens: any[], idx: number) => string> };
+  utils: { escapeHtml: (s: string) => string };
+}
+
+/**
+ * Register the `[[target|alias]]` inline rule on a markdown-it instance.
+ * Idempotent — tiptap-markdown calls parse.setup() on EVERY parse, so we tag
+ * the instance to avoid stacking duplicate rules.
+ *
+ * Code safety: this is an inline rule, so fenced code blocks (block-level)
+ * are never scanned, and inline code spans are consumed by the backtick rule
+ * before the scanner reaches an inner `[[`.
+ */
+export function registerWikilinkRule(md: MarkdownItLike): void {
+  const tagged = md as MarkdownItLike & { __svWikilink?: boolean };
+  if (tagged.__svWikilink) return;
+  tagged.__svWikilink = true;
+
+  md.inline.ruler.before('link', 'sv_wikilink', (state, silent) => {
+    const src: string = state.src;
+    const pos: number = state.pos;
+    if (src.charCodeAt(pos) !== 0x5b /* [ */ || src.charCodeAt(pos + 1) !== 0x5b) return false;
+    const end = src.indexOf(']]', pos + 2);
+    if (end === -1) return false;
+    const inner = src.slice(pos + 2, end);
+    if (inner.length === 0 || inner.includes('[[') || inner.includes('\n')) return false;
+    if (!silent) {
+      const { target, alias } = parseWikilinkInner(inner);
+      const token = state.push('sv_wikilink', '', 0);
+      token.meta = { target, alias };
+    }
+    state.pos = end + 2;
+    return true;
+  });
+
+  md.renderer.rules.sv_wikilink = (tokens, idx) => {
+    const { target, alias } = tokens[idx].meta as { target: string; alias: string | null };
+    const esc = md.utils.escapeHtml;
+    const aliasAttr = alias === null ? '' : ` data-alias="${esc(alias)}"`;
+    const label = alias !== null && alias.length > 0 ? alias : target;
+    return `<span data-type="wikilink" data-target="${esc(target)}"${aliasAttr} class="sv-wikilink">${esc(label)}</span>`;
+  };
+}
+
 // Characters prosemirror-markdown escapes inside plain text.
 const MD_ESCAPABLE = /\\([\\`*_~[\]])/g;
 
@@ -75,10 +141,15 @@ function unescapeAll(s: string): string {
 /**
  * Post-serialize guard: tiptap-markdown (prosemirror-markdown) escapes
  * `[ ] _ * ~` in plain text, which corrupts wikilinks (`\[\[Note\]\]`) and
- * math (`$x\_1$`) on disk. Both live as plain text in the document until
- * W1-9 introduces real nodes, so we restore them here. Fenced code blocks
- * and inline code spans are left untouched (the serializer never escapes
- * inside code, so any backslashes there are user content).
+ * math (`$x\_1$`) on disk.
+ *
+ * W1-9: wikilinks are now a real node (WikilinkNode.ts) that serializes raw
+ * `[[target|alias]]` — those never pass through this guard's wikilink branch
+ * (it only matches the ESCAPED form). The branch is kept as a fallback for
+ * plain-text wikilinks that did not nodeify (e.g. user typed `[[` and escaped
+ * the suggestion popup). Math still lives as plain text until it gets a node.
+ * Fenced code blocks and inline code spans are left untouched (the serializer
+ * never escapes inside code, so any backslashes there are user content).
  */
 export function restoreEscapedSyntax(md: string): string {
   const lines = md.split('\n');

@@ -1,9 +1,9 @@
 // Stellavault Desktop — Main Process
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join, relative, resolve, sep } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, watch as fsWatch } from 'node:fs';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { join, relative, resolve, sep, dirname, basename, extname } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem } from '../shared/ipc-types.js';
@@ -282,9 +282,132 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('vault:read-tree', () => buildFileTree(vp));
   ipcMain.handle('vault:create-file', (_e, filePath: string, content?: string) => {
     const safe = assertInsideVault(vp, filePath);
+    // Stage D (W1-3) exists-guard — no silent clobber. Callers must check
+    // 'vault:exists' first (or catch) if create-or-open semantics are wanted.
+    if (existsSync(safe)) {
+      throw new Error(`File already exists: ${basename(safe)}`);
+    }
     mkdirSync(join(safe, '..'), { recursive: true });
     noteSelfWrite(safe);
     writeFileSync(safe, content ?? '', 'utf-8');
+  });
+
+  // ─── File operations (W1-3 / W1-9 / W1-10 — Stage D) ───
+
+  // §4-G: UI deletion goes through the OS trash (recoverable). 'vault:delete'
+  // above remains for programmatic permanent deletion but is not UI-exposed.
+  ipcMain.handle('vault:trash', async (_e, filePath: string) => {
+    const safe = assertInsideVault(vp, filePath);
+    noteSelfWrite(safe);
+    await shell.trashItem(safe);
+  });
+
+  // Duplicate a file or folder as "name (copy)" / "name (copy 2)" …
+  // Returns the ABSOLUTE path of the new entry.
+  ipcMain.handle('vault:duplicate', (_e, filePath: string): string => {
+    const safe = assertInsideVault(vp, filePath);
+    const isDir = statSync(safe).isDirectory();
+    const ext = isDir ? '' : extname(safe);
+    const base = basename(safe, ext);
+    const dir = dirname(safe);
+    let candidate = join(dir, `${base} (copy)${ext}`);
+    let i = 2;
+    while (existsSync(candidate)) {
+      candidate = join(dir, `${base} (copy ${i})${ext}`);
+      i += 1;
+    }
+    noteSelfWrite(candidate);
+    if (isDir) cpSync(safe, candidate, { recursive: true });
+    else copyFileSync(safe, candidate);
+    return candidate;
+  });
+
+  ipcMain.handle('vault:exists', (_e, path: string): boolean => {
+    const safe = assertInsideVault(vp, path);
+    return existsSync(safe);
+  });
+
+  // Recursive file listing under a vault folder. Returns ABSOLUTE paths
+  // (documented contract — renderer joins nothing). Optional extension filter,
+  // accepted with or without the leading dot ('md' or '.md').
+  ipcMain.handle('vault:list-files', (_e, dirPath: string, ext?: string): string[] => {
+    const safe = assertInsideVault(vp, dirPath);
+    const wanted = ext ? (ext.startsWith('.') ? ext : `.${ext}`).toLowerCase() : null;
+    const results: string[] = [];
+    const walk = (dir: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return; // unreadable dir
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (!wanted || entry.name.toLowerCase().endsWith(wanted)) results.push(full);
+      }
+    };
+    walk(safe);
+    results.sort((a, b) => a.localeCompare(b));
+    return results;
+  });
+
+  // W1-9: rename → update [[wikilinks]] across the vault. Line-based with
+  // code-fence state tracking (``` / ~~~) so fenced code is never touched.
+  // Matches [[old]], [[old|alias]], [[old#heading]]. Returns changed FILE count.
+  ipcMain.handle('vault:update-links', (_e, oldTitle: string, newTitle: string): number => {
+    if (!oldTitle?.trim() || !newTitle?.trim() || oldTitle === newTitle) return 0;
+    const escaped = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // [[old immediately followed by ]] / | / # — lookahead keeps the delimiter.
+    const pattern = new RegExp(`\\[\\[${escaped}(?=[\\]|#])`, 'g');
+    const replacement = `[[${newTitle}`;
+    const needle = `[[${oldTitle}`;
+    let changedFiles = 0;
+
+    const processFile = (full: string): void => {
+      let content: string;
+      try {
+        content = readFileSync(full, 'utf-8');
+      } catch {
+        return;
+      }
+      if (!content.includes(needle)) return; // fast path
+      let inFence = false;
+      let fileChanged = false;
+      const out = content.split('\n').map((line) => {
+        if (/^\s*(```|~~~)/.test(line)) {
+          inFence = !inFence;
+          return line;
+        }
+        if (inFence) return line;
+        const replaced = line.replace(pattern, replacement);
+        if (replaced !== line) fileChanged = true;
+        return replaced;
+      });
+      if (fileChanged) {
+        noteSelfWrite(full); // register with the W1-15 watcher echo guard
+        writeFileSync(full, out.join('\n'), 'utf-8');
+        changedFiles += 1;
+      }
+    };
+
+    const walk = (dir: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.md')) processFile(full);
+      }
+    };
+    walk(vp);
+    return changedFiles;
   });
   ipcMain.handle('vault:create-folder', (_e, folderPath: string) => {
     const safe = assertInsideVault(vp, folderPath);

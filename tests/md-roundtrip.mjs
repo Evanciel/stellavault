@@ -28,8 +28,11 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(__dirname, '..');
 const MD_LIB = join(ROOT, 'packages/desktop/src/renderer/lib/markdown.ts');
+const FM_LIB = join(ROOT, 'packages/desktop/src/renderer/lib/frontmatter.ts');
 const EDITOR = join(ROOT, 'packages/desktop/src/renderer/components/editor/MarkdownEditor.tsx');
 const STORE = join(ROOT, 'packages/desktop/src/renderer/stores/app-store.ts');
+const WIKILINK_NODE = join(ROOT, 'packages/desktop/src/renderer/components/editor/WikilinkNode.ts');
+const SUGGESTION = join(ROOT, 'packages/desktop/src/renderer/components/editor/WikilinkSuggestion.ts');
 
 // ─── Child mode: import markdown.ts (types stripped) and run golden cases ───
 if (process.env.MD_RT_CHILD === '1') {
@@ -73,6 +76,53 @@ if (process.env.MD_RT_CHILD === '1') {
   eq('inline code untouched',
     restoreEscapedSyntax('use `\\[\\[raw\\]\\]` syntax'),
     'use `\\[\\[raw\\]\\]` syntax');
+
+  // ── W1-9: wikilink node serialize/parse rules (lib/markdown.ts) ──
+  const { parseWikilinkInner, serializeWikilink, registerWikilinkRule } = mod;
+  const wlRoundtrip = (md) => {
+    const inner = md.slice(2, -2);
+    const { target, alias } = parseWikilinkInner(inner);
+    return serializeWikilink(target, alias);
+  };
+  // Byte-identical attr round-trips (verbatim — no trimming)
+  eq('wikilink node: [[Note]] byte-identical', wlRoundtrip('[[Note]]'), '[[Note]]');
+  eq('wikilink node: [[my_note|alias]] byte-identical', wlRoundtrip('[[my_note|alias]]'), '[[my_note|alias]]');
+  eq('wikilink node: spaces preserved verbatim', wlRoundtrip('[[ A B |c d ]]'), '[[ A B |c d ]]');
+  eq('wikilink node: empty alias preserved', wlRoundtrip('[[a|]]'), '[[a|]]');
+  eq('wikilink node: anchor preserved', wlRoundtrip('[[Note#Heading]]'), '[[Note#Heading]]');
+
+  // markdown-it parse rule (same instance type tiptap-markdown hands to setup)
+  const markdownit = (await import('markdown-it')).default;
+  const mdIt = markdownit({ html: false });
+  registerWikilinkRule(mdIt);
+  registerWikilinkRule(mdIt); // idempotence — setup() runs on EVERY parse
+  const rendered = mdIt.renderInline('See [[Note|N]] here');
+  eq('wikilink parse: emits data-target span',
+    rendered.includes('data-type="wikilink"') && rendered.includes('data-target="Note"') && rendered.includes('data-alias="N"'),
+    true);
+  eq('wikilink parse: alias is the label', rendered.includes('>N</span>'), true);
+  eq('wikilink parse: idempotent registration (one span per link)',
+    (mdIt.renderInline('[[A]] and [[B]]').match(/data-type="wikilink"/g) ?? []).length, 2);
+  eq('wikilink parse: inline code not converted',
+    mdIt.renderInline('use `[[x]]` raw').includes('data-type="wikilink"'), false);
+  eq('wikilink parse: unclosed [[ left alone',
+    mdIt.renderInline('just [[ text').includes('data-type="wikilink"'), false);
+
+  // ── W1-7: frontmatter split/recombine (lib/frontmatter.ts) ──
+  const fm = await import(pathToFileURL(FM_LIB).href);
+  const SRC = '---\ntitle: My Note\ntags:\n  - a\n  - b\n---\n# Body\n\ntext\n';
+  const parsed = fm.parse(SRC);
+  eq('frontmatter: title parsed', parsed.frontmatter.title, 'My Note');
+  eq('frontmatter: body excludes YAML', parsed.body, '# Body\n\ntext\n');
+  eq('frontmatter: fmBlock+body is byte-identical to raw', parsed.fmBlock + parsed.body, SRC);
+  eq('frontmatter: stringify round-trip (key order kept)',
+    fm.stringify(parsed.body, parsed.frontmatter), SRC);
+  eq('frontmatter: no-fm file passes through', fm.parse('# T\nx\n').body, '# T\nx\n');
+  eq('frontmatter: empty fm object → body unchanged', fm.stringify('# T\nx\n', {}), '# T\nx\n');
+  eq('frontmatter: date stays YYYY-MM-DD (no ISO timestamp rewrite)',
+    fm.parse('---\ndate: 2026-06-12\n---\nx\n').frontmatter.date, '2026-06-12');
+  eq('frontmatter: malformed YAML treated as body (no throw)',
+    fm.parse('---\n: : bad\n---\nx').body, '---\n: : bad\n---\nx');
 
   process.stdout.write(JSON.stringify(results));
   process.exit(0);
@@ -152,6 +202,33 @@ await test('MarkdownEditor: no window.prompt() (B4 — freezes Electron)', () =>
 
 await test('app-store: OpenTab.content documented as markdown source', () => {
   assert(/[Mm]arkdown SOURCE|markdown source/.test(storeSrc), 'OpenTab.content semantics comment missing');
+});
+
+console.log('--- static: W1-7/W1-9 wiring ---');
+
+const wikilinkNodeSrc = readFileSync(WIKILINK_NODE, 'utf8');
+const suggestionSrc = readFileSync(SUGGESTION, 'utf8');
+
+await test('WikilinkNode: serializes via shared serializeWikilink (raw write)', () => {
+  assert(wikilinkNodeSrc.includes('serializeWikilink'), 'node must delegate to lib/markdown.ts serializeWikilink');
+  assert(wikilinkNodeSrc.includes('registerWikilinkRule'), 'node must register the shared parse rule');
+});
+
+await test('WikilinkSuggestion: inserts wikilink NODE (not plain text)', () => {
+  assert(suggestionSrc.includes(`type: 'wikilink'`), 'suggestion must insert the wikilink node');
+  assert(!suggestionSrc.includes('insertContent(`[[${props.id}]]`)'), 'plain-text insertion still present');
+});
+
+await test('WikilinkSuggestion: extension name does not collide with node', () => {
+  assert(suggestionSrc.includes(`name: 'wikilinkSuggestion'`), 'suggestion extension must not be named "wikilink"');
+});
+
+await test('MarkdownEditor: registers WikilinkNode', () => {
+  assert(editorSrc.includes('WikilinkNode'), 'WikilinkNode not registered in editor extensions');
+});
+
+await test('app-store: OpenTab gains frontmatter field (W1-7, additive)', () => {
+  assert(/frontmatter\?:\s*Record<string,\s*unknown>/.test(storeSrc), 'OpenTab.frontmatter missing');
 });
 
 // ---------------------------------------------------------------------------

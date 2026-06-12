@@ -1,19 +1,45 @@
-// Editor area — tab bar + markdown editor + split view.
-// B1: tab.content is ALWAYS markdown source. It flows unchanged:
-// vault:read-file → openFile() → tab.content → MarkdownEditor (parses md)
-// → onChange (markdown via editorToMarkdown) → vault:write-file.
+// Editor area — tab bar + properties grid + markdown editor + split view.
+// B1: tab.content is ALWAYS the FULL markdown source (frontmatter + body) and
+// is what vault:write-file persists, unchanged from Wave 0.
+// W1-7 layering on top: per render we SPLIT content via lib/frontmatter.ts —
+// the YAML never enters TipTap (it would corrupt serialization, plan §0):
+//   vault:read-file → tab.content ─┬→ parse().body  → MarkdownEditor
+//                                  └→ parse().frontmatter → PropertiesEditor
+//   body edit  → recompose fmBlock + newBody          → updateTabContent
+//   prop edit  → recompose stringify(body, newFm)     → updateTabFrontmatter
+//   Ctrl+S     → vault:write-file(tab.content)  (save path intact)
 
 import { useCallback, useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { TabBar } from './TabBar.js';
 import { MarkdownEditor } from './MarkdownEditor.js';
+import { PropertiesEditor } from './PropertiesEditor.js';
 import { DailyBrief } from '../shared/DailyBrief.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { parse as parseFrontmatter, stringify as stringifyFrontmatter } from '../../lib/frontmatter.js';
+
+/** Body edit → recompose with the CURRENT frontmatter block (read fresh from
+ *  the store — the editor's onUpdate closure is bound once at mount, so any
+ *  captured fmBlock would go stale after a Properties edit). */
+function handleBodyChange(tabId: string, bodyMd: string) {
+  const state = useAppStore.getState();
+  const tab = state.tabs.find((t) => t.id === tabId);
+  const fmBlock = tab ? parseFrontmatter(tab.content).fmBlock : '';
+  state.updateTabContent(tabId, fmBlock + bodyMd);
+}
+
+/** Properties edit → re-stringify YAML (key order preserved) + current body. */
+function handleFrontmatterChange(tabId: string, fm: Record<string, unknown>) {
+  const state = useAppStore.getState();
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (!tab) return;
+  const body = parseFrontmatter(tab.content).body;
+  state.updateTabFrontmatter(tabId, fm, stringifyFrontmatter(body, fm));
+}
 
 export function EditorArea() {
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
-  const updateTabContent = useAppStore((s) => s.updateTabContent);
   const markTabClean = useAppStore((s) => s.markTabClean);
   const [splitMode, setSplitMode] = useState<'none' | 'horizontal' | 'vertical'>('none');
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
@@ -54,6 +80,10 @@ export function EditorArea() {
 
   const editorPane = (tab: typeof activeTab | null, isPrimary: boolean) => {
     if (!tab) return null;
+    // Split per render — cheap (YAML head only). MarkdownEditor is keyed by
+    // tab.id and only consumes `content` at mount, so this does NOT re-feed
+    // TipTap on every keystroke.
+    const parsed = parseFrontmatter(tab.content);
     return (
       <div style={{ flex: 1, overflow: 'auto', background: 'var(--editor-bg)', padding: '24px 48px', minWidth: 0 }}>
         {!isPrimary && (
@@ -77,10 +107,17 @@ export function EditorArea() {
             </select>
           </div>
         )}
+        <div style={{ maxWidth: 780, margin: '0 auto' }}>
+          <PropertiesEditor
+            key={tab.id}
+            frontmatter={parsed.frontmatter}
+            onChange={(fm) => handleFrontmatterChange(tab.id, fm)}
+          />
+        </div>
         <MarkdownEditor
           key={tab.id}
-          content={tab.content}
-          onChange={(content) => updateTabContent(tab.id, content)}
+          content={parsed.body}
+          onChange={(bodyMd) => handleBodyChange(tab.id, bodyMd)}
         />
       </div>
     );

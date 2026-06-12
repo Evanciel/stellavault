@@ -7,6 +7,7 @@ import { Input } from '../ui/Input.js';
 import { Button } from '../ui/Button.js';
 import { PromptModal } from '../ui/Modal.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { createNote } from './file-ops.js';
 
 export function Sidebar() {
   const [filter, setFilter] = useState('');
@@ -55,12 +56,10 @@ export function Sidebar() {
         onSubmit={(name) => {
           void (async () => {
             const vp = await ipc('vault:get-path');
-            const safeName = name.replace(/[<>:"/\\|?*]/g, '');
-            const path = `${vp}/${safeName}.md`;
-            await ipc('vault:create-file', path, `# ${name}\n\n`);
-            await handleRefresh();
-            const content = await ipc('vault:read-file', path);
-            useAppStore.getState().openFile(path, name, content);
+            // Stage D: file-ops.createNote — exists-guard aware (opens the
+            // existing note instead of clobbering), refreshes the tree itself.
+            const res = await createNote(vp, name);
+            if (!res.ok && res.error) console.error('[sidebar] create note failed:', res.error);
           })();
         }}
       />

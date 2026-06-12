@@ -6,6 +6,10 @@ import { useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { Button } from '../ui/Button.js';
+// Stage D (W1-10/11): Sidebar.tsx is owned by another agent this stage, so the
+// calendar + bookmarks sections are mounted here (collapsible, self-contained).
+import { CalendarWidget } from '../sidebar/CalendarWidget.js';
+import { BookmarksSection } from '../sidebar/BookmarksSection.js';
 import type { DecayItem, VaultStats } from '../../../shared/ipc-types.js';
 
 interface BriefData {
@@ -241,6 +245,10 @@ export function DailyBrief() {
             </div>
           </div>
         </section>
+
+        {/* Daily-note calendar (W1-10) + Bookmarks (W1-11) */}
+        <CalendarWidget />
+        <BookmarksSection />
 
         {/* Tip */}
         <div style={tipStyle}>

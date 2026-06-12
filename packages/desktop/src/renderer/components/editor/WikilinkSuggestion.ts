@@ -130,8 +130,10 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// NOTE: name must NOT collide with the 'wikilink' NODE (WikilinkNode.ts, W1-9)
+// — two extensions sharing a name break the TipTap extension manager.
 export const WikilinkExtension = Extension.create<WikilinkSuggestionOptions>({
-  name: 'wikilink',
+  name: 'wikilinkSuggestion',
 
   addProseMirrorPlugins() {
     let popup: ReturnType<typeof createPopup> | null = null;
@@ -153,12 +155,13 @@ export const WikilinkExtension = Extension.create<WikilinkSuggestionOptions>({
         },
 
         command: ({ editor, range, props }) => {
-          // Replace the [[query with [[Title]]
+          // W1-9: replace the typed "[[query" with a real wikilink NODE
+          // (clickable, serialized as [[Title]] by WikilinkNode's markdown spec).
           editor
             .chain()
             .focus()
             .deleteRange(range)
-            .insertContent(`[[${props.id}]]`)
+            .insertContent({ type: 'wikilink', attrs: { target: props.id, alias: null } })
             .run();
         },
 

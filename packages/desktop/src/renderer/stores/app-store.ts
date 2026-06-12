@@ -15,6 +15,10 @@ export interface OpenTab {
   // Stage C additive (W1-15): set by lib/runtime-sync.ts when the file changed
   // on disk while this tab was dirty. TabBar/EditorArea display lands in a later stage.
   externallyChanged?: boolean;
+  // Stage D additive (W1-7): parsed YAML frontmatter CACHE, set only by
+  // updateTabFrontmatter (Properties edits). `content` stays authoritative —
+  // EditorArea derives {frontmatter, body} from it via lib/frontmatter.ts.
+  frontmatter?: Record<string, unknown>;
 }
 
 interface AppState {
@@ -54,10 +58,18 @@ interface AppState {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
+  // Stage D additive (W1-7): Properties edit — caller (EditorArea) recomposes
+  // the full markdown `content` (stringify(body, frontmatter)) and passes both.
+  updateTabFrontmatter: (id: string, frontmatter: Record<string, unknown>, content: string) => void;
   markTabClean: (id: string) => void;
   // Stage C additive (W1-15) — used only by lib/runtime-sync.ts.
   markTabExternallyChanged: (id: string) => void;
   reloadTab: (id: string, content: string) => void;
+  // Stage D additive (W1-3) — used only by components/sidebar/file-ops.ts.
+  // Rename support: tab id === filePath, so both are rewritten together.
+  renameTabPath: (oldPath: string, newPath: string, newTitle?: string) => void;
+  // Stage D additive (W1-17) — drag-reorder in TabBar.
+  reorderTabs: (fromIndex: number, toIndex: number) => void;
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
@@ -121,6 +133,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     tabs: s.tabs.map((t) => t.id === id ? { ...t, content, isDirty: true } : t),
   })),
 
+  // Stage D additive (W1-7): Properties grid edit — see EditorArea.tsx.
+  updateTabFrontmatter: (id, frontmatter, content) => set((s) => ({
+    tabs: s.tabs.map((t) => t.id === id ? { ...t, frontmatter, content, isDirty: true } : t),
+  })),
+
   markTabClean: (id) => set((s) => ({
     tabs: s.tabs.map((t) => t.id === id ? { ...t, isDirty: false } : t),
   })),
@@ -134,6 +151,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       ? { ...t, content, isDirty: false, externallyChanged: false }
       : t),
   })),
+
+  // Stage D additive (W1-3): rename a tab's path in place — see file-ops.ts.
+  renameTabPath: (oldPath, newPath, newTitle) => set((s) => ({
+    tabs: s.tabs.map((t) => t.filePath === oldPath
+      ? { ...t, id: newPath, filePath: newPath, title: newTitle ?? t.title }
+      : t),
+    activeTabId: s.activeTabId === oldPath ? newPath : s.activeTabId,
+  })),
+
+  // Stage D additive (W1-17): drag-reorder — see TabBar.tsx.
+  reorderTabs: (fromIndex, toIndex) => set((s) => {
+    if (fromIndex === toIndex) return {};
+    if (fromIndex < 0 || fromIndex >= s.tabs.length) return {};
+    if (toIndex < 0 || toIndex >= s.tabs.length) return {};
+    const next = [...s.tabs];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    return { tabs: next };
+  }),
 
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
