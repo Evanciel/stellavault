@@ -1,13 +1,16 @@
 // Embedded 3D knowledge graph panel for the desktop app.
-// W1-8 full repair (plan §3 W1-8 items 1-8):
-//   1. Maps core IPC shape {label, clusterId, no position} → renderer shape (deterministic hash(id) layout)
-//   2. InstancedMesh spheres (per-node size actually renders; chosen over PointsMaterial shader patching — robust)
-//   3. Hover never reallocates buffers (imperative instance-matrix scale, hover kept out of memo deps)
-//   4. Edges: accent color, opacity 0.35
-//   5. Auto-rotate only after 5s idle, with ease-in
-//   6. HTML overlay hover label (no drei <Text>/troika — avoids worker + CDN font CSP issues)
-//   7. Scene wrapped in an ErrorBoundary
-//   8. [Global|Local] toggle + BFS depth slider (1-3) from the active note + zoom-to-fit
+// W1-8 functionality (Global|Local + BFS depth + zoom-to-fit + HTML hover label +
+// ErrorBoundary + deterministic hash(id) layout + idle auto-rotate) with the
+// SIGNATURE Stellavault visual language ported from @stellavault/graph
+// (GraphNodes/GraphEdges/StarField/Graph3D):
+//   - deep-space radial gradient background (#0d1028 → #080c1a → #040610)
+//   - star field + nebula sprites
+//   - nodes as TWO point layers: additive glow + bright core, radial-gradient
+//     circle texture, 15-color cluster palette, brightness boost by size
+//   - hover: node → white ×2.5, connected neighbors brighten, the rest fade
+//   - edges: dim #4466aa lines, hovered node's edges lit in accent
+// Per-vertex point size needs a tiny ShaderMaterial (PointsMaterial ignores the
+// size attribute) — raycasting still works (THREE.Points raycast is material-free).
 
 import { Component, useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import type { ReactNode } from 'react';
@@ -43,13 +46,130 @@ interface GraphEdge {
   weight: number;
 }
 
-const CLUSTER_COLORS = [
-  '#6366f1', '#ec4899', '#10b981', '#f59e0b', '#3b82f6',
-  '#8b5cf6', '#ef4444', '#06b6d4', '#84cc16', '#f97316',
+// 15-color palette — identical to @stellavault/graph GraphNodes.tsx
+const PALETTE: number[][] = [
+  [0.49, 0.23, 0.93], // #7c3aed 보라
+  [0.93, 0.27, 0.60], // #ec4899 핑크
+  [0.96, 0.62, 0.04], // #f59e0b 노랑
+  [0.06, 0.72, 0.51], // #10b981 초록
+  [0.23, 0.51, 0.96], // #3b82f6 파랑
+  [0.94, 0.27, 0.27], // #ef4444 빨강
+  [0.02, 0.71, 0.83], // #06b6d4 시안
+  [0.52, 0.80, 0.09], // #84cc16 라임
+  [0.98, 0.57, 0.09], // #f97316 오렌지
+  [0.55, 0.36, 0.96], // #8b5cf6 인디고
+  [0.08, 0.72, 0.65], // #14b8a6 틸
+  [0.91, 0.47, 0.98], // #e879f9 퓨시아
+  [0.92, 0.80, 0.03], // #eab308 골드
+  [0.13, 0.83, 0.93], // #22d3ee 스카이
+  [0.98, 0.45, 0.52], // #fb7185 코랄
 ];
 
 // Global mode safety cap (8k+ vault risk in plan §3 W1-8): keep top-N by size (degree proxy).
 const MAX_GLOBAL_NODES = 3000;
+
+// ─── Textures (ported from @stellavault/graph) ───────
+
+function createCircleTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.3, 'rgba(255,255,255,0.8)');
+  gradient.addColorStop(0.7, 'rgba(255,255,255,0.3)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createStarTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.15, 'rgba(255,255,255,0.8)');
+  gradient.addColorStop(0.4, 'rgba(200,220,255,0.2)');
+  gradient.addColorStop(1, 'rgba(200,220,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createNebulaTexture(r: number, g: number, b: number): THREE.Texture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, `rgba(${r},${g},${b},0.7)`);
+  gradient.addColorStop(0.3, `rgba(${r},${g},${b},0.35)`);
+  gradient.addColorStop(0.6, `rgba(${r},${g},${b},0.12)`);
+  gradient.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const circleTexture = createCircleTexture();
+const starTexture = createStarTexture();
+const NEBULA_PRESETS = [
+  { r: 100, g: 60, b: 200 },
+  { r: 30, g: 80, b: 220 },
+  { r: 180, g: 50, b: 120 },
+  { r: 40, g: 120, b: 200 },
+];
+const nebulaTextures = NEBULA_PRESETS.map((c) => createNebulaTexture(c.r, c.g, c.b));
+
+// ─── Per-vertex-size point shader ────────────────────
+// PointsMaterial ignores the `size` buffer attribute; this minimal shader makes
+// per-node sizes (and hover scaling) actually render. Raycast unaffected.
+
+function makePointsMaterial(opacity: number, additive: boolean): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: circleTexture },
+      uOpacity: { value: opacity },
+    },
+    vertexShader: `
+      attribute float size;
+      varying vec3 vColor;
+      void main() {
+        vColor = color;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (220.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D map;
+      uniform float uOpacity;
+      varying vec3 vColor;
+      void main() {
+        vec4 tex = texture2D(map, gl_PointCoord);
+        if (tex.a < 0.01) discard;
+        gl_FragColor = vec4(vColor, uOpacity) * tex;
+      }
+    `,
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+  });
+}
 
 // ─── Deterministic layout: hash(id)-seeded positions (stable across reopens) ───
 
@@ -114,7 +234,7 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
-// ─── Error boundary (item 7) ─────────────────────────
+// ─── Error boundary ──────────────────────────────────
 
 class GraphErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -137,6 +257,52 @@ class GraphErrorBoundary extends Component<{ children: ReactNode }, { error: Err
     }
     return this.props.children;
   }
+}
+
+// ─── Star field (ported lite version of StarField.tsx) ───
+
+function StarFieldLite() {
+  const { starGeo, nebulae } = useMemo(() => {
+    const rng = mulberry32(0x5eed);
+    const n = 900;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    const sz = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const [x, y, z] = sphericalPoint(rng, 1);
+      const r = 500 + rng() * 700;
+      pos[i * 3] = x * r;
+      pos[i * 3 + 1] = y * r;
+      pos[i * 3 + 2] = z * r;
+      const tint = 0.7 + rng() * 0.3;
+      col[i * 3] = tint;
+      col[i * 3 + 1] = tint;
+      col[i * 3 + 2] = Math.min(1, tint + 0.08);
+      sz[i] = 1 + rng() * 2.4;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sz, 1));
+    const nebs = NEBULA_PRESETS.map((_, i) => {
+      const [x, y, z] = sphericalPoint(mulberry32(0x0b0b + i * 97), 1);
+      return { pos: [x * 420, y * 420, z * 420] as [number, number, number], scale: 260 + i * 60, tex: nebulaTextures[i] };
+    });
+    return { starGeo: geo, nebulae: nebs };
+  }, []);
+
+  const starMat = useMemo(() => makePointsMaterial(0.85, true), []);
+
+  return (
+    <group>
+      <points geometry={starGeo} material={starMat} raycast={() => null} />
+      {nebulae.map((n, i) => (
+        <sprite key={i} position={n.pos} scale={[n.scale, n.scale, 1]} raycast={() => null}>
+          <spriteMaterial map={n.tex} transparent opacity={0.13} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      ))}
+    </group>
+  );
 }
 
 // ─── Scene ───────────────────────────────────────────
@@ -181,52 +347,113 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
   onNodeClick: (node: GraphNode) => void;
   onHover: (info: HoverInfo | null) => void;
 }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const coreRef = useRef<THREE.Points>(null);
+  const glowRef = useRef<THREE.Points>(null);
   const controlsRef = useRef<any>(null);
   const hoveredRef = useRef<number | null>(null);
   const lastInteractRef = useRef<number>(Date.now());
-  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const { raycaster } = useThree();
 
-  const baseScale = useCallback((n: GraphNode) => 0.9 + n.size * 0.45, []);
-
-  const writeInstance = useCallback((index: number, scaleMult: number) => {
-    const mesh = meshRef.current;
-    const node = nodes[index];
-    if (!mesh || !node) return;
-    dummy.position.set(node.position[0], node.position[1], node.position[2]);
-    dummy.scale.setScalar(baseScale(node) * scaleMult);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(index, dummy.matrix);
-    mesh.instanceMatrix.needsUpdate = true;
-  }, [nodes, dummy, baseScale]);
-
-  // Populate instance matrices + colors whenever the node set changes.
-  // Hover is intentionally NOT a dependency (item 3: no buffer realloc on hover).
+  // Points raycast precision — without this hover triggers meters away.
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    hoveredRef.current = null;
-    const color = new THREE.Color();
-    for (let i = 0; i < nodes.length; i++) {
-      dummy.position.set(nodes[i].position[0], nodes[i].position[1], nodes[i].position[2]);
-      dummy.scale.setScalar(baseScale(nodes[i]));
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      color.set(CLUSTER_COLORS[nodes[i].cluster % CLUSTER_COLORS.length]);
-      mesh.setColorAt(i, color);
+    const prev = raycaster.params.Points?.threshold;
+    raycaster.params.Points = { threshold: 3.5 };
+    return () => { raycaster.params.Points = { threshold: prev ?? 1 }; };
+  }, [raycaster]);
+
+  // Adjacency for hover neighbor highlight.
+  const neighborSets = useMemo(() => {
+    const idToIndex = new Map(nodes.map((n, i) => [n.id, i]));
+    const sets = new Map<number, Set<number>>();
+    for (const e of edges) {
+      const si = idToIndex.get(e.source);
+      const ti = idToIndex.get(e.target);
+      if (si == null || ti == null) continue;
+      if (!sets.has(si)) sets.set(si, new Set());
+      if (!sets.has(ti)) sets.set(ti, new Set());
+      sets.get(si)!.add(ti);
+      sets.get(ti)!.add(si);
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [nodes, dummy, baseScale]);
+    return sets;
+  }, [nodes, edges]);
+
+  // Base buffers — signature recipe: palette by cluster + brightness boost by size.
+  const base = useMemo(() => {
+    const n = nodes.length;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    const sz = new Float32Array(n);
+    const gsz = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const node = nodes[i];
+      pos[i * 3] = node.position[0];
+      pos[i * 3 + 1] = node.position[1];
+      pos[i * 3 + 2] = node.position[2];
+      const pal = PALETTE[node.cluster % PALETTE.length];
+      const bright = Math.min((node.size - 1) / 6, 1) * 0.4;
+      col[i * 3] = Math.min(pal[0] + bright, 1);
+      col[i * 3 + 1] = Math.min(pal[1] + bright, 1);
+      col[i * 3 + 2] = Math.min(pal[2] + bright, 1);
+      sz[i] = 3 + node.size * 3;
+      gsz[i] = 8 + node.size * 8;
+    }
+    return { pos, col, sz, gsz };
+  }, [nodes]);
+
+  const coreMat = useMemo(() => makePointsMaterial(0.95, false), []);
+  const glowMat = useMemo(() => makePointsMaterial(0.28, true), []);
+
+  // Imperative hover styling — no buffer realloc, restore from base arrays.
+  const applyHover = useCallback((hovered: number | null) => {
+    const core = coreRef.current;
+    const glow = glowRef.current;
+    if (!core || !glow) return;
+    const cCol = core.geometry.getAttribute('color') as THREE.BufferAttribute;
+    const cSz = core.geometry.getAttribute('size') as THREE.BufferAttribute;
+    const gCol = glow.geometry.getAttribute('color') as THREE.BufferAttribute;
+    const gSz = glow.geometry.getAttribute('size') as THREE.BufferAttribute;
+    const { col, sz, gsz } = base;
+    const neighbors = hovered != null ? neighborSets.get(hovered) : undefined;
+    for (let i = 0; i < nodes.length; i++) {
+      let r = col[i * 3], g = col[i * 3 + 1], b = col[i * 3 + 2];
+      let s = sz[i], gs = gsz[i];
+      if (hovered != null) {
+        if (i === hovered) {
+          r = 1; g = 1; b = 1;
+          s *= 2.5; gs *= 2.5;
+        } else if (neighbors?.has(i)) {
+          r = Math.min(r * 1.6, 1); g = Math.min(g * 1.6, 1); b = Math.min(b * 1.6, 1);
+          s *= 1.5; gs *= 1.8;
+        } else {
+          r *= 0.06; g *= 0.06; b *= 0.06;
+          s *= 0.4; gs *= 0.25;
+        }
+      }
+      cCol.setXYZ(i, r, g, b);
+      cSz.setX(i, s);
+      gCol.setXYZ(i, r, g, b);
+      gSz.setX(i, gs);
+    }
+    cCol.needsUpdate = true;
+    cSz.needsUpdate = true;
+    gCol.needsUpdate = true;
+    gSz.needsUpdate = true;
+  }, [nodes.length, base, neighborSets]);
+
+  useEffect(() => {
+    hoveredRef.current = null;
+    applyHover(null);
+  }, [applyHover]);
 
   const setHovered = useCallback((index: number | null) => {
     if (hoveredRef.current === index) return;
-    if (hoveredRef.current != null) writeInstance(hoveredRef.current, 1);
-    if (index != null) writeInstance(index, 1.7);
     hoveredRef.current = index;
-  }, [writeInstance]);
+    applyHover(index);
+  }, [applyHover]);
 
-  // Edge line geometry — depends only on the node/edge sets.
+  // Edges: dim layer always (#4466aa, signature), lit overlay for the hovered node.
+  const [litVersion, setLitVersion] = useState(0);
+  const litRef = useRef<Float32Array>(new Float32Array(0));
   const edgePositions = useMemo(() => {
     const nodeMap = new Map(nodes.map((n, i) => [n.id, i]));
     const pts: number[] = [];
@@ -242,7 +469,30 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
     return new Float32Array(pts);
   }, [nodes, edges]);
 
-  // Idle-only auto-rotate (item 5): start after 5s of no interaction, ease in over 3s.
+  const updateLitEdges = useCallback((hovered: number | null) => {
+    if (hovered == null) {
+      litRef.current = new Float32Array(0);
+      setLitVersion((v) => v + 1);
+      return;
+    }
+    const hoveredId = nodes[hovered]?.id;
+    const nodeMap = new Map(nodes.map((n, i) => [n.id, i]));
+    const pts: number[] = [];
+    for (const e of edges) {
+      if (e.source !== hoveredId && e.target !== hoveredId) continue;
+      const si = nodeMap.get(e.source);
+      const ti = nodeMap.get(e.target);
+      if (si == null || ti == null) continue;
+      pts.push(
+        nodes[si].position[0], nodes[si].position[1], nodes[si].position[2],
+        nodes[ti].position[0], nodes[ti].position[1], nodes[ti].position[2],
+      );
+    }
+    litRef.current = new Float32Array(pts);
+    setLitVersion((v) => v + 1);
+  }, [nodes, edges]);
+
+  // Idle-only auto-rotate: start after 5s of no interaction, ease in over 3s.
   useFrame(() => {
     const controls = controlsRef.current;
     if (!controls || hoveredRef.current != null) return;
@@ -257,48 +507,75 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
 
   return (
     <>
-      <ambientLight intensity={0.7} />
-      <pointLight position={[200, 150, 200]} intensity={0.7} color="#aabbff" />
+      <StarFieldLite />
 
       <ZoomToFit signal={fitSignal} nodes={nodes} controlsRef={controlsRef} />
 
-      {/* Edges (item 4: accent color, opacity 0.35) */}
+      {/* Dim edges — signature steel-blue */}
       {edgePositions.length > 0 && (
-        <lineSegments key={`edges-${edgePositions.length}`}>
+        <lineSegments key={`edges-${edgePositions.length}`} raycast={() => null}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[edgePositions, 3]} />
           </bufferGeometry>
-          <lineBasicMaterial color={accent} transparent opacity={0.35} />
+          <lineBasicMaterial color="#4466aa" transparent opacity={0.16} depthWrite={false} />
         </lineSegments>
       )}
 
-      {/* Nodes — InstancedMesh spheres (item 2): per-node size works, always circular */}
+      {/* Lit edges for the hovered node — accent */}
+      {litRef.current.length > 0 && (
+        <lineSegments key={`lit-${litVersion}`} raycast={() => null}>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[litRef.current, 3]} />
+          </bufferGeometry>
+          <lineBasicMaterial color={accent} transparent opacity={0.85} depthWrite={false} />
+        </lineSegments>
+      )}
+
+      {/* Glow layer (additive, large soft points) */}
       {nodes.length > 0 && (
-        <instancedMesh
-          key={`nodes-${nodes.length}`}
-          ref={meshRef}
-          args={[undefined, undefined, nodes.length]}
-          onPointerMove={(e) => {
+        <points key={`glow-${nodes.length}`} ref={glowRef} material={glowMat} raycast={() => null}>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
+            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
+            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.gsz), 1]} />
+          </bufferGeometry>
+        </points>
+      )}
+
+      {/* Core nodes — interactive layer */}
+      {nodes.length > 0 && (
+        <points
+          key={`core-${nodes.length}`}
+          ref={coreRef}
+          material={coreMat}
+          onPointerMove={(e: any) => {
             e.stopPropagation();
             markInteraction();
-            if (e.instanceId != null) {
-              setHovered(e.instanceId);
-              onHover({ index: e.instanceId, clientX: e.clientX, clientY: e.clientY });
+            if (e.index != null && e.index < nodes.length) {
+              setHovered(e.index);
+              updateLitEdges(e.index);
+              onHover({ index: e.index, clientX: e.clientX, clientY: e.clientY });
+              document.body.style.cursor = 'pointer';
             }
           }}
-          onPointerOut={(e) => {
+          onPointerOut={(e: any) => {
             e.stopPropagation();
             setHovered(null);
+            updateLitEdges(null);
             onHover(null);
+            document.body.style.cursor = 'default';
           }}
-          onClick={(e) => {
+          onClick={(e: any) => {
             e.stopPropagation();
-            if (e.instanceId != null && nodes[e.instanceId]) onNodeClick(nodes[e.instanceId]);
+            if (e.index != null && nodes[e.index]) onNodeClick(nodes[e.index]);
           }}
         >
-          <sphereGeometry args={[1, 12, 12]} />
-          <meshLambertMaterial transparent opacity={0.95} />
-        </instancedMesh>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
+            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
+            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.sz), 1]} />
+          </bufferGeometry>
+        </points>
       )}
 
       <OrbitControls
@@ -314,7 +591,7 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
   );
 }
 
-// ─── BFS for local graph (item 8) ────────────────────
+// ─── BFS for local graph ─────────────────────────────
 
 function bfsFilter(nodes: GraphNode[], edges: GraphEdge[], startId: string, depth: number): {
   nodes: GraphNode[];
@@ -472,12 +749,21 @@ export function GraphPanel() {
   });
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        // Signature deep-space backdrop (Graph3D.tsx)
+        background: 'radial-gradient(ellipse at center, #0d1028 0%, #080c1a 40%, #040610 100%)',
+      }}
+    >
       <GraphErrorBoundary>
         <Canvas
           camera={{ position: [0, 50, 200], fov: 55 }}
-          style={{ background: '#050510' }}
-          gl={{ antialias: true }}
+          style={{ background: 'transparent' }}
+          gl={{ antialias: true, alpha: true }}
         >
           <GraphScene
             nodes={visibleNodes}
@@ -490,7 +776,7 @@ export function GraphPanel() {
         </Canvas>
       </GraphErrorBoundary>
 
-      {/* Controls overlay: [Global|Local] + depth slider + zoom-to-fit (item 8) */}
+      {/* Controls overlay: [Global|Local] + depth slider + zoom-to-fit */}
       <div style={{
         position: 'absolute',
         top: 8,
@@ -548,7 +834,7 @@ export function GraphPanel() {
         </div>
       )}
 
-      {/* Hover label — HTML overlay, no troika/CDN fonts (item 6) */}
+      {/* Hover label — HTML overlay, no troika/CDN fonts */}
       {hover && (
         <div style={{
           position: 'absolute',
