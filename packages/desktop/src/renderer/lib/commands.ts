@@ -43,17 +43,22 @@ export function runCommand(id: string): void {
 // ─── UI state shared between commands and the modal components ───
 // Lives here (not app-store.ts) so the registry stays self-contained.
 
+/** Settings modal tab ids — mirrored by SettingsModal.tsx. */
+export type SettingsTabId = 'general' | 'editor' | 'appearance' | 'hotkeys' | 'about';
+
 interface UiState {
   paletteOpen: boolean;
   paletteMode: 'command' | 'new-note';
   switcherOpen: boolean;
   settingsOpen: boolean;
+  /** Tab the settings modal should show when (re)opened. */
+  settingsTab: SettingsTabId;
   /** Diagnostics text shown by the palette's stats modal. */
   statsText: string | null;
 
   setPaletteOpen: (open: boolean, mode?: 'command' | 'new-note') => void;
   setSwitcherOpen: (open: boolean) => void;
-  setSettingsOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean, tab?: SettingsTabId) => void;
   setStatsText: (text: string | null) => void;
 }
 
@@ -62,11 +67,12 @@ export const useUiStore = create<UiState>((set) => ({
   paletteMode: 'command',
   switcherOpen: false,
   settingsOpen: false,
+  settingsTab: 'general',
   statsText: null,
 
   setPaletteOpen: (open, mode = 'command') => set({ paletteOpen: open, paletteMode: mode }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsOpen: (open, tab) => set((s) => ({ settingsOpen: open, settingsTab: open ? (tab ?? 'general') : s.settingsTab })),
   setStatsText: (text) => set({ statsText: text }),
 }));
 
@@ -104,6 +110,18 @@ async function openDailyNote(): Promise<void> {
     }
     await createAndOpenNote(filePath, name, `# ${name}\n\n`);
   }
+}
+
+// App menu (W2) — create a uniquely-named folder at the vault root and refresh the tree.
+async function createNewFolder(): Promise<void> {
+  const vaultPath = useAppStore.getState().vaultPath || await ipc('vault:get-path');
+  let name = 'New folder';
+  for (let i = 2; await ipc('vault:exists', `${vaultPath}/${name}`); i++) {
+    name = `New folder ${i}`;
+  }
+  await ipc('vault:create-folder', `${vaultPath}/${name}`);
+  const tree = await ipc('vault:read-tree');
+  useAppStore.getState().setFileTree(tree);
 }
 
 async function saveActiveTab(): Promise<void> {
@@ -172,6 +190,12 @@ export function registerBuiltinCommands(): void {
       },
     },
     {
+      id: 'graph.open-view', title: 'Open graph view', category: 'View',
+      defaultKeys: 'mod+g',
+      // Full main-pane graph TAB (Wave 2) — the side panel stays on 'panel.graph'.
+      run: () => app().openGraphTab(),
+    },
+    {
       id: 'panel.ai', title: 'Open AI panel', category: 'Panels',
       run: () => app().setRightPanel('ai'),
     },
@@ -186,6 +210,66 @@ export function registerBuiltinCommands(): void {
     {
       id: 'panel.close', title: 'Close right panel', category: 'Panels',
       run: () => app().setRightPanel('none'),
+    },
+    // ─── App menu (W2) — File ───
+    {
+      id: 'file.new-folder', title: 'Create new folder', category: 'File',
+      run: () => createNewFolder(),
+    },
+    {
+      id: 'file.open-vault-folder', title: 'Open vault folder in Explorer', category: 'File',
+      run: async () => {
+        const vaultPath = app().vaultPath || await ipc('vault:get-path');
+        await ipc('shell:open-path', vaultPath);
+      },
+    },
+    // ─── App menu (W2) — View ───
+    {
+      id: 'view.toggle-right-panel', title: 'Toggle right panel', category: 'View',
+      run: () => {
+        const s = app();
+        s.setRightPanel(s.rightPanel === 'none' ? 'graph' : 'none');
+      },
+    },
+    {
+      id: 'panel.search', title: 'Open search panel', category: 'Panels',
+      run: () => app().setRightPanel('search'),
+    },
+    {
+      id: 'panel.outline', title: 'Open outline panel', category: 'Panels',
+      run: () => app().setRightPanel('outline'),
+    },
+    {
+      id: 'panel.tags', title: 'Open tags panel', category: 'Panels',
+      run: () => app().setRightPanel('tags'),
+    },
+    {
+      id: 'view.zoom-in', title: 'Zoom in', category: 'View',
+      defaultKeys: 'mod+=', allowInEditor: true,
+      run: () => { void ipc('window:zoom', 'in'); },
+    },
+    {
+      id: 'view.zoom-out', title: 'Zoom out', category: 'View',
+      defaultKeys: 'mod+-', allowInEditor: true,
+      run: () => { void ipc('window:zoom', 'out'); },
+    },
+    {
+      id: 'view.zoom-reset', title: 'Reset zoom', category: 'View',
+      defaultKeys: 'mod+0', allowInEditor: true,
+      run: () => { void ipc('window:zoom', 'reset'); },
+    },
+    // ─── App menu (W2) — Tools / Help ───
+    {
+      id: 'app.keyboard-shortcuts', title: 'Keyboard shortcuts', category: 'App',
+      run: () => ui().setSettingsOpen(true, 'hotkeys'),
+    },
+    {
+      id: 'help.about', title: 'About Stellavault', category: 'Help',
+      run: () => ui().setSettingsOpen(true, 'about'),
+    },
+    {
+      id: 'help.github', title: 'Open GitHub repository', category: 'Help',
+      run: () => { void ipc('shell:open-external', 'https://github.com/Evanciel/stellavault'); },
     },
     {
       id: 'vault.reindex', title: 'Re-index vault', category: 'Vault',

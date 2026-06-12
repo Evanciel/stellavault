@@ -26,7 +26,8 @@ export function SettingsModal() {
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [tab, setTab] = useState<TabId>('general');
 
-  useEffect(() => { if (open) setTab('general'); }, [open]);
+  // App menu (W2): honor the requested tab (Hotkeys/About deep links).
+  useEffect(() => { if (open) setTab(useUiStore.getState().settingsTab); }, [open]);
 
   return (
     <Modal open={open} onClose={() => setOpen(false)} title="Settings" width={560}>

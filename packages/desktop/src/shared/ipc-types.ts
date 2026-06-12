@@ -120,10 +120,20 @@ export interface IpcChannelMap {
   'window:minimize':    { args: []; result: void };
   'window:maximize':    { args: []; result: void };
   'window:close':       { args: []; result: void };
+  // App menu (W2) — webContents zoom; returns the new zoom factor.
+  'window:zoom':        { args: [action: 'in' | 'out' | 'reset']; result: number };
+
+  // Shell (W2 — app menu). open-path is vault-root restricted; open-external is https-only.
+  'shell:open-path':     { args: [path: string]; result: void };
+  'shell:open-external': { args: [url: string]; result: void };
 
   // Settings (W1-1)
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
+
+  // [editor-upgrade additive] Local image import — copies bytes (base64) or a
+  // source file into <vault>/assets/, returns the VAULT-RELATIVE path.
+  'vault:import-asset': { args: [payload: { base64?: string; srcPath?: string; fileName: string }]; result: string };
 }
 
 // ─── Events (main → renderer, one-way) ───

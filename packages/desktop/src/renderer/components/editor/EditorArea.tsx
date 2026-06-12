@@ -15,6 +15,7 @@ import { TabBar } from './TabBar.js';
 import { MarkdownEditor } from './MarkdownEditor.js';
 import { PropertiesEditor } from './PropertiesEditor.js';
 import { DailyBrief } from '../shared/DailyBrief.js';
+import { GraphView } from '../graph/GraphView.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { parse as parseFrontmatter, stringify as stringifyFrontmatter } from '../../lib/frontmatter.js';
 
@@ -80,6 +81,14 @@ export function EditorArea() {
 
   const editorPane = (tab: typeof activeTab | null, isPrimary: boolean) => {
     if (!tab) return null;
+    // Wave 2: special tab kind — full main-pane graph view (no file content).
+    if (tab.kind === 'graph') {
+      return (
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
+          <GraphView />
+        </div>
+      );
+    }
     // Split per render — cheap (YAML head only). MarkdownEditor is keyed by
     // tab.id and only consumes `content` at mount, so this does NOT re-feed
     // TipTap on every keystroke.

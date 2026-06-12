@@ -14,6 +14,7 @@
 import type { AnyExtension, Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import Highlight from '@tiptap/extension-highlight';
+import TextStyle from '@tiptap/extension-text-style';
 
 // Shared config — MarkdownEditor (and any future editor surface) must use
 // this single instance so serialize/parse behavior never diverges.
@@ -34,21 +35,250 @@ export const markdownConfig = {
 export const MarkdownSerializerExtension =
   Markdown.configure({ ...markdownConfig }) as unknown as AnyExtension;
 
+// ─── Inline colored-text / colored-highlight markdown rules (editor upgrade) ─
+// Color marks have NO markdown equivalent. Decision (assignment §3): serialize
+// as minimal inline HTML — Obsidian renders raw HTML, so files stay readable:
+//   text color        → <span style="color: …">…</span>
+//   colored highlight → <mark style="background-color: …">…</mark>
+// markdownConfig.html stays false, so on parse markdown-it would escape those
+// tags to literal text. registerInlineStyleRule() below recognizes EXACTLY
+// these two shapes (validated color values only) and re-emits them as raw
+// HTML so TipTap's DOM parser restores the marks. Anything else stays escaped.
+
+/** Allow only safe CSS color tokens — hex, rgb()/rgba(), or a bare keyword. */
+export function isSafeCssColor(value: string): boolean {
+  return /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.,\s%]+\s*\)|[a-zA-Z]+)$/.test(value);
+}
+
+const STYLE_OPEN_RE = /^<(span|mark) style="(color|background-color):\s*([^";<>]{1,64})">/;
+const STYLE_CLOSE_RE = /^<\/(span|mark)>/;
+
+/**
+ * markdown-it inline rule for the two color-span shapes above. Idempotent
+ * (tiptap-markdown calls parse.setup() on EVERY parse). Tag/property must
+ * pair correctly (span↔color, mark↔background-color) and the value must pass
+ * isSafeCssColor — otherwise the source stays escaped text (no raw HTML).
+ */
+export function registerInlineStyleRule(md: MarkdownItLike): void {
+  const tagged = md as MarkdownItLike & { __svInlineStyle?: boolean };
+  if (tagged.__svInlineStyle) return;
+  tagged.__svInlineStyle = true;
+
+  // NOTE: tokens are pushed with nesting 0 (not +1/−1). A stray close tag
+  // with nesting −1 corrupts markdown-it's inline delimiter stack
+  // (state._prev_delimiters.pop() → undefined → balance_pairs crash).
+  // Pairing is enforced STATELESSLY (silent-pass safe): an open tag needs a
+  // matching close ahead in the source; a close tag needs a matching open
+  // behind. Unpaired tags simply stay escaped text. The renderer emits raw
+  // HTML and the DOM parser tolerates any residual mis-nesting.
+  md.inline.ruler.before('link', 'sv_inline_style', (state, silent) => {
+    const src: string = state.src;
+    const pos: number = state.pos;
+    if (src.charCodeAt(pos) !== 0x3c /* < */) return false;
+    const rest = src.slice(pos);
+
+    const open = STYLE_OPEN_RE.exec(rest);
+    if (open) {
+      const [full, tag, prop, rawValue] = open;
+      const value = rawValue.trim();
+      if (!isSafeCssColor(value)) return false;
+      if ((tag === 'span') !== (prop === 'color')) return false; // span↔color, mark↔background-color
+      // Only accept the open tag if a matching close exists ahead.
+      if (src.indexOf(`</${tag}>`, pos + full.length) === -1) return false;
+      if (!silent) {
+        const token = state.push('sv_style_open', tag, 0);
+        token.meta = { tag, prop, value };
+      }
+      state.pos = pos + full.length;
+      return true;
+    }
+
+    const close = STYLE_CLOSE_RE.exec(rest);
+    if (close) {
+      // Only accept the close tag if a matching open exists behind.
+      if (src.lastIndexOf(`<${close[1]} style="`, pos) === -1) return false;
+      if (!silent) {
+        const token = state.push('sv_style_close', close[1], 0);
+        token.meta = { tag: close[1] };
+      }
+      state.pos = pos + close[0].length;
+      return true;
+    }
+    return false;
+  });
+
+  md.renderer.rules.sv_style_open = (tokens, idx) => {
+    const { tag, prop, value } = tokens[idx].meta as { tag: string; prop: string; value: string };
+    return `<${tag} style="${prop}: ${md.utils.escapeHtml(value)}">`;
+  };
+  md.renderer.rules.sv_style_close = (tokens, idx) => {
+    const { tag } = tokens[idx].meta as { tag: string };
+    return `</${tag}>`;
+  };
+}
+
 // Highlight with an Obsidian-compatible `==text==` serializer.
 // Without this, html:false drops the highlight mark on save (text kept,
 // formatting silently lost). `==…==` parses back as literal text for now
 // (markdown-it has no mark plugin here) but is stable on disk and renders
 // correctly in Obsidian. Proper parse support can ride along with W1-9.
+// Editor upgrade: multicolor highlights (attrs.color set) serialize as
+// <mark style="background-color: …"> instead — parsed back via
+// registerInlineStyleRule. Default (colorless) highlight stays `==…==`.
 export const MarkdownHighlight = Highlight.extend({
   addStorage() {
     return {
       markdown: {
-        serialize: { open: '==', close: '==', mixable: true, expelEnclosingWhitespace: true },
-        parse: {},
+        serialize: {
+          open(_state: unknown, mark: { attrs: { color?: string | null } }) {
+            const c = mark.attrs?.color;
+            return c && isSafeCssColor(String(c)) ? `<mark style="background-color: ${c}">` : '==';
+          },
+          close(_state: unknown, mark: { attrs: { color?: string | null } }) {
+            const c = mark.attrs?.color;
+            return c && isSafeCssColor(String(c)) ? '</mark>' : '==';
+          },
+          mixable: true,
+          expelEnclosingWhitespace: true,
+        },
+        parse: { setup: registerInlineStyleRule },
       },
     };
   },
 });
+
+// Text color mark — TextStyle (nested v2 dep) with a `color` attribute.
+// @tiptap/extension-color is NOT installed for the desktop's v2 tree, so this
+// is the documented ~20-LoC custom pattern instead (benchmark spec §2).
+// Serializes to <span style="color: …"> (see decision note above).
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    svTextColor: {
+      /** Apply a text color to the selection. */
+      setTextColor: (color: string) => ReturnType;
+      /** Remove the text color from the selection. */
+      unsetTextColor: () => ReturnType;
+    };
+  }
+}
+
+export const MarkdownTextColor = TextStyle.extend({
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.style.color || null,
+        renderHTML: (attrs: { color?: string | null }) =>
+          attrs.color ? { style: `color: ${attrs.color}` } : {},
+      },
+    };
+  },
+
+  addCommands() {
+    return {
+      ...this.parent?.(),
+      setTextColor: (color: string) => ({ chain }) =>
+        chain().setMark('textStyle', { color }).run(),
+      unsetTextColor: () => ({ chain }) =>
+        chain().setMark('textStyle', { color: null }).removeEmptyTextStyle().run(),
+    };
+  },
+
+  addStorage() {
+    return {
+      markdown: {
+        serialize: {
+          open(_state: unknown, mark: { attrs: { color?: string | null } }) {
+            const c = mark.attrs?.color;
+            return c && isSafeCssColor(String(c)) ? `<span style="color: ${c}">` : '';
+          },
+          close(_state: unknown, mark: { attrs: { color?: string | null } }) {
+            const c = mark.attrs?.color;
+            return c && isSafeCssColor(String(c)) ? '</span>' : '';
+          },
+          mixable: true,
+          expelEnclosingWhitespace: true,
+        },
+        parse: { setup: registerInlineStyleRule },
+      },
+    };
+  },
+});
+
+// ─── Callout markdown rules (editor upgrade) ────────────────────────────────
+// Obsidian callout syntax on disk:
+//   > [!info]
+//   > body…
+// Serialize: CalloutNode delegates to serializeCallout (state.write = raw, so
+// `[!type]` is never escaped). Parse: registerCalloutRule converts a parsed
+// blockquote whose first paragraph starts with `[!type]` into
+// <div data-callout="type"> which CalloutNode.parseHTML picks up.
+
+/** prosemirror-markdown node serializer for the callout node. */
+export function serializeCallout(state: any, node: any): void {
+  const type = String(node.attrs?.type || 'info');
+  state.wrapBlock('> ', null, node, () => {
+    state.write(`[!${type}]`);
+    state.ensureNewLine();
+    state.renderContent(node);
+  });
+}
+
+const CALLOUT_MARKER_RE = /^\[!([A-Za-z]+)\][^\S\n]*(\n|$)/;
+
+/**
+ * markdown-it core rule: blockquote → callout div when the first paragraph
+ * begins with `[!type]`. Idempotent (setup() runs on every parse). Plain
+ * blockquotes are left untouched.
+ */
+export function registerCalloutRule(md: MarkdownItLike): void {
+  const tagged = md as MarkdownItLike & { __svCallout?: boolean };
+  if (tagged.__svCallout) return;
+  tagged.__svCallout = true;
+
+  (md as any).core.ruler.push('sv_callout', (state: any) => {
+    const tokens = state.tokens;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].type !== 'blockquote_open') continue;
+      if (tokens[i + 1]?.type !== 'paragraph_open' || tokens[i + 2]?.type !== 'inline') continue;
+      const inline = tokens[i + 2];
+      const m = CALLOUT_MARKER_RE.exec(inline.content);
+      if (!m) continue;
+      const type = m[1].toLowerCase();
+
+      // Find the matching blockquote_close (track nesting).
+      let depth = 0;
+      let close = -1;
+      for (let j = i; j < tokens.length; j++) {
+        if (tokens[j].type === 'blockquote_open') depth++;
+        else if (tokens[j].type === 'blockquote_close' && --depth === 0) { close = j; break; }
+      }
+      if (close === -1) continue;
+
+      tokens[i].type = 'sv_callout_open';
+      tokens[i].tag = 'div';
+      tokens[i].attrSet('data-callout', type);
+      tokens[close].type = 'sv_callout_close';
+      tokens[close].tag = 'div';
+
+      // Strip the `[!type]` marker line from the first paragraph.
+      const stripped = inline.content.replace(/^\[![A-Za-z]+\][^\S\n]*\n?/, '');
+      if (stripped === '') {
+        tokens.splice(i + 1, 3); // marker-only paragraph → remove it entirely
+      } else {
+        inline.content = stripped;
+        const kids = inline.children ?? [];
+        if (kids[0]?.type === 'text') {
+          kids[0].content = kids[0].content.replace(/^\[![A-Za-z]+\][^\S\n]*/, '');
+          if (kids[0].content === '') {
+            kids.shift();
+            if (kids[0]?.type === 'softbreak') kids.shift();
+          }
+        }
+      }
+    }
+  });
+}
 
 /** Serialize the current editor document to markdown source. */
 export function editorToMarkdown(editor: Editor): string {

@@ -683,6 +683,68 @@ function registerIpcHandlers(config: AppConfig) {
     if (win?.isMaximized()) win.unmaximize(); else win?.maximize();
   });
   ipcMain.handle('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+
+  // ─── App menu (W2) — zoom + shell helpers ───────────
+  // window:zoom — webContents zoom factor, clamped 0.5..3.0.
+  ipcMain.handle('window:zoom', (e, action: 'in' | 'out' | 'reset'): number => {
+    const wc = e.sender;
+    const next = action === 'reset'
+      ? 1
+      : Math.min(3, Math.max(0.5, wc.getZoomFactor() + (action === 'in' ? 0.1 : -0.1)));
+    wc.setZoomFactor(next);
+    return next;
+  });
+
+  // shell:open-path — reveal a folder/file in the OS file manager.
+  // Restricted to paths inside the vault root (same boundary as vault FS handlers).
+  ipcMain.handle('shell:open-path', async (_e, path: string) => {
+    const safe = assertInsideVault(vp, path);
+    const err = await shell.openPath(safe);
+    if (err) throw new Error(`Failed to open path: ${err}`);
+  });
+
+  // shell:open-external — https-only allowlist (no file:, javascript:, http:).
+  ipcMain.handle('shell:open-external', async (_e, url: string) => {
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new Error('Invalid URL'); }
+    if (parsed.protocol !== 'https:') throw new Error('Only https:// URLs are allowed');
+    await shell.openExternal(parsed.toString());
+  });
+
+  // ─── [editor-upgrade agent owned block — vault:import-asset ONLY] ───
+  // Copies an image into <vault>/assets/ and returns the VAULT-RELATIVE path
+  // (forward slashes) for Obsidian-compatible ![](assets/name.png) markdown.
+  // Accepts base64 bytes (renderer file picker) or an absolute source path.
+  ipcMain.handle('vault:import-asset', (_e, payload: { base64?: string; srcPath?: string; fileName: string }): string => {
+    if (!payload || (!payload.base64 && !payload.srcPath)) {
+      throw new Error('vault:import-asset: base64 or srcPath required');
+    }
+    // Strip any directory components, then whitelist-sanitize the filename.
+    const rawName = basename(String(payload.fileName || 'image.png'));
+    const ext = extname(rawName).toLowerCase();
+    const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif']);
+    if (!ALLOWED_EXT.has(ext)) throw new Error(`vault:import-asset: unsupported image type "${ext}"`);
+    const base = basename(rawName, extname(rawName)).replace(/[^\w.\- ()À-￿]/g, '_') || 'image';
+
+    const assetsDir = join(vp, 'assets');
+    mkdirSync(assetsDir, { recursive: true });
+    let target = join(assetsDir, `${base}${ext}`);
+    let i = 2;
+    while (existsSync(target)) target = join(assetsDir, `${base}-${i++}${ext}`);
+    assertInsideVault(vp, target); // CRIT-01 invariant, defense-in-depth
+
+    noteSelfWrite(target); // W1-15 watcher echo guard
+    if (payload.base64) {
+      const buf = Buffer.from(payload.base64, 'base64');
+      if (buf.byteLength === 0) throw new Error('vault:import-asset: empty payload');
+      if (buf.byteLength > 50 * 1024 * 1024) throw new Error('vault:import-asset: asset too large (max 50MB)');
+      writeFileSync(target, buf);
+    } else {
+      copyFileSync(resolve(String(payload.srcPath)), target);
+    }
+    return toVaultRel(vp, target);
+  });
+  // ─── [end editor-upgrade agent block] ───
 }
 
 // ─── File watcher (W1-15) ────────────────────────────

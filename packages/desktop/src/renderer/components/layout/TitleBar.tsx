@@ -2,6 +2,7 @@
 
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { AppMenu } from './AppMenu.js';
 
 // Electron-only CSS property for frameless-window drag regions.
 declare module 'react' {
@@ -12,10 +13,10 @@ declare module 'react' {
 
 export function TitleBar() {
   const theme = useAppStore((s) => s.theme);
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const toggleTheme = useAppStore((s) => s.toggleTheme);
   const rightPanel = useAppStore((s) => s.rightPanel);
   const setRightPanel = useAppStore((s) => s.setRightPanel);
+  const openGraphTab = useAppStore((s) => s.openGraphTab);
   const isDark = theme === 'dark';
   const isMac = window.stellavault.platform === 'darwin';
 
@@ -33,9 +34,9 @@ export function TitleBar() {
       fontSize: '12px',
       userSelect: 'none' as const,
     }}>
-      <button onClick={toggleSidebar} style={btnStyle(isDark)} title="Toggle sidebar" aria-label="Toggle sidebar">
-        <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>&#9776;</span>
-      </button>
+      {/* App menu (W2) — hamburger now opens the application menu; sidebar
+          toggle lives in View menu (+ its hotkey). */}
+      <AppMenu />
 
       <span style={{
         flex: 1,
@@ -70,10 +71,12 @@ export function TitleBar() {
       >
         #
       </button>
+      {/* Wave 2: ◉ now opens the full-pane graph TAB (the side panel graph
+          stays available via the 'panel.graph' command / panel menu). */}
       <button
-        onClick={() => setRightPanel(rightPanel === 'graph' ? 'none' : 'graph')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'graph' ? 'var(--accent-2)' : undefined }}
-        title="3D Graph" aria-label="Toggle 3D graph panel"
+        onClick={openGraphTab}
+        style={btnStyle(isDark)}
+        title="Open graph view (Ctrl+G)" aria-label="Open graph view"
       >
         &#x25C9;
       </button>

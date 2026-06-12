@@ -36,8 +36,12 @@ const ALLOWED_CHANNELS = new Set<string>([
   'window:minimize',
   'window:maximize',
   'window:close',
+  'window:zoom',
+  'shell:open-path',
+  'shell:open-external',
   'settings:get',
   'settings:set',
+  'vault:import-asset', // [editor-upgrade additive] local image → vault assets/
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([

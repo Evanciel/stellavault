@@ -107,7 +107,8 @@ export function TabBar() {
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
               )}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
-                {tab.title}
+                {/* Wave 2: graph tab gets the ◉ glyph */}
+                {tab.kind === 'graph' ? `◉ ${tab.title}` : tab.title}
               </span>
               <button
                 aria-label={`Close ${tab.title}`}

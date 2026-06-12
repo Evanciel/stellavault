@@ -19,7 +19,13 @@ export interface OpenTab {
   // updateTabFrontmatter (Properties edits). `content` stays authoritative —
   // EditorArea derives {frontmatter, body} from it via lib/frontmatter.ts.
   frontmatter?: Record<string, unknown>;
+  // Wave 2 additive: special tab kinds. 'note' (default, file-backed) or
+  // 'graph' (full main-pane GraphView — no file, never dirty, content unused).
+  kind?: 'note' | 'graph';
 }
+
+// Singleton id for the graph tab — at most one graph tab is ever open.
+export const GRAPH_TAB_ID = '__graph-view__';
 
 interface AppState {
   // Sidebar
@@ -70,6 +76,8 @@ interface AppState {
   renameTabPath: (oldPath: string, newPath: string, newTitle?: string) => void;
   // Stage D additive (W1-17) — drag-reorder in TabBar.
   reorderTabs: (fromIndex: number, toIndex: number) => void;
+  // Wave 2 additive: open (or focus) the singleton full-pane graph tab.
+  openGraphTab: () => void;
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
@@ -169,6 +177,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const [moved] = next.splice(fromIndex, 1);
     next.splice(toIndex, 0, moved);
     return { tabs: next };
+  }),
+
+  // Wave 2 additive: singleton graph tab — focus if already open.
+  openGraphTab: () => set((s) => {
+    const existing = s.tabs.find((t) => t.kind === 'graph');
+    if (existing) return { activeTabId: existing.id };
+    const tab: OpenTab = {
+      id: GRAPH_TAB_ID, filePath: '', title: 'Graph',
+      isDirty: false, content: '', kind: 'graph',
+    };
+    return { tabs: [...s.tabs, tab], activeTabId: tab.id };
   }),
 
   setRightPanel: (panel) => set({ rightPanel: panel }),

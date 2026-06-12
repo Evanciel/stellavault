@@ -124,6 +124,59 @@ if (process.env.MD_RT_CHILD === '1') {
   eq('frontmatter: malformed YAML treated as body (no throw)',
     fm.parse('---\n: : bad\n---\nx').body, '---\n: : bad\n---\nx');
 
+  // ── Editor upgrade: colored text / colored highlight inline-HTML rules ──
+  const { registerInlineStyleRule, isSafeCssColor } = mod;
+  const mdColor = markdownit({ html: false });
+  registerInlineStyleRule(mdColor);
+  registerInlineStyleRule(mdColor); // idempotence — setup() runs on EVERY parse
+  eq('color: safe css values accepted',
+    isSafeCssColor('#ef4444') && isSafeCssColor('rgb(253, 224, 71)') && isSafeCssColor('red'), true);
+  eq('color: unsafe css values rejected',
+    isSafeCssColor('url(x)') || isSafeCssColor('red;background:url(1)') || isSafeCssColor('expression(a)'), false);
+  eq('color span parse: raw span emitted',
+    mdColor.renderInline('a <span style="color: #ef4444">red</span> b')
+      .includes('<span style="color: #ef4444">red</span>'), true);
+  eq('highlight mark parse: raw mark emitted',
+    mdColor.renderInline('<mark style="background-color: #facc1555">hi</mark>')
+      .includes('<mark style="background-color: #facc1555">hi</mark>'), true);
+  eq('color span parse: inner markdown still parsed',
+    mdColor.renderInline('<span style="color: #ef4444">**bold**</span>').includes('<strong>bold</strong>'), true);
+  eq('color span parse: unsafe value stays escaped text',
+    mdColor.renderInline('<span style="color: url(javascript:1)">x</span>').includes('<span style='), false);
+  eq('color span parse: mismatched tag/prop rejected',
+    mdColor.renderInline('<mark style="color: #ef4444">x</mark>').includes('<mark style='), false);
+  eq('color span parse: arbitrary html still escaped (html:false intact)',
+    mdColor.renderInline('<script>alert(1)</script>').includes('<script>'), false);
+  // restoreEscapedSyntax guard must leave the serialized spans untouched
+  eq('colored span survives restore guard',
+    restoreEscapedSyntax('x <span style="color: #ef4444">red</span> y'),
+    'x <span style="color: #ef4444">red</span> y');
+  eq('colored mark survives restore guard',
+    restoreEscapedSyntax('<mark style="background-color: #facc1555">hi</mark>'),
+    '<mark style="background-color: #facc1555">hi</mark>');
+
+  // ── Editor upgrade: callout rule (> [!type] ↔ div[data-callout]) ──
+  const { registerCalloutRule } = mod;
+  const mdCallout = markdownit({ html: false });
+  registerCalloutRule(mdCallout);
+  registerCalloutRule(mdCallout); // idempotence
+  const calloutHtml = mdCallout.render('> [!info]\n> Hello **world**');
+  eq('callout parse: blockquote becomes div[data-callout]',
+    calloutHtml.includes('data-callout="info"') && !calloutHtml.includes('<blockquote>'), true);
+  eq('callout parse: marker stripped from body', calloutHtml.includes('[!info]'), false);
+  eq('callout parse: inner markdown still parsed', calloutHtml.includes('<strong>world</strong>'), true);
+  eq('callout parse: warning type detected',
+    mdCallout.render('> [!warning]\n> careful').includes('data-callout="warning"'), true);
+  eq('callout parse: marker-only first paragraph removed',
+    mdCallout.render('> [!tip]\n>\n> body text').includes('data-callout="tip"'), true);
+  eq('callout parse: plain blockquote untouched',
+    mdCallout.render('> just a quote').includes('<blockquote>'), true);
+  eq('callout parse: [!type] mid-paragraph not converted',
+    mdCallout.render('> note [!info] inline').includes('<blockquote>'), true);
+  // serialized form `> [!info]` must pass the restore guard unmangled
+  eq('callout marker survives restore guard',
+    restoreEscapedSyntax('> [!info]\n> body'), '> [!info]\n> body');
+
   process.stdout.write(JSON.stringify(results));
   process.exit(0);
 }
@@ -229,6 +282,37 @@ await test('MarkdownEditor: registers WikilinkNode', () => {
 
 await test('app-store: OpenTab gains frontmatter field (W1-7, additive)', () => {
   assert(/frontmatter\?:\s*Record<string,\s*unknown>/.test(storeSrc), 'OpenTab.frontmatter missing');
+});
+
+console.log('--- static: editor upgrade (callout / color / bubble menu) wiring ---');
+
+const CALLOUT_NODE = join(ROOT, 'packages/desktop/src/renderer/components/editor/CalloutNode.ts');
+const BUBBLE_MENU = join(ROOT, 'packages/desktop/src/renderer/components/editor/BubbleMenuBar.tsx');
+const PRELOAD = join(ROOT, 'packages/desktop/src/preload/index.ts');
+const MAIN = join(ROOT, 'packages/desktop/src/main/index.ts');
+
+await test('CalloutNode: delegates to shared serializeCallout + registerCalloutRule', () => {
+  const src = readFileSync(CALLOUT_NODE, 'utf8');
+  assert(src.includes('serializeCallout'), 'CalloutNode must delegate serialization to lib/markdown.ts');
+  assert(src.includes('registerCalloutRule'), 'CalloutNode must register the shared parse rule');
+});
+
+await test('MarkdownEditor: registers CalloutNode + MarkdownTextColor + BubbleMenuBar', () => {
+  assert(editorSrc.includes('CalloutNode'), 'CalloutNode not registered');
+  assert(editorSrc.includes('MarkdownTextColor'), 'MarkdownTextColor not registered');
+  assert(editorSrc.includes('BubbleMenuBar'), 'BubbleMenuBar not rendered');
+  assert(editorSrc.includes('TableControls'), 'TableControls not rendered');
+});
+
+await test('BubbleMenuBar: uses @tiptap/react BubbleMenu and hides in code blocks', () => {
+  const src = readFileSync(BUBBLE_MENU, 'utf8');
+  assert(/BubbleMenu/.test(src), 'BubbleMenu component missing');
+  assert(src.includes("isActive('codeBlock')"), 'bubble menu must hide inside code blocks');
+});
+
+await test('vault:import-asset: main handler + preload allowlist entry exist', () => {
+  assert(readFileSync(MAIN, 'utf8').includes("ipcMain.handle('vault:import-asset'"), 'main handler missing');
+  assert(readFileSync(PRELOAD, 'utf8').includes("'vault:import-asset'"), 'preload allowlist entry missing');
 });
 
 // ---------------------------------------------------------------------------
