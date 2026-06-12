@@ -98,7 +98,14 @@ export function App() {
     })();
 
     // Listen for core ready
-    const off = onIpc('core:ready', () => setCoreReady(true));
+    const off = onIpc('core:ready', () => {
+      setCoreReady(true);
+      // First-run UX: an empty index means search/graph/tags are all dead until
+      // the user finds the Reindex button. Index automatically once.
+      void ipc('core:get-stats').then((stats) => {
+        if (stats && stats.documentCount === 0) void ipc('core:index');
+      }).catch(() => { /* stats unavailable — user can still reindex manually */ });
+    });
 
     // Listen for file changes (from watcher)
     const offFile = onIpc('file:changed', () => {
