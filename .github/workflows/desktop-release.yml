@@ -93,6 +93,34 @@ jobs:
         shell: bash
         run: npm run make -- --targets @electron-forge/maker-zip --arch x64
 
+      # Gate: a green zip is NOT proof the app runs (forge silently omitted core +
+      # natives for months). --smoke-core boots the PACKAGED binary, loads
+      # @stellavault/core + better-sqlite3 + sqlite-vec under Electron's runtime,
+      # runs a query, and exits 0/1 with a step trace.
+      - name: Launch smoke — packaged app must load core + SQLite (--smoke-core)
+        shell: bash
+        run: |
+          SMOKE_DIR="$PWD/smoke-tmp"
+          mkdir -p "$SMOKE_DIR"
+          export STELLAVAULT_SMOKE_OUT="$SMOKE_DIR/result.txt"
+          export STELLAVAULT_SMOKE_VAULT="$PWD/examples/demo-vault"
+          export STELLAVAULT_SMOKE_DB="$SMOKE_DIR/smoke.db"
+          EXIT=0
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+            BIN=$(find packages/desktop/out -maxdepth 2 -name stellavault -type f | head -1)
+            echo "Launching $BIN"
+            timeout 180 xvfb-run -a "$BIN" --no-sandbox --smoke-core || EXIT=$?
+          else
+            BIN=$(find packages/desktop/out -maxdepth 2 -name stellavault.exe -type f | head -1)
+            echo "Launching $BIN"
+            timeout 180 "$BIN" --smoke-core || EXIT=$?
+          fi
+          echo "smoke exit code: $EXIT"
+          echo "--- result ---";   cat "$SMOKE_DIR/result.txt" 2>/dev/null || echo "(no result file)"
+          echo "--- progress ---"; cat "$SMOKE_DIR/result.txt.progress" 2>/dev/null || true
+          grep -q '^SMOKE_OK' "$SMOKE_DIR/result.txt"
+
       - name: Locate built ZIP
         id: art
         shell: bash
