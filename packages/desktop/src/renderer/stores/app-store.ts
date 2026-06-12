@@ -12,6 +12,9 @@ export interface OpenTab {
   // Loaded verbatim from vault:read-file; updated via editorToMarkdown
   // (renderer/lib/markdown.ts); written verbatim by vault:write-file.
   content: string;
+  // Stage C additive (W1-15): set by lib/runtime-sync.ts when the file changed
+  // on disk while this tab was dirty. TabBar/EditorArea display lands in a later stage.
+  externallyChanged?: boolean;
 }
 
 interface AppState {
@@ -25,9 +28,14 @@ interface AppState {
   tabs: OpenTab[];
   activeTabId: string | null;
 
-  // Panel
-  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks';
+  // Panel (Stage C adds 'search' | 'outline' | 'tags' — W1-4/5/6)
+  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags';
   rightPanelWidth: number;
+
+  // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any
+  // caller) sets a query via openSearchWithQuery(); SearchPanel consumes it,
+  // then calls clearPendingSearchQuery().
+  pendingSearchQuery: string | null;
 
   // Theme
   theme: 'dark' | 'light';
@@ -47,9 +55,15 @@ interface AppState {
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
   markTabClean: (id: string) => void;
+  // Stage C additive (W1-15) — used only by lib/runtime-sync.ts.
+  markTabExternallyChanged: (id: string) => void;
+  reloadTab: (id: string, content: string) => void;
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
+  // Stage C additive (W1-6).
+  openSearchWithQuery: (query: string) => void;
+  clearPendingSearchQuery: () => void;
   toggleTheme: () => void;
   setVaultPath: (p: string) => void;
   setCoreReady: (ready: boolean) => void;
@@ -66,6 +80,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   rightPanel: 'none',
   rightPanelWidth: 380,
+  pendingSearchQuery: null,
 
   theme: 'dark',
   vaultPath: '',
@@ -110,8 +125,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     tabs: s.tabs.map((t) => t.id === id ? { ...t, isDirty: false } : t),
   })),
 
+  // Stage C additive (W1-15): external change handling — see lib/runtime-sync.ts.
+  markTabExternallyChanged: (id) => set((s) => ({
+    tabs: s.tabs.map((t) => t.id === id ? { ...t, externallyChanged: true } : t),
+  })),
+  reloadTab: (id, content) => set((s) => ({
+    tabs: s.tabs.map((t) => t.id === id
+      ? { ...t, content, isDirty: false, externallyChanged: false }
+      : t),
+  })),
+
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
+  // Stage C additive (W1-6).
+  openSearchWithQuery: (query) => set({ rightPanel: 'search', pendingSearchQuery: query }),
+  clearPendingSearchQuery: () => set({ pendingSearchQuery: null }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
   setVaultPath: (p) => set({ vaultPath: p }),
   setCoreReady: (ready) => set({ coreReady: ready }),

@@ -1,16 +1,64 @@
-// AI Panel — semantic search, decay dashboard, ask vault.
+// AI Panel — ask vault, semantic search, draft, review queue (FSRS), stats.
 // Connects to @stellavault/core via IPC.
 
 import { useState, useCallback, useEffect } from 'react';
+import { create } from 'zustand';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
-import type { SearchResult, VaultStats } from '../../../shared/ipc-types.js';
+import { invokeIpcRaw } from '../../lib/runtime-sync.js';
+import { registerCommand } from '../../lib/commands.js';
+import type { SearchResult, VaultStats, DecayItem } from '../../../shared/ipc-types.js';
 
-type Tab = 'search' | 'express' | 'decay' | 'stats';
+type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats';
+
+// ─── Cross-component tab requests (palette commands → panel) ───
+
+interface AiPanelUiState {
+  requestedTab: Tab | null;
+  requestTab: (tab: Tab) => void;
+  clearRequest: () => void;
+}
+
+const useAiPanelUi = create<AiPanelUiState>((set) => ({
+  requestedTab: null,
+  requestTab: (tab) => set({ requestedTab: tab }),
+  clearRequest: () => set({ requestedTab: null }),
+}));
+
+// Stage C (W1-13/14): palette commands + default hotkey via the registry.
+let aiCommandsRegistered = false;
+function registerAiPanelCommands(): void {
+  if (aiCommandsRegistered) return;
+  aiCommandsRegistered = true;
+  registerCommand({
+    id: 'panel.ai-ask', title: 'Ask your vault (AI)', category: 'Panels',
+    defaultKeys: 'mod+shift+a',
+    run: () => {
+      useAppStore.getState().setRightPanel('ai');
+      useAiPanelUi.getState().requestTab('ask');
+    },
+  });
+  registerCommand({
+    id: 'panel.ai-review', title: 'Open review queue (Memory)', category: 'Panels',
+    run: () => {
+      useAppStore.getState().setRightPanel('ai');
+      useAiPanelUi.getState().requestTab('decay');
+    },
+  });
+}
+registerAiPanelCommands();
 
 export function AIPanel() {
-  const [activeTab, setActiveTab] = useState<Tab>('search');
+  const [activeTab, setActiveTab] = useState<Tab>('ask');
   const coreReady = useAppStore((s) => s.coreReady);
+  const requestedTab = useAiPanelUi((s) => s.requestedTab);
+  const clearRequest = useAiPanelUi((s) => s.clearRequest);
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    setActiveTab(requestedTab);
+    clearRequest();
+  }, [requestedTab, clearRequest]);
 
   if (!coreReady) {
     return (
@@ -30,7 +78,7 @@ export function AIPanel() {
         borderBottom: '1px solid var(--border)',
         fontSize: 11,
       }}>
-        {(['search', 'express', 'decay', 'stats'] as Tab[]).map((tab) => (
+        {(['ask', 'search', 'express', 'decay', 'stats'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -47,16 +95,17 @@ export function AIPanel() {
               fontSize: 11,
             }}
           >
-            {tab === 'search' ? 'Search' : tab === 'express' ? 'Draft' : tab === 'decay' ? 'Memory' : 'Stats'}
+            {tab === 'ask' ? 'Ask' : tab === 'search' ? 'Search' : tab === 'express' ? 'Draft' : tab === 'decay' ? 'Memory' : 'Stats'}
           </button>
         ))}
       </div>
 
       {/* Content */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
+        {activeTab === 'ask' && <AskVault />}
         {activeTab === 'search' && <AISearch />}
         {activeTab === 'express' && <ExpressDraft />}
-        {activeTab === 'decay' && <DecayDashboard />}
+        {activeTab === 'decay' && <ReviewQueue />}
         {activeTab === 'stats' && <VaultStatsView />}
       </div>
     </div>
@@ -170,32 +219,298 @@ function AISearch() {
   );
 }
 
-function DecayDashboard() {
-  const [loaded, setLoaded] = useState(false);
+// ─── Ask tab (W1-13) — question → answer + cited notes ───
 
-  // P0 fix: move IPC call into useEffect (was firing on every render)
-  useEffect(() => {
-    if (loaded) return;
-    void (async () => {
-      try {
-        await ipc('core:search', '__decay__', 1);
-      } catch { /* ignore */ }
-      setLoaded(true);
-    })();
-  }, [loaded]);
+interface AskResponse {
+  answer: string;
+  citations: { filePath: string; title: string; snippet: string }[];
+}
+
+function AskVault() {
+  const [question, setQuestion] = useState('');
+  const [response, setResponse] = useState<AskResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const openFile = useAppStore((s) => s.openFile);
+
+  const handleAsk = useCallback(async () => {
+    const q = question.trim();
+    if (!q || loading) return;
+    setLoading(true);
+    setError(null);
+    setResponse(null);
+    try {
+      const r = await invokeIpcRaw<AskResponse>('core:ask', q);
+      setResponse(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ask failed. Is the vault indexed?');
+    } finally {
+      setLoading(false);
+    }
+  }, [question, loading]);
 
   return (
     <div>
-      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: 'var(--ink)' }}>
-        Memory decay
+      <textarea
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void handleAsk();
+          }
+        }}
+        placeholder="Ask your vault a question... (Ctrl+Enter)"
+        aria-label="Ask your vault"
+        rows={3}
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          background: 'var(--hover)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          padding: '8px 10px',
+          fontSize: 12,
+          color: 'var(--ink)',
+          outline: 'none',
+          resize: 'vertical',
+          fontFamily: 'inherit',
+          lineHeight: 1.5,
+        }}
+      />
+      <button
+        onClick={() => void handleAsk()}
+        disabled={loading || !question.trim()}
+        style={{
+          marginTop: 6,
+          width: '100%',
+          padding: '6px',
+          background: 'var(--accent)',
+          border: 'none',
+          borderRadius: 4,
+          color: '#fff',
+          fontSize: 11,
+          cursor: 'pointer',
+          opacity: loading || !question.trim() ? 0.5 : 1,
+        }}
+      >
+        {loading ? 'Thinking...' : 'Ask'}
+      </button>
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div style={{ marginTop: 12 }} aria-label="Loading answer">
+          {[100, 92, 78].map((w, i) => (
+            <div key={i} style={{
+              height: 10,
+              width: `${w}%`,
+              marginBottom: 8,
+              borderRadius: 4,
+              background: 'var(--hover)',
+              opacity: 0.8 - i * 0.2,
+            }} />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ marginTop: 12, fontSize: 11, color: 'var(--ink-dim)', padding: 10, background: 'var(--hover)', borderRadius: 4 }}>
+          {error}
+        </div>
+      )}
+
+      {response && !loading && (
+        <div style={{ marginTop: 12 }}>
+          <pre style={{
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'inherit',
+            margin: 0,
+            padding: 12,
+            background: 'var(--hover)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: 'var(--ink)',
+          }}>
+            {response.answer}
+          </pre>
+
+          {response.citations.length > 0 && (
+            <>
+              <div style={{ marginTop: 12, marginBottom: 6, fontSize: 10, color: 'var(--ink-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Sources ({response.citations.length})
+              </div>
+              {response.citations.map((c) => (
+                <div
+                  key={c.filePath}
+                  onClick={async () => {
+                    const content = await ipc('vault:read-file', c.filePath);
+                    openFile(c.filePath, c.title, content);
+                  }}
+                  style={{
+                    padding: '8px 10px',
+                    marginBottom: 4,
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    background: 'var(--hover)',
+                    border: '1px solid var(--border)',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'; }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ink)' }}>{c.title}</div>
+                  {c.snippet && (
+                    <div style={{ fontSize: 10, color: 'var(--ink-dim)', marginTop: 2, lineHeight: 1.4 }}>
+                      {c.snippet.slice(0, 120)}...
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {!response && !loading && !error && (
+        <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
+          Answers are synthesized from your own notes, with citations.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Memory tab (W1-14) — FSRS review queue ───
+
+function daysSince(iso: string): number {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
+
+function ReviewQueue() {
+  const [items, setItems] = useState<DecayItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const openFile = useAppStore((s) => s.openFile);
+
+  const refresh = useCallback(async () => {
+    try {
+      // Stage C contract channel; fall back to the legacy core:decay-top.
+      const list = await invokeIpcRaw<DecayItem[]>('core:decay-list', 20)
+        .catch(() => ipc('core:decay-top', 20));
+      setItems(list);
+      setError(null);
+    } catch (err) {
+      setItems([]);
+      setError(err instanceof Error ? err.message : 'Failed to load review queue.');
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const handleReviewed = useCallback(async (filePath: string) => {
+    // Await directly (recordAccess() is fire-and-forget — refresh would race it).
+    await invokeIpcRaw<void>('core:record-access', filePath, 'review').catch((err) => {
+      console.warn('[AIPanel] record-access(review) failed:', err);
+    });
+    await refresh();
+  }, [refresh]);
+
+  if (items === null) {
+    return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>Loading review queue...</div>;
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--ink)' }}>
+        Review queue
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-dim)', lineHeight: 1.6 }}>
-        Notes you haven't visited recently are fading from memory.
-        Use <code style={{ fontSize: 10 }}>stellavault decay</code> in the CLI for the full report.
+      <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 12 }}>
+        Notes fading from memory, weakest first. Reviewing resets their decay.
       </div>
-      <div style={{ marginTop: 16, padding: 16, background: 'var(--hover)', borderRadius: 6, textAlign: 'center', fontSize: 11, color: 'var(--ink-faint)' }}>
-        Full decay dashboard coming in v0.2
-      </div>
+
+      {error && (
+        <div style={{ fontSize: 11, color: 'var(--ink-dim)', padding: 10, background: 'var(--hover)', borderRadius: 4, marginBottom: 8 }}>
+          {error}
+        </div>
+      )}
+
+      {items.length === 0 && !error && (
+        <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
+          Nothing to review — your memory is fresh. ✦
+        </div>
+      )}
+
+      {items.map((item) => {
+        const pct = Math.round(Math.max(0, Math.min(1, item.retrievability)) * 100);
+        const overdueDays = daysSince(item.lastAccess);
+        return (
+          <div
+            key={item.documentId}
+            style={{
+              padding: '8px 10px',
+              marginBottom: 6,
+              borderRadius: 4,
+              background: 'var(--hover)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {item.title}
+              </div>
+              <span style={{ fontSize: 9, color: 'var(--ink-faint)', flexShrink: 0 }}>
+                {overdueDays}d ago
+              </span>
+            </div>
+
+            {/* Retrievability gauge */}
+            <div
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Retrievability ${pct}%`}
+              style={{ marginTop: 6, height: 4, borderRadius: 2, background: 'var(--selection)', overflow: 'hidden' }}
+            >
+              <div style={{
+                width: `${pct}%`,
+                height: '100%',
+                borderRadius: 2,
+                background: pct < 50 ? '#e5484d' : 'var(--accent)',
+              }} />
+            </div>
+
+            <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 9, color: pct < 50 ? '#e5484d' : 'var(--ink-faint)' }}>
+                {pct}% retained
+              </span>
+              <button
+                onClick={async () => {
+                  const content = await ipc('vault:read-file', item.filePath);
+                  openFile(item.filePath, item.title, content);
+                }}
+                style={{
+                  marginLeft: 'auto', padding: '2px 10px', fontSize: 10, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--ink-dim)',
+                }}
+              >
+                Open
+              </button>
+              <button
+                onClick={() => void handleReviewed(item.filePath)}
+                style={{
+                  padding: '2px 10px', fontSize: 10, cursor: 'pointer',
+                  background: 'var(--accent)', border: 'none', borderRadius: 3, color: '#fff',
+                }}
+              >
+                Reviewed ✓
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -48,6 +48,28 @@ export function TitleBar() {
         Stellavault
       </span>
 
+      {/* Stage C (W1-4/5/6) panel toggles */}
+      <button
+        onClick={() => setRightPanel(rightPanel === 'search' ? 'none' : 'search')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'search' ? 'var(--accent-2)' : undefined }}
+        title="Search" aria-label="Toggle search panel"
+      >
+        &#x2315;
+      </button>
+      <button
+        onClick={() => setRightPanel(rightPanel === 'outline' ? 'none' : 'outline')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'outline' ? 'var(--accent-2)' : undefined }}
+        title="Outline" aria-label="Toggle outline panel"
+      >
+        &#x2261;
+      </button>
+      <button
+        onClick={() => setRightPanel(rightPanel === 'tags' ? 'none' : 'tags')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'tags' ? 'var(--accent-2)' : undefined }}
+        title="Tags" aria-label="Toggle tags panel"
+      >
+        #
+      </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'graph' ? 'none' : 'graph')}
         style={{ ...btnStyle(isDark), color: rightPanel === 'graph' ? 'var(--accent-2)' : undefined }}

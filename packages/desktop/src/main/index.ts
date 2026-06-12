@@ -2,10 +2,11 @@
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join, resolve, sep } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, watch as fsWatch } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import type { AppSettings, FileTreeNode, SearchResult, VaultStats, DecayItem } from '../shared/ipc-types.js';
+import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem } from '../shared/ipc-types.js';
 import { SettingsStore } from './settings-store.js';
 
 // ─── Config ──────────────────────────────────────────
@@ -48,20 +49,37 @@ let store: any = null;
 let searchEngine: any = null;
 let embedder: any = null;
 let decayEngine: any = null;
+// Chunk options resolved at initCore time — reused by core:index and the watcher reindex.
+let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } = { maxTokens: 300, overlap: 50, minTokens: 50 };
 
 async function initCore(config: AppConfig): Promise<void> {
   if (coreReady) return;
   try {
     const core = await import('@stellavault/core');
-    const hub = core.createKnowledgeHub({
-      vaultPath: config.vaultPath,
-      dbPath: config.dbPath,
-      folders: core.DEFAULT_FOLDERS,
-      embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
-      chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
-      search: { defaultLimit: 10, rrfK: 60 },
-      mcp: { mode: 'stdio', port: 3333 },
-    });
+    // W1-4 risk fix: don't hardcode core config — go through core.loadConfig()
+    // (reads .stellavault.json with full defaults merge) so the user's
+    // search.weights / entityAliases apply to desktop search too. Fall back to
+    // the previous literal config if loadConfig is unavailable (older core).
+    let hubConfig: any;
+    try {
+      hubConfig = typeof (core as any).loadConfig === 'function' ? (core as any).loadConfig() : null;
+    } catch (err) {
+      console.error('[main] core.loadConfig failed — using built-in defaults:', err);
+      hubConfig = null;
+    }
+    if (!hubConfig) {
+      hubConfig = {
+        folders: core.DEFAULT_FOLDERS,
+        embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
+        chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
+        search: { defaultLimit: 10, rrfK: 60 },
+        mcp: { mode: 'stdio', port: 3333 },
+      };
+    }
+    // The desktop bootstrap (vault picker dialog) is authoritative for paths.
+    hubConfig = { ...hubConfig, vaultPath: config.vaultPath, dbPath: config.dbPath || hubConfig.dbPath };
+    coreChunkOptions = { ...coreChunkOptions, ...hubConfig.chunking };
+    const hub = core.createKnowledgeHub(hubConfig);
     await hub.store.initialize();
     await hub.embedder.initialize();
     store = hub.store;
@@ -153,6 +171,81 @@ function assertInsideVault(vaultPath: string, filePath: string): string {
   return resolved;
 }
 
+// ─── Core result/path helpers ────────────────────────
+
+/** Vault-relative path with forward slashes — matches core's documents.file_path. */
+function toVaultRel(vaultPath: string, filePath: string): string {
+  return relative(resolve(vaultPath), resolve(filePath)).replace(/\\/g, '/');
+}
+
+/** Map a core SearchResult (chunk+document) to the IPC SearchResult shape (absolute path). */
+function mapCoreSearchResult(vaultPath: string, r: any): SearchResult {
+  return {
+    id: r.document?.id ?? '',
+    filePath: r.document?.filePath ? join(vaultPath, r.document.filePath) : '',
+    title: r.document?.title ?? 'Untitled',
+    score: r.score ?? 0,
+    snippet: r.highlights?.[0] ?? '',
+    tags: r.document?.tags ?? [],
+  };
+}
+
+/** Resolve a document id from an absolute file path — DB lookup first (authoritative),
+ *  hash fallback mirrors core scanner: sha256(relPath).slice(0,16). */
+function docIdForFile(vaultPath: string, filePath: string): string {
+  const rel = toVaultRel(vaultPath, filePath);
+  try {
+    const db = store?.getDb?.();
+    const row = db?.prepare('SELECT id FROM documents WHERE file_path = ?').get(rel) as { id: string } | undefined;
+    if (row?.id) return row.id;
+  } catch { /* fall through to hash */ }
+  return createHash('sha256').update(rel).digest('hex').slice(0, 16);
+}
+
+/** Shared DecayItem mapping for core:decay-top / core:decay-list. */
+async function getDecayItems(vaultPath: string, limit: number): Promise<DecayItem[]> {
+  if (!coreReady || !decayEngine) return [];
+  const items = await decayEngine.getDecaying(0.9, limit);
+  return items.map((d: any) => {
+    const db = store.getDb();
+    const doc = db?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(d.documentId) as any;
+    return {
+      documentId: d.documentId,
+      title: d.title || doc?.title || 'Untitled',
+      retrievability: Math.round(d.retrievability * 100) / 100,
+      lastAccess: d.lastAccess,
+      filePath: doc?.file_path ? join(vaultPath, doc.file_path) : '',
+    };
+  }).filter((d: any) => d.filePath);
+}
+
+// ─── Self-write echo guard (W1-15) ───────────────────
+// Paths written via IPC in the last 1500ms are skipped by the watcher so our
+// own saves don't trigger a reindex + file:changed echo back to the renderer.
+
+const SELF_WRITE_WINDOW_MS = 1500;
+const recentSelfWrites = new Map<string, number>();
+
+function noteSelfWrite(filePath: string): void {
+  recentSelfWrites.set(resolve(filePath), Date.now());
+  // Bounded cleanup — drop expired entries opportunistically.
+  if (recentSelfWrites.size > 256) {
+    const now = Date.now();
+    for (const [p, ts] of recentSelfWrites) {
+      if (now - ts > SELF_WRITE_WINDOW_MS) recentSelfWrites.delete(p);
+    }
+  }
+}
+
+function isSelfWrite(filePath: string): boolean {
+  const key = resolve(filePath);
+  const ts = recentSelfWrites.get(key);
+  if (ts === undefined) return false;
+  if (Date.now() - ts <= SELF_WRITE_WINDOW_MS) return true;
+  recentSelfWrites.delete(key);
+  return false;
+}
+
 // ─── IPC Handlers ────────────────────────────────────
 
 function registerIpcHandlers(config: AppConfig) {
@@ -167,15 +260,19 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('vault:write-file', (_e, filePath: string, content: string) => {
     const safe = assertInsideVault(vp, filePath);
     mkdirSync(join(safe, '..'), { recursive: true });
+    noteSelfWrite(safe); // W1-15 echo guard
     writeFileSync(safe, content, 'utf-8');
   });
   ipcMain.handle('vault:rename', (_e, oldPath: string, newPath: string) => {
     const safeOld = assertInsideVault(vp, oldPath);
     const safeNew = assertInsideVault(vp, newPath);
+    noteSelfWrite(safeOld);
+    noteSelfWrite(safeNew);
     renameSync(safeOld, safeNew);
   });
   ipcMain.handle('vault:delete', (_e, filePath: string) => {
     const safe = assertInsideVault(vp, filePath);
+    noteSelfWrite(safe);
     if (statSync(safe).isDirectory()) {
       rmSync(safe, { recursive: true });
     } else {
@@ -186,6 +283,7 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('vault:create-file', (_e, filePath: string, content?: string) => {
     const safe = assertInsideVault(vp, filePath);
     mkdirSync(join(safe, '..'), { recursive: true });
+    noteSelfWrite(safe);
     writeFileSync(safe, content ?? '', 'utf-8');
   });
   ipcMain.handle('vault:create-folder', (_e, folderPath: string) => {
@@ -216,28 +314,154 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('core:index', async () => {
     if (!coreReady) return { indexed: 0, totalChunks: 0 };
     const core = await import('@stellavault/core');
-    const result = await core.indexVault(vp, { store, embedder, chunkOptions: { maxTokens: 300, overlap: 50, minTokens: 50 } });
+    const result = await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
     return { indexed: result.indexed, totalChunks: result.totalChunks };
   });
 
   ipcMain.handle('core:decay-top', async (_e, limit?: number) => {
-    if (!coreReady || !decayEngine) return [];
     try {
-      const items = await decayEngine.getDecaying(0.9, limit ?? 5);
-      return items.map((d: any) => {
-        // Resolve filePath from documents table
-        const db = store.getDb();
-        const doc = db?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(d.documentId) as any;
-        return {
-          documentId: d.documentId,
-          title: d.title || doc?.title || 'Untitled',
-          retrievability: Math.round(d.retrievability * 100) / 100,
-          lastAccess: d.lastAccess,
-          filePath: doc?.file_path ? join(vp, doc.file_path) : '',
-        };
-      }).filter((d: any) => d.filePath);
+      return await getDecayItems(vp, limit ?? 5);
     } catch (err) {
       console.error('[main] core:decay-top failed:', err);
+      return [];
+    }
+  });
+
+  // W1-14: generalized decay list for the Memory review queue (decay-top kept above).
+  ipcMain.handle('core:decay-list', async (_e, limit?: number) => {
+    try {
+      return await getDecayItems(vp, limit ?? 20);
+    } catch (err) {
+      console.error('[main] core:decay-list failed:', err);
+      return [];
+    }
+  });
+
+  // W1-14: FSRS loop — record an access event for a note.
+  // DEVIATION from plan: core's recordAccess (AccessEvent.type 'view'|'search'|
+  // 'mcp_query') has no FSRS grade parameter — every access fully resets R to 1.0.
+  // So 'open' and 'review' map to the same 'view' strength for now; weak/strong
+  // grading needs a core API change (tracked as Wave-2 follow-up).
+  ipcMain.handle('core:record-access', async (_e, filePath: string, _kind: 'open' | 'review') => {
+    if (!coreReady || !decayEngine) return;
+    try {
+      const safe = assertInsideVault(vp, filePath);
+      const documentId = docIdForFile(vp, safe);
+      await decayEngine.recordAccess({
+        documentId,
+        type: 'view',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('[main] core:record-access failed:', err);
+    }
+  });
+
+  // W1-4: full search panel — hybrid/keyword modes + tag/path filters.
+  // keyword mode = semantic signal off (BM25 + exact-entity only) via the
+  // per-query signalWeights override; core has no keyword-only entry point.
+  ipcMain.handle('search:query', async (_e, query: string, opts?: SearchQueryOpts): Promise<SearchResult[]> => {
+    if (!coreReady || !searchEngine || !query?.trim()) return [];
+    try {
+      const limit = Math.min(opts?.limit ?? 20, 100);
+      // Over-fetch when a post-hoc path filter will discard results.
+      const fetchLimit = opts?.pathPrefix ? Math.min(limit * 3, 100) : limit;
+      const results = await searchEngine.search({
+        query,
+        limit: fetchLimit,
+        ...(opts?.tags?.length ? { tags: opts.tags } : {}),
+        ...(opts?.mode === 'keyword' ? { signalWeights: { semantic: 0, recency: 0 } } : {}),
+      });
+      let mapped: SearchResult[] = results.map((r: any) => mapCoreSearchResult(vp, r));
+      if (opts?.pathPrefix) {
+        const prefix = opts.pathPrefix.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+        mapped = mapped.filter((r) => toVaultRel(vp, r.filePath).toLowerCase().startsWith(prefix));
+      }
+      return mapped.slice(0, limit);
+    } catch (err) {
+      console.error('[main] search:query failed:', err);
+      return [];
+    }
+  });
+
+  // W1-6: tag aggregation — core store exposes getTopics() (json_each over the
+  // tags column); raw SQL fallback keeps older core versions working.
+  ipcMain.handle('tags:list', async (): Promise<{ tag: string; count: number }[]> => {
+    if (!coreReady || !store) return [];
+    try {
+      if (typeof store.getTopics === 'function') {
+        const topics = await store.getTopics();
+        return topics.map((t: any) => ({ tag: t.topic, count: t.count }));
+      }
+      const db = store.getDb();
+      if (!db) return [];
+      return db.prepare(`
+        SELECT je.value AS tag, COUNT(DISTINCT d.id) AS count
+        FROM documents d, json_each(d.tags) je
+        GROUP BY je.value
+        ORDER BY count DESC
+      `).all();
+    } catch (err) {
+      console.error('[main] tags:list failed:', err);
+      return [];
+    }
+  });
+
+  // W1-13: Ask panel — core askVault is fully local (search + structured
+  // composition, no LLM). Degraded mode: empty answer + citations from a
+  // plain hybrid search so the UI can render citations-only.
+  ipcMain.handle('core:ask', async (_e, question: string): Promise<AskResponse> => {
+    if (!coreReady || !searchEngine || !question?.trim()) return { answer: '', citations: [] };
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).askVault === 'function') {
+        const res = await (core as any).askVault(searchEngine, question, { limit: 8 });
+        return {
+          answer: res?.answer ?? '',
+          citations: (res?.sources ?? []).map((s: any) => ({
+            filePath: s.filePath ? join(vp, s.filePath) : '',
+            title: s.title ?? 'Untitled',
+            snippet: s.snippet ?? '',
+          })).filter((c: any) => c.filePath),
+        };
+      }
+    } catch (err) {
+      console.error('[main] core:ask failed — falling back to citations-only:', err);
+    }
+    try {
+      const results = await searchEngine.search({ query: question, limit: 5 });
+      return {
+        answer: '',
+        citations: results.map((r: any) => {
+          const m = mapCoreSearchResult(vp, r);
+          return { filePath: m.filePath, title: m.title, snippet: m.snippet };
+        }).filter((c: any) => c.filePath),
+      };
+    } catch {
+      return { answer: '', citations: [] };
+    }
+  });
+
+  // W1-16: related notes — mirrors core's get-related MCP tool (doc title +
+  // content head as the query, self excluded). Unindexed notes → [].
+  ipcMain.handle('core:related', async (_e, filePath: string, limit?: number): Promise<SearchResult[]> => {
+    if (!coreReady || !store || !searchEngine) return [];
+    try {
+      const safe = assertInsideVault(vp, filePath);
+      const documentId = docIdForFile(vp, safe);
+      const doc = await store.getDocument(documentId);
+      if (!doc) return [];
+      const lim = limit ?? 5;
+      const results = await searchEngine.search({
+        query: `${doc.title} ${(doc.content ?? '').slice(0, 200)}`,
+        limit: lim + 1, // +1 to drop self
+      });
+      return results
+        .filter((r: any) => r.document?.id !== documentId)
+        .slice(0, lim)
+        .map((r: any) => mapCoreSearchResult(vp, r));
+    } catch (err) {
+      console.error('[main] core:related failed:', err);
       return [];
     }
   });
@@ -336,6 +560,97 @@ function registerIpcHandlers(config: AppConfig) {
     if (win?.isMaximized()) win.unmaximize(); else win?.maximize();
   });
   ipcMain.handle('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+}
+
+// ─── File watcher (W1-15) ────────────────────────────
+// Watches the vault for external *.md changes (Obsidian, Notion sync daemon,
+// manual edits), debounce-batches 800ms, then (a) incrementally reindexes via
+// core indexVault (content-hash skip makes a vault pass cheap — only changed
+// docs re-embed) and (b) emits the already-declared 'file:changed' event per
+// path. Our own IPC writes are skipped via the self-write echo guard above.
+// chokidar is a core dep, declared external in vite.main.config.ts + bundled
+// by forge — dynamic import resolves at runtime; fs.watch recursive fallback.
+
+const WATCH_DEBOUNCE_MS = 800;
+let watcherStarted = false;
+
+function startVaultWatcher(config: AppConfig): void {
+  if (watcherStarted || !config.vaultPath) return;
+  watcherStarted = true;
+  const vp = config.vaultPath;
+
+  let pending = new Map<string, 'add' | 'change' | 'unlink'>();
+  let timer: NodeJS.Timeout | null = null;
+  let flushing = false;
+  let pendingFlush = false;
+
+  const flush = async (): Promise<void> => {
+    timer = null;
+    if (flushing) { pendingFlush = true; return; }
+    flushing = true;
+    try {
+      do {
+        pendingFlush = false;
+        const batch = pending;
+        pending = new Map();
+        if (batch.size === 0) break;
+        // Incremental reindex — indexVault skips unchanged docs by content hash.
+        if (coreReady && store && embedder) {
+          try {
+            const core = await import('@stellavault/core');
+            await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
+          } catch (err) {
+            console.error('[main] watcher reindex failed:', err);
+          }
+        }
+        for (const [filePath, event] of batch) {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('file:changed', { filePath, event });
+          }
+        }
+      } while (pendingFlush);
+    } finally {
+      flushing = false;
+    }
+  };
+
+  const schedule = (filePath: string, event: 'add' | 'change' | 'unlink'): void => {
+    if (!filePath.endsWith('.md')) return;
+    if (isSelfWrite(filePath)) return; // echo guard
+    pending.set(filePath, event);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { void flush(); }, WATCH_DEBOUNCE_MS);
+  };
+
+  void (async () => {
+    try {
+      const chokidarMod: any = await import('chokidar');
+      const watch = chokidarMod.watch ?? chokidarMod.default?.watch;
+      if (typeof watch !== 'function') throw new Error('chokidar.watch not found');
+      const watcher = watch(vp, {
+        ignored: /(^|[\/\\])\.|node_modules/,
+        persistent: true,
+        ignoreInitial: true,
+      });
+      watcher.on('add', (p: string) => schedule(resolve(p), 'add'));
+      watcher.on('change', (p: string) => schedule(resolve(p), 'change'));
+      watcher.on('unlink', (p: string) => schedule(resolve(p), 'unlink'));
+      watcher.on('error', (err: unknown) => console.error('[main] watcher error:', err));
+      return;
+    } catch (err) {
+      console.error('[main] chokidar unavailable — falling back to fs.watch:', err);
+    }
+    try {
+      // win32/darwin support { recursive: true }.
+      fsWatch(vp, { recursive: true }, (_event, filename) => {
+        if (!filename) return;
+        const full = resolve(join(vp, filename.toString()));
+        schedule(full, existsSync(full) ? 'change' : 'unlink');
+      });
+    } catch (err) {
+      console.error('[main] fs.watch failed — vault watcher disabled:', err);
+    }
+  })();
 }
 
 // ─── Window ──────────────────────────────────────────
@@ -484,6 +799,9 @@ app.whenReady().then(async () => {
   // Init core in background — don't block window creation
   void initCore(config).then(() => {
     win.webContents.send('core:ready');
+    // W1-15: start after core init so the first change-batch can reindex
+    // immediately. Events still flow if core failed (reindex is guarded).
+    startVaultWatcher(config);
   });
 });
 

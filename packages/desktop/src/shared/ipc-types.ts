@@ -32,6 +32,23 @@ export interface DecayItem {
   filePath: string;
 }
 
+// Search panel (W1-4) — options for 'search:query'.
+// mode 'keyword' disables the semantic signal (BM25 + entity only);
+// pathPrefix is a vault-relative folder prefix (forward slashes), filtered post-hoc.
+export interface SearchQueryOpts {
+  mode?: 'hybrid' | 'keyword';
+  tags?: string[];
+  pathPrefix?: string;
+  limit?: number;
+}
+
+// Ask panel (W1-13) — result of 'core:ask'. answer === '' means degraded
+// (citations-only) mode; the UI should render sources without a synthesis block.
+export interface AskResponse {
+  answer: string;
+  citations: { filePath: string; title: string; snippet: string }[];
+}
+
 // App settings — persisted at ~/.stellavault/desktop-settings.json (W1-1).
 // Defaults live in main/settings-store.ts (getDefaults) and mirror this shape.
 export interface AppSettings {
@@ -66,6 +83,22 @@ export interface IpcChannelMap {
   'core:get-stats':     { args: []; result: VaultStats };
   'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
+
+  // Search panel (W1-4) — full hybrid/keyword search with tag + path filters.
+  'search:query':       { args: [query: string, opts?: SearchQueryOpts]; result: SearchResult[] };
+
+  // Tags panel (W1-6) — aggregate tag counts from the core index.
+  'tags:list':          { args: []; result: { tag: string; count: number }[] };
+
+  // Ask panel (W1-13) — askVault wiring. Empty answer + citations = degraded mode.
+  'core:ask':           { args: [question: string]; result: AskResponse };
+
+  // FSRS loop (W1-14) — record access + generalized decay list (decay-top kept).
+  'core:record-access': { args: [filePath: string, kind: 'open' | 'review']; result: void };
+  'core:decay-list':    { args: [limit?: number]; result: DecayItem[] };
+
+  // Related notes (W1-16)
+  'core:related':       { args: [filePath: string, limit?: number]; result: SearchResult[] };
 
   // Draft (Express)
   'core:draft':         { args: [topic: string, format?: string]; result: { title: string; content: string; sources: string[] } };

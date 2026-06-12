@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './stores/app-store.js';
 import { useSettingsStore, initSettings, resolveTheme } from './stores/settings-store.js';
-import { registerBuiltinCommands } from './lib/commands.js';
+import { registerBuiltinCommands, registerCommand } from './lib/commands.js';
 import { initHotkeys } from './lib/hotkeys.js';
 import { TitleBar } from './components/layout/TitleBar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
@@ -15,8 +15,44 @@ import { SettingsModal } from './components/settings/SettingsModal.js';
 import { AIPanel } from './components/panels/AIPanel.js';
 import { GraphPanel } from './components/panels/GraphPanel.js';
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
+import { SearchPanel } from './components/panels/SearchPanel.js';
+import { OutlinePanel } from './components/panels/OutlinePanel.js';
+import { TagsPanel } from './components/panels/TagsPanel.js';
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
+
+const PANEL_TITLES: Record<string, string> = {
+  ai: 'AI Intelligence',
+  graph: '3D Graph',
+  backlinks: 'Backlinks',
+  search: 'Search',
+  outline: 'Outline',
+  tags: 'Tags',
+};
+
+// Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
+// palette entries + default hotkeys come for free. Idempotent (Map.set).
+let stageCPanelCommandsRegistered = false;
+function registerStageCPanelCommands(): void {
+  if (stageCPanelCommandsRegistered) return;
+  stageCPanelCommandsRegistered = true;
+  const app = () => useAppStore.getState();
+  registerCommand({
+    id: 'search.open', title: 'Open search panel', category: 'Panels',
+    defaultKeys: 'mod+shift+f', allowInEditor: true,
+    run: () => app().setRightPanel('search'),
+  });
+  registerCommand({
+    id: 'panel.outline', title: 'Open outline panel', category: 'Panels',
+    defaultKeys: 'mod+shift+o',
+    run: () => app().setRightPanel('outline'),
+  });
+  registerCommand({
+    id: 'panel.tags', title: 'Open tags panel', category: 'Panels',
+    defaultKeys: 'mod+shift+t',
+    run: () => app().setRightPanel('tags'),
+  });
+}
 
 export function App() {
   const appTheme = useAppStore((s) => s.theme);
@@ -46,6 +82,7 @@ export function App() {
   // Boot: settings hydrate + commands + hotkeys (W1-1, W1-12).
   useEffect(() => {
     registerBuiltinCommands();
+    registerStageCPanelCommands();
     const offSettings = initSettings();
     const offHotkeys = initHotkeys(() => useSettingsStore.getState().settings.hotkeys);
     return () => { offSettings(); offHotkeys(); };
@@ -151,7 +188,7 @@ export function App() {
               fontSize: 11,
             }}>
               <span style={{ color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
-                {rightPanel === 'ai' ? 'AI Intelligence' : rightPanel === 'graph' ? '3D Graph' : 'Backlinks'}
+                {PANEL_TITLES[rightPanel]}
               </span>
               <button
                 onClick={() => setRightPanel('none')}
@@ -164,6 +201,9 @@ export function App() {
               {rightPanel === 'ai' && <AIPanel />}
               {rightPanel === 'graph' && <GraphPanel />}
               {rightPanel === 'backlinks' && <BacklinksPanel />}
+              {rightPanel === 'search' && <SearchPanel />}
+              {rightPanel === 'outline' && <OutlinePanel />}
+              {rightPanel === 'tags' && <TagsPanel />}
             </div>
           </div>
         )}

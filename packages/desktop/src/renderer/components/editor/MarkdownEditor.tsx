@@ -127,6 +127,41 @@ export function MarkdownEditor({ content, onChange }: Props) {
 
   useEffect(() => () => editor?.destroy(), [editor]);
 
+  // ─── Stage C (W1-5, OutlinePanel) — scroll-to-heading listener ONLY ───
+  // OutlinePanel dispatches CustomEvent('sv:scroll-to-heading', {detail:{text,index}})
+  // where `text` is the heading's plain text and `index` disambiguates duplicates
+  // (nth heading with that same text). We locate the matching heading node in the
+  // ProseMirror doc and scroll its DOM node into view. Do not extend this block.
+  useEffect(() => {
+    if (!editor) return;
+    const onScrollToHeading = (e: Event) => {
+      const detail = (e as CustomEvent<{ text: string; index: number }>).detail;
+      if (!detail || typeof detail.text !== 'string') return;
+      let seen = 0;
+      let targetPos: number | null = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (targetPos !== null) return false;
+        if (node.type.name === 'heading' && node.textContent.trim() === detail.text) {
+          if (seen === (detail.index ?? 0)) {
+            targetPos = pos;
+            return false;
+          }
+          seen++;
+        }
+        return true;
+      });
+      if (targetPos !== null) {
+        const dom = editor.view.nodeDOM(targetPos);
+        if (dom instanceof HTMLElement) {
+          dom.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    };
+    window.addEventListener('sv:scroll-to-heading', onScrollToHeading);
+    return () => window.removeEventListener('sv:scroll-to-heading', onScrollToHeading);
+  }, [editor]);
+  // ─── end Stage C scroll-to-heading listener ───
+
   if (!editor) return null;
 
   const Sep = () => <div style={{ width: 1, background: 'var(--border)', margin: '0 3px' }} />;
