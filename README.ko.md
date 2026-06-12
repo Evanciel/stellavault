@@ -9,7 +9,7 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ 데스크톱 앱 다운로드**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ 빠른 시작**](#설치) · [**🤖 MCP 설정**](#mcp-연동-21개-도구) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
+[**⬇ 데스크톱 앱 다운로드**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.1) · [**⚡ 빠른 시작**](#설치) · [**🤖 MCP 설정**](#mcp-연동-21개-도구) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -62,8 +62,8 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-win32-x64-0.1.0.zip"><br/><b>⬇ Windows용 다운로드</b><br/><sub>x64 · 116 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-linux-x64-0.1.0.zip"><br/><b>⬇ Linux용 다운로드</b><br/><sub>x64 · 107 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.1/Stellavault-win32-x64-0.1.1.zip"><br/><b>⬇ Windows용 다운로드</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.1/Stellavault-linux-x64-0.1.1.zip"><br/><b>⬇ Linux용 다운로드</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>곧 출시</sub></td>
   </tr>
 </table>
@@ -428,7 +428,7 @@ MIT — 전체 소스 코드를 감사(audit)할 수 있습니다.
 
 ## 링크
 
-- **[⬇ 데스크톱 앱 다운로드](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0)**
+- **[⬇ 데스크톱 앱 다운로드](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.1)**
 - [랜딩 페이지](https://evanciel.github.io/stellavault/)
 - [Obsidian 플러그인](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)

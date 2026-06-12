@@ -9,7 +9,7 @@ Karpathy's self-compiling wiki × Zettelkasten — fully local, vault-safe, and 
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0) · [**⚡ Quickstart**](#install) · [**🤖 MCP Setup**](#mcp-integration-21-tools) · [**🌐 Live Demo**](https://evanciel.github.io/stellavault/)
+[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.1) · [**⚡ Quickstart**](#install) · [**🤖 MCP Setup**](#mcp-integration-21-tools) · [**🌐 Live Demo**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -62,8 +62,8 @@ Most tools make you choose between *writing*, *searching*, and *remembering*. St
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-win32-x64-0.1.0.zip"><br/><b>⬇ Download for Windows</b><br/><sub>x64 · 116 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.0/Stellavault-linux-x64-0.1.0.zip"><br/><b>⬇ Download for Linux</b><br/><sub>x64 · 107 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.1/Stellavault-win32-x64-0.1.1.zip"><br/><b>⬇ Download for Windows</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.1.1/Stellavault-linux-x64-0.1.1.zip"><br/><b>⬇ Download for Linux</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>Coming soon</sub></td>
   </tr>
 </table>
@@ -429,7 +429,7 @@ MIT — full source code available for audit.
 
 ## Links
 
-- **[⬇ Download Desktop App](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.0)**
+- **[⬇ Download Desktop App](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.1.1)**
 - [Landing Page](https://evanciel.github.io/stellavault/)
 - [Obsidian Plugin](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
