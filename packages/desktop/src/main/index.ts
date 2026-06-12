@@ -3,7 +3,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join, resolve, sep } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { FileTreeNode, SearchResult, VaultStats, DecayItem } from '../shared/ipc-types.js';
 
@@ -320,7 +320,9 @@ function createWindow() {
     titleBarStyle: 'hidden',
     backgroundColor: '#0a0a0f',
     webPreferences: {
-      preload: join(__dirname, '..', 'preload', 'index.js'),
+      // preload.js sits next to the main bundle in .vite/build (renamed from the
+      // default index.js to avoid colliding with the main bundle's filename).
+      preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       // HIGH-04: sandbox enabled. Preload only uses contextBridge +
@@ -348,9 +350,55 @@ function createWindow() {
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
+// ─── Smoke test (CI / local launch verification) ─────
+// `stellavault --smoke-core` loads @stellavault/core, opens the SQLite DB and runs a
+// query under Electron's runtime, writes the outcome to STELLAVAULT_SMOKE_OUT, then exits
+// (0 = ok, 1 = fail). This converts the historically SILENT core-init failure (native
+// module missing / wrong ABI) into an observable pass/fail for CI + local verification.
+async function runSmokeCore(): Promise<void> {
+  const outFile = process.env.STELLAVAULT_SMOKE_OUT || join(homedir(), 'sv-smoke-result.txt');
+  const vaultPath = process.env.STELLAVAULT_SMOKE_VAULT || homedir();
+  const dbPath = process.env.STELLAVAULT_SMOKE_DB || join(homedir(), 'sv-smoke.db');
+  // Step trace — if any step hangs (vs throws), the .progress file shows where.
+  const progress = (step: string): void => {
+    try { appendFileSync(`${outFile}.progress`, `${new Date().toISOString()} ${step}\n`, 'utf-8'); } catch { /* best-effort */ }
+  };
+  try {
+    progress('start');
+    const core = await import('@stellavault/core');
+    progress('core-imported');
+    const hub = core.createKnowledgeHub({
+      vaultPath,
+      dbPath,
+      embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
+      chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
+      search: { defaultLimit: 10, rrfK: 60 },
+      mcp: { mode: 'stdio', port: 3333 },
+    });
+    progress('hub-created');
+    await hub.store.initialize();
+    progress('store-initialized');
+    hub.store.getDb()?.prepare('SELECT 1 AS ok').get();
+    progress('query-ok');
+    writeFileSync(outFile, `SMOKE_OK better-sqlite3 + sqlite-vec + @stellavault/core loaded under Electron (db=${dbPath})\n`, 'utf-8');
+    app.exit(0);
+  } catch (err) {
+    const msg = err instanceof Error ? (err.stack || err.message) : String(err);
+    writeFileSync(outFile, `SMOKE_FAIL ${msg}\n`, 'utf-8');
+    app.exit(1);
+  }
+}
+
 // ─── App lifecycle ───────────────────────────────────
 
 app.whenReady().then(async () => {
+  // CI / local launch verification — prove core + native modules load in the
+  // PACKAGED app, then exit. Must run before any window/dialog work.
+  if (process.argv.includes('--smoke-core')) {
+    await runSmokeCore();
+    return;
+  }
+
   const config = loadAppConfig();
 
   if (!config.vaultPath) {

@@ -3,6 +3,7 @@
 
 import { Extension } from '@tiptap/core';
 import Suggestion from '@tiptap/suggestion';
+import { PluginKey } from '@tiptap/pm/state';
 import type { Editor } from '@tiptap/core';
 
 interface SlashCommand {
@@ -156,6 +157,10 @@ export const SlashCommandExtension = Extension.create({
     return [
       Suggestion({
         editor: this.editor,
+        // Distinct key — Wikilink's Suggestion uses the shared default
+        // PluginKey('suggestion'); two keyed plugins with the same key crash
+        // ProseMirror ("Adding different instances of a keyed plugin").
+        pluginKey: new PluginKey('slashCommands'),
         char: '/',
         startOfLine: true,
         allowSpaces: false,

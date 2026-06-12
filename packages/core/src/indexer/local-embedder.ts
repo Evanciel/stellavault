@@ -1,5 +1,8 @@
 // Design Ref: §3.2 — Embedder 로컬 구현 (nomic-embed-text via @xenova/transformers)
 
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import type { Embedder } from './embedder.js';
 
 // 모델 싱글톤 캐시 — 동일 프로세스에서 같은 모델 재로드 방지 (ONNX 세션 재사용)
@@ -9,7 +12,18 @@ function getPipeline(modelName: string): Promise<any> {
   let p = pipelineCache.get(modelName);
   if (p) return p;
   p = (async () => {
-    const { pipeline: createPipeline } = await import('@xenova/transformers');
+    const { pipeline: createPipeline, env } = await import('@xenova/transformers');
+    // transformers' default cacheDir is node_modules/@xenova/transformers/.cache —
+    // inside Electron's app.asar that path is read-only, so model downloads fail
+    // forever (embedder.initialize never resolves). Redirect to a writable dir.
+    // Plain Node installs keep the default (existing users keep their cache).
+    const cacheOverride = process.env.STELLAVAULT_MODEL_CACHE;
+    if (cacheOverride) {
+      env.cacheDir = cacheOverride;
+    } else if (/\.asar[\\/]/.test(env.cacheDir ?? '')) {
+      env.cacheDir = join(homedir(), '.stellavault', 'model-cache');
+    }
+    try { mkdirSync(env.cacheDir, { recursive: true }); } catch { /* transformers will surface real errors */ }
     return createPipeline('feature-extraction', `Xenova/${modelName}`, { quantized: true });
   })();
   pipelineCache.set(modelName, p);

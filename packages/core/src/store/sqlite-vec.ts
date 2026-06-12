@@ -8,6 +8,18 @@ import { dirname } from 'node:path';
 import type { VectorStore, DocumentMeta } from './types.js';
 import type { Chunk, ScoredChunk, Document, TopicInfo, StoreStats } from '../types/index.js';
 
+// Electron asar: SQLite loads vec0 through the OS dynamic loader (LoadLibrary/dlopen),
+// which cannot read files packed inside app.asar — only app.asar.unpacked on disk.
+// Outside Electron the path never contains ".asar", so this is a no-op passthrough.
+function loadVecExtension(db: Database.Database): void {
+  const loadablePath = sqliteVec.getLoadablePath();
+  if (/\.asar[\\/]/.test(loadablePath)) {
+    db.loadExtension(loadablePath.replace(/\.asar([\\/])/, '.asar.unpacked$1'));
+  } else {
+    sqliteVec.load(db);
+  }
+}
+
 export function createSqliteVecStore(dbPath: string, dimensions: number = 384): VectorStore {
   let db: Database.Database;
 
@@ -15,7 +27,7 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     async initialize() {
       mkdirSync(dirname(dbPath), { recursive: true });
       db = new Database(dbPath);
-      sqliteVec.load(db);
+      loadVecExtension(db);
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
       createTables(db, dimensions);

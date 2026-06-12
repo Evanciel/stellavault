@@ -3,6 +3,7 @@
 
 import { Extension } from '@tiptap/core';
 import Suggestion from '@tiptap/suggestion';
+import { PluginKey } from '@tiptap/pm/state';
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion';
 import { ipc } from '../../lib/ipc-client.js';
 
@@ -138,6 +139,9 @@ export const WikilinkExtension = Extension.create<WikilinkSuggestionOptions>({
     return [
       Suggestion<string>({
         editor: this.editor,
+        // Distinct key — SlashCommands' Suggestion would otherwise share the
+        // default PluginKey('suggestion') and crash ProseMirror at editor init.
+        pluginKey: new PluginKey('wikilinkSuggestion'),
         char: '[[',
         allowSpaces: true,
         startOfLine: false,
