@@ -1,81 +1,105 @@
-// Quick Switcher — Ctrl+P modal for fuzzy file switching.
+// Quick Switcher — fuzzy file switching (opened via the 'app.quick-switcher'
+// command, mod+p by default). Shift+Enter creates a note named after the query.
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { FileTreeNode } from '../../../shared/ipc-types.js';
 import { useAppStore } from '../../stores/app-store.js';
+import { useUiStore } from '../../lib/commands.js';
+import { fuzzyFilter } from '../../lib/fuzzy.js';
 import { ipc } from '../../lib/ipc-client.js';
 
+interface NoteEntry {
+  title: string;        // file name without .md
+  filePath: string;     // absolute path
+  relPath: string;      // vault-relative path (disambiguates same titles)
+}
+
+function collectNotes(nodes: FileTreeNode[], vaultPath: string, out: NoteEntry[] = []): NoteEntry[] {
+  for (const node of nodes) {
+    if (node.isDir) {
+      if (node.children) collectNotes(node.children, vaultPath, out);
+    } else if (node.name.endsWith('.md')) {
+      const rel = node.path.startsWith(vaultPath)
+        ? node.path.slice(vaultPath.length).replace(/^[/\\]/, '')
+        : node.path;
+      out.push({
+        title: node.name.replace(/\.md$/, ''),
+        filePath: node.path,
+        relPath: rel.replace(/\\/g, '/'),
+      });
+    }
+  }
+  return out;
+}
+
 export function QuickSwitcher() {
-  const [open, setOpen] = useState(false);
+  const open = useUiStore((s) => s.switcherOpen);
+  const setOpen = useUiStore((s) => s.setSwitcherOpen);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<string[]>([]);
-  const [allNotes, setAllNotes] = useState<string[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const openFile = useAppStore((s) => s.openFile);
+  const fileTree = useAppStore((s) => s.fileTree);
   const vaultPath = useAppStore((s) => s.vaultPath);
 
-  // Ctrl+P / Cmd+P opens the switcher
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-      if (e.key === 'Escape' && open) {
-        setOpen(false);
-      }
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  const allNotes = useMemo(
+    () => (open ? collectNotes(fileTree, vaultPath) : []),
+    [open, fileTree, vaultPath],
+  );
 
-  // Load all notes when opened
   useEffect(() => {
     if (!open) return;
-    void ipc('vault:list-notes').then((notes) => {
-      setAllNotes(notes);
-      setResults(notes.slice(0, 20));
-    });
     setQuery('');
     setSelectedIdx(0);
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [open]);
 
-  // Filter on query change
-  useEffect(() => {
-    if (!query) {
-      setResults(allNotes.slice(0, 20));
-      setSelectedIdx(0);
-      return;
-    }
-    const q = query.toLowerCase();
-    const filtered = allNotes.filter((n) => n.toLowerCase().includes(q)).slice(0, 20);
-    setResults(filtered);
-    setSelectedIdx(0);
-  }, [query, allNotes]);
+  // Fuzzy subsequence over the vault-relative path (matches folders too).
+  const results = useMemo(
+    () => fuzzyFilter(allNotes, query, (n) => n.relPath).slice(0, 20),
+    [allNotes, query],
+  );
 
-  const handleSelect = useCallback(async (title: string) => {
+  useEffect(() => { setSelectedIdx(0); }, [query]);
+
+  const handleSelect = useCallback(async (note: NoteEntry) => {
     setOpen(false);
-    // Find full path by searching vault
-    const tree = useAppStore.getState().fileTree;
-    const filePath = findFilePath(tree, title);
-    if (!filePath) return;
+    const content = await ipc('vault:read-file', note.filePath);
+    openFile(note.filePath, note.title, content);
+  }, [openFile, setOpen]);
+
+  const handleCreate = useCallback(async (name: string) => {
+    setOpen(false);
+    const safeName = name.replace(/[<>:"/\\|?*]/g, '').trim();
+    if (!safeName) return;
+    const vp = vaultPath || await ipc('vault:get-path');
+    const filePath = `${vp}/${safeName}.md`;
+    await ipc('vault:create-file', filePath, `# ${safeName}\n\n`);
     const content = await ipc('vault:read-file', filePath);
-    openFile(filePath, title, content);
-  }, [openFile]);
+    openFile(filePath, safeName, content);
+    const tree = await ipc('vault:read-tree');
+    useAppStore.getState().setFileTree(tree);
+  }, [vaultPath, openFile, setOpen]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, results.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setSelectedIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      if (query.trim()) void handleCreate(query);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (results[selectedIdx]) void handleSelect(results[selectedIdx]);
     }
-  }, [results, selectedIdx, handleSelect]);
+  }, [results, selectedIdx, query, handleSelect, handleCreate, setOpen]);
 
   if (!open) return null;
 
@@ -131,16 +155,16 @@ export function QuickSwitcher() {
         </div>
 
         <div id="sv-qs-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: '4px' }}>
-          {results.map((title, i) => (
+          {results.map((note, i) => (
             <div
-              key={title}
+              key={note.filePath}
               id={`sv-qs-${i}`}
               role="option"
               aria-selected={i === selectedIdx}
-              onClick={() => void handleSelect(title)}
+              onClick={() => void handleSelect(note)}
               onMouseEnter={() => setSelectedIdx(i)}
               style={{
-                padding: '8px 14px',
+                padding: '7px 14px',
                 fontSize: '13px',
                 cursor: 'pointer',
                 borderRadius: 5,
@@ -148,12 +172,17 @@ export function QuickSwitcher() {
                 background: i === selectedIdx ? 'var(--selection)' : 'transparent',
               }}
             >
-              {title}
+              <div>{note.title}</div>
+              <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginTop: 1 }}>
+                {note.relPath}
+              </div>
             </div>
           ))}
           {results.length === 0 && (
             <div style={{ padding: '16px', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '12px' }}>
-              No notes found
+              {query.trim()
+                ? <>No notes found — Shift+↵ creates &ldquo;{query.trim()}&rdquo;</>
+                : 'No notes found'}
             </div>
           )}
         </div>
@@ -168,23 +197,10 @@ export function QuickSwitcher() {
         }}>
           <span>↑↓ navigate</span>
           <span>↵ open</span>
+          <span>shift+↵ create</span>
           <span>esc close</span>
         </div>
       </div>
     </div>
   );
-}
-
-// Recursively find file path from tree by title
-import type { FileTreeNode } from '../../../shared/ipc-types.js';
-
-function findFilePath(nodes: FileTreeNode[], title: string): string | null {
-  for (const node of nodes) {
-    if (!node.isDir && node.name.replace(/\.md$/, '') === title) return node.path;
-    if (node.isDir && node.children) {
-      const found = findFilePath(node.children, title);
-      if (found) return found;
-    }
-  }
-  return null;
 }

@@ -1,57 +1,32 @@
-// Command Palette — Ctrl+Shift+P, lists all available actions.
+// Command Palette — sources every action from the command registry (W1-12).
+// Opened via the 'app.command-palette' command (mod+shift+p by default).
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
+import { useSettingsStore } from '../../stores/settings-store.js';
+import { useUiStore, listCommands, type CommandDef } from '../../lib/commands.js';
+import { bindingFor, formatChord } from '../../lib/hotkeys.js';
+import { fuzzyFilter } from '../../lib/fuzzy.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { Modal } from '../ui/Modal.js';
 
-interface Command {
-  id: string;
-  label: string;
-  shortcut?: string;
-  /** Keeps the palette open after running (e.g. morphs into input mode). */
-  keepOpen?: boolean;
-  action: () => void;
-}
-
 export function CommandPalette() {
-  const [open, setOpen] = useState(false);
+  const open = useUiStore((s) => s.paletteOpen);
+  // 'command' = normal list; 'new-note' = palette morphs into a title input.
+  const mode = useUiStore((s) => s.paletteMode);
+  const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
+  const statsText = useUiStore((s) => s.statsText);
+  const setStatsText = useUiStore((s) => s.setStatsText);
+  const hotkeys = useSettingsStore((s) => s.settings.hotkeys);
+
   const [query, setQuery] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
-  // 'command' = normal list; 'new-note' = palette morphs into a title input.
-  const [mode, setMode] = useState<'command' | 'new-note'>('command');
-  const [statsText, setStatsText] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const store = useAppStore;
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const toggleTheme = useAppStore((s) => s.toggleTheme);
-  const setRightPanel = useAppStore((s) => s.setRightPanel);
 
-  const commands: Command[] = [
-    { id: 'toggle-sidebar', label: 'Toggle sidebar', shortcut: 'Ctrl+B', action: toggleSidebar },
-    { id: 'toggle-theme', label: 'Toggle dark/light theme', shortcut: 'T', action: toggleTheme },
-    { id: 'panel-ai', label: 'Open AI panel', action: () => setRightPanel('ai') },
-    { id: 'panel-graph', label: 'Open 3D graph', action: () => setRightPanel('graph') },
-    { id: 'panel-backlinks', label: 'Open backlinks', action: () => setRightPanel('backlinks') },
-    { id: 'panel-close', label: 'Close right panel', action: () => setRightPanel('none') },
-    // Palette morphs into a title input — prompt() freezes Electron.
-    { id: 'new-note', label: 'Create new note', keepOpen: true, action: () => {
-      setMode('new-note');
-      setQuery('');
-      setSelectedIdx(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }},
-    { id: 'reindex', label: 'Re-index vault', action: () => {
-      void ipc('core:index');
-    }},
-    { id: 'doctor', label: 'Run diagnostics', action: () => {
-      void ipc('core:get-stats').then((stats) => {
-        // Modal instead of alert() — alert() freezes Electron.
-        setStatsText(`Vault: ${stats.documentCount} docs, ${stats.chunkCount} chunks\nDB: ${(stats.dbSizeBytes / 1024 / 1024).toFixed(1)}MB\nLast indexed: ${stats.lastIndexed || 'Never'}`);
-      });
-    }},
-  ];
+  const commands = listCommands();
+  const filtered = fuzzyFilter(commands, query, (c) => `${c.category} ${c.title}`);
 
   const createNote = useCallback((name: string) => {
     void (async () => {
@@ -66,52 +41,40 @@ export function CommandPalette() {
     })();
   }, [store]);
 
-  const filtered = query
-    ? commands.filter((c) => c.label.toLowerCase().includes(query.toLowerCase()))
-    : commands;
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-      if (e.key === 'Escape' && open) setOpen(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open]);
-
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIdx(0);
-      setMode('command');
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [open]);
+  }, [open, mode]);
 
-  const handleSelect = useCallback((cmd: Command) => {
-    if (!cmd.keepOpen) setOpen(false);
-    cmd.action();
-  }, []);
+  const handleSelect = useCallback((cmd: CommandDef) => {
+    // Commands that morph the palette (new-note) reopen it themselves.
+    setPaletteOpen(false);
+    void cmd.run();
+  }, [setPaletteOpen]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (mode === 'new-note') {
-      if (e.key === 'Escape') {
-        // Back to command list instead of closing; stop the window
-        // listener (which closes the palette) from seeing this key.
-        e.preventDefault();
-        e.stopPropagation();
-        setMode('command');
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (mode === 'new-note') {
+        // Back to command list instead of closing.
+        setPaletteOpen(true, 'command');
         setQuery('');
         setSelectedIdx(0);
+      } else {
+        setPaletteOpen(false);
       }
+      return;
+    }
+    if (mode === 'new-note') {
       if (e.key === 'Enter') {
         e.preventDefault();
         const name = query.trim();
         if (!name) return;
-        setOpen(false);
+        setPaletteOpen(false);
         createNote(name);
       }
       return;
@@ -119,7 +82,7 @@ export function CommandPalette() {
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx((i) => Math.max(i - 1, 0)); }
     if (e.key === 'Enter' && filtered[selectedIdx]) { e.preventDefault(); handleSelect(filtered[selectedIdx]); }
-  }, [mode, query, filtered, selectedIdx, handleSelect, createNote]);
+  }, [mode, query, filtered, selectedIdx, handleSelect, createNote, setPaletteOpen]);
 
   const statsModal = (
     <Modal open={statsText !== null} onClose={() => setStatsText(null)} title="Vault diagnostics" width={360}>
@@ -137,7 +100,7 @@ export function CommandPalette() {
   return (<>
     {statsModal}
     <div
-      onClick={() => setOpen(false)}
+      onClick={() => setPaletteOpen(false)}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000,
         display: 'flex', justifyContent: 'center', paddingTop: '15vh',
@@ -177,29 +140,40 @@ export function CommandPalette() {
           </div>
         ) : (
         <div id="sv-cmd-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
-          {filtered.map((cmd, i) => (
-            <div
-              key={cmd.id}
-              id={`sv-cmd-${cmd.id}`}
-              role="option"
-              aria-selected={i === selectedIdx}
-              onClick={() => handleSelect(cmd)}
-              onMouseEnter={() => setSelectedIdx(i)}
-              style={{
-                padding: '8px 14px', fontSize: 13, cursor: 'pointer', borderRadius: 5,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                color: i === selectedIdx ? 'var(--accent-2)' : 'var(--ink-dim)',
-                background: i === selectedIdx ? 'var(--selection)' : 'transparent',
-              }}
-            >
-              <span>{cmd.label}</span>
-              {cmd.shortcut && (
-                <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'monospace' }}>
-                  {cmd.shortcut}
+          {filtered.map((cmd, i) => {
+            const chord = bindingFor(cmd, hotkeys);
+            return (
+              <div
+                key={cmd.id}
+                id={`sv-cmd-${cmd.id}`}
+                role="option"
+                aria-selected={i === selectedIdx}
+                onClick={() => handleSelect(cmd)}
+                onMouseEnter={() => setSelectedIdx(i)}
+                style={{
+                  padding: '8px 14px', fontSize: 13, cursor: 'pointer', borderRadius: 5,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  color: i === selectedIdx ? 'var(--accent-2)' : 'var(--ink-dim)',
+                  background: i === selectedIdx ? 'var(--selection)' : 'transparent',
+                }}
+              >
+                <span>
+                  <span style={{ fontSize: 10, color: 'var(--ink-faint)', marginRight: 8 }}>{cmd.category}</span>
+                  {cmd.title}
                 </span>
-              )}
+                {chord && (
+                  <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'monospace' }}>
+                    {formatChord(chord)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
+              No matching commands
             </div>
-          ))}
+          )}
         </div>
         )}
         <div style={{

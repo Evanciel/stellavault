@@ -32,6 +32,21 @@ export interface DecayItem {
   filePath: string;
 }
 
+// App settings — persisted at ~/.stellavault/desktop-settings.json (W1-1).
+// Defaults live in main/settings-store.ts (getDefaults) and mirror this shape.
+export interface AppSettings {
+  version: 1;
+  theme: 'dark' | 'light' | 'system';
+  accent: string;              // hex
+  editor: { fontSize: number; lineWidth: number; spellcheck: boolean };
+  hotkeys: Record<string, string>;   // commandId -> 'mod+shift+f' style
+  dailyNotes: { folder: string; format: string; templatePath: string };
+  templatesFolder: string;
+  bookmarks: { type: 'note' | 'search'; target: string; label: string }[];
+  session: { openTabs: string[]; activeTab: string | null };
+  window: { width: number; height: number; x?: number; y?: number };
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -65,6 +80,10 @@ export interface IpcChannelMap {
   'window:minimize':    { args: []; result: void };
   'window:maximize':    { args: []; result: void };
   'window:close':       { args: []; result: void };
+
+  // Settings (W1-1)
+  'settings:get':       { args: []; result: AppSettings };
+  'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
 }
 
 // ─── Events (main → renderer, one-way) ───
@@ -72,6 +91,7 @@ export interface IpcChannelMap {
 export interface IpcEventMap {
   'file:changed':     { filePath: string; event: 'add' | 'change' | 'unlink' };
   'index:progress':   { current: number; total: number; title: string };
+  'settings:changed': AppSettings;
 }
 
 // Helper types for typed invoke/on

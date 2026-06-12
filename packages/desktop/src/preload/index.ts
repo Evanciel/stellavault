@@ -25,12 +25,15 @@ const ALLOWED_CHANNELS = new Set<string>([
   'window:minimize',
   'window:maximize',
   'window:close',
+  'settings:get',
+  'settings:set',
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([
   'core:ready',
   'file:changed',
   'index:progress',
+  'settings:changed',
 ]);
 
 const api = {

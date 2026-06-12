@@ -1,13 +1,17 @@
 // Root app layout — sidebar | editor | optional right panel.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore } from './stores/app-store.js';
+import { useSettingsStore, initSettings, resolveTheme } from './stores/settings-store.js';
+import { registerBuiltinCommands } from './lib/commands.js';
+import { initHotkeys } from './lib/hotkeys.js';
 import { TitleBar } from './components/layout/TitleBar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
 import { StatusBar } from './components/layout/StatusBar.js';
 import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
 import { CommandPalette } from './components/shared/CommandPalette.js';
+import { SettingsModal } from './components/settings/SettingsModal.js';
 import { AIPanel } from './components/panels/AIPanel.js';
 import { GraphPanel } from './components/panels/GraphPanel.js';
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
@@ -15,7 +19,7 @@ import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
 
 export function App() {
-  const theme = useAppStore((s) => s.theme);
+  const appTheme = useAppStore((s) => s.theme);
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const rightPanel = useAppStore((s) => s.rightPanel);
@@ -24,6 +28,28 @@ export function App() {
   const setFileTree = useAppStore((s) => s.setFileTree);
   const setVaultPath = useAppStore((s) => s.setVaultPath);
   const setCoreReady = useAppStore((s) => s.setCoreReady);
+
+  const settings = useSettingsStore((s) => s.settings);
+  const settingsHydrated = useSettingsStore((s) => s.hydrated);
+
+  // OS theme tracking so theme:'system' reacts live.
+  const [osLight, setOsLight] = useState(
+    () => window.matchMedia('(prefers-color-scheme: light)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = (e: MediaQueryListEvent) => setOsLight(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Boot: settings hydrate + commands + hotkeys (W1-1, W1-12).
+  useEffect(() => {
+    registerBuiltinCommands();
+    const offSettings = initSettings();
+    const offHotkeys = initHotkeys(() => useSettingsStore.getState().settings.hotkeys);
+    return () => { offSettings(); offHotkeys(); };
+  }, []);
 
   // Load vault tree on mount
   useEffect(() => {
@@ -45,9 +71,29 @@ export function App() {
     return () => { off(); offFile(); };
   }, [setFileTree, setVaultPath, setCoreReady]);
 
+  // settings.theme is the source of truth (W1-2); resolve 'system' via OS.
+  const resolvedTheme = settings.theme === 'system'
+    ? (osLight ? 'light' : 'dark')
+    : settings.theme;
+
+  // Keep app-store theme in sync both ways (TitleBar's toggle still writes
+  // app-store; equality guards prevent loops).
+  useEffect(() => {
+    if (useAppStore.getState().theme !== resolvedTheme) {
+      useAppStore.setState({ theme: resolvedTheme });
+    }
+  }, [resolvedTheme]);
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    const current = resolveTheme(useSettingsStore.getState().settings.theme);
+    if (appTheme !== current) {
+      void useSettingsStore.getState().update({ theme: appTheme });
+    }
+  }, [appTheme, settingsHydrated]);
+
   return (
     <div
-      data-theme={theme === 'light' ? 'light' : undefined}
+      data-theme={resolvedTheme === 'light' ? 'light' : undefined}
       style={{
         width: '100%',
         height: '100vh',
@@ -57,6 +103,10 @@ export function App() {
         color: 'var(--ink)',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
         fontSize: '13px',
+        // W1-2: accent + editor vars flow from settings; theme.css holds defaults.
+        ['--accent' as string]: settings.accent,
+        ['--editor-font-size' as string]: `${settings.editor.fontSize}px`,
+        ['--editor-line-width' as string]: `${settings.editor.lineWidth}px`,
       }}
     >
       <TitleBar />
@@ -122,6 +172,7 @@ export function App() {
       <StatusBar />
       <QuickSwitcher />
       <CommandPalette />
+      <SettingsModal />
     </div>
   );
 }

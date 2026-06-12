@@ -17,6 +17,10 @@
   --tab-active: #14141f;
   --hover: rgba(100, 120, 255, 0.08);
   --selection: rgba(99, 102, 241, 0.25);
+
+  /* Settings-driven vars (W1-1/W1-2) — App.tsx overrides these inline. */
+  --editor-font-size: 15px;
+  --editor-line-width: 720px;
 }
 
 [data-theme="light"] {

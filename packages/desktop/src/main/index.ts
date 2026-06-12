@@ -5,7 +5,8 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join, resolve, sep } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import type { FileTreeNode, SearchResult, VaultStats, DecayItem } from '../shared/ipc-types.js';
+import type { AppSettings, FileTreeNode, SearchResult, VaultStats, DecayItem } from '../shared/ipc-types.js';
+import { SettingsStore } from './settings-store.js';
 
 // ─── Config ──────────────────────────────────────────
 
@@ -26,6 +27,18 @@ function loadAppConfig(): AppConfig {
     }
   }
   return { vaultPath: '', dbPath: '' };
+}
+
+// ─── Settings (W1-1) ─────────────────────────────────
+// Desktop UI settings live in ~/.stellavault/desktop-settings.json — separate
+// lifecycle from the vault bootstrap config above (§4-B). Created in whenReady.
+
+let settingsStore: SettingsStore | null = null;
+
+function broadcastSettingsChanged(settings: AppSettings): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('settings:changed', settings);
+  }
 }
 
 // ─── Core engine (lazy loaded to avoid blocking startup) ───
@@ -304,6 +317,18 @@ function registerIpcHandlers(config: AppConfig) {
     return results;
   });
 
+  // Settings (W1-1) — get/set + broadcast to all windows on change
+  ipcMain.handle('settings:get', () => {
+    if (!settingsStore) settingsStore = new SettingsStore();
+    return settingsStore.get();
+  });
+  ipcMain.handle('settings:set', (_e, patch: Partial<AppSettings>) => {
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const merged = settingsStore.set(patch ?? {});
+    broadcastSettingsChanged(merged);
+    return merged;
+  });
+
   // Window controls
   ipcMain.handle('window:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
   ipcMain.handle('window:maximize', (e) => {
@@ -316,9 +341,14 @@ function registerIpcHandlers(config: AppConfig) {
 // ─── Window ──────────────────────────────────────────
 
 function createWindow() {
+  // Restore persisted bounds (W1-1) — fall back to defaults if absent.
+  if (!settingsStore) settingsStore = new SettingsStore();
+  const bounds = settingsStore.get().window;
+
   const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: bounds.width,
+    height: bounds.height,
+    ...(bounds.x !== undefined && bounds.y !== undefined ? { x: bounds.x, y: bounds.y } : {}),
     minWidth: 800,
     minHeight: 500,
     frame: false, // Frameless for custom title bar
@@ -340,6 +370,24 @@ function createWindow() {
 
   // Show when ready to avoid blank flash
   win.once('ready-to-show', () => win.show());
+
+  // Persist window bounds — debounced on resize/move, final flush on close.
+  let boundsTimer: NodeJS.Timeout | null = null;
+  const saveBounds = () => {
+    if (win.isDestroyed() || win.isMaximized() || win.isMinimized() || win.isFullScreen()) return;
+    const { width, height, x, y } = win.getBounds();
+    settingsStore?.set({ window: { width, height, x, y } });
+  };
+  const saveBoundsDebounced = () => {
+    if (boundsTimer) clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(saveBounds, 500);
+  };
+  win.on('resize', saveBoundsDebounced);
+  win.on('move', saveBoundsDebounced);
+  win.on('close', () => {
+    if (boundsTimer) clearTimeout(boundsTimer);
+    saveBounds();
+  });
 
   // Load the Vite dev server or built renderer
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
