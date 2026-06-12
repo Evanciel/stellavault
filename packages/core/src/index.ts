@@ -43,6 +43,10 @@ export type { KnowledgePack, PackChunk, PackInfo, CreatePackOptions, ImportResul
 export { createApiServer } from './api/server.js';
 export type { ApiServerOptions } from './api/server.js';
 export type { GraphNode, GraphEdge, Cluster, GraphData, GraphResponse } from './types/graph.js';
+// Plan SC: §0-B2 — buildGraphData was internal-only; desktop main process calls core.buildGraphData via IPC.
+// Contract note (§4-F): GraphData nodes never carry positions — consumers must lay out (e.g. hash(id) seed).
+export { buildGraphData } from './api/graph-data.js';
+export type { BuildGraphOptions, GraphMode } from './api/graph-data.js';
 
 // Intelligence (Phase 4b)
 export { DecayEngine } from './intelligence/decay-engine.js';

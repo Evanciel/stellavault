@@ -3,11 +3,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { Modal } from '../ui/Modal.js';
 
 interface Command {
   id: string;
   label: string;
   shortcut?: string;
+  /** Keeps the palette open after running (e.g. morphs into input mode). */
+  keepOpen?: boolean;
   action: () => void;
 }
 
@@ -15,6 +18,9 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
+  // 'command' = normal list; 'new-note' = palette morphs into a title input.
+  const [mode, setMode] = useState<'command' | 'new-note'>('command');
+  const [statsText, setStatsText] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const store = useAppStore;
@@ -29,28 +35,36 @@ export function CommandPalette() {
     { id: 'panel-graph', label: 'Open 3D graph', action: () => setRightPanel('graph') },
     { id: 'panel-backlinks', label: 'Open backlinks', action: () => setRightPanel('backlinks') },
     { id: 'panel-close', label: 'Close right panel', action: () => setRightPanel('none') },
-    { id: 'new-note', label: 'Create new note', action: () => {
-      const name = prompt('Note title:');
-      if (!name) return;
-      void (async () => {
-        const vp = await ipc('vault:get-path');
-        const path = `${vp}/${name.replace(/[<>:"/\\|?*]/g, '')}.md`;
-        await ipc('vault:create-file', path, `# ${name}\n\n`);
-        const content = await ipc('vault:read-file', path);
-        store.getState().openFile(path, name, content);
-        const tree = await ipc('vault:read-tree');
-        store.getState().setFileTree(tree);
-      })();
+    // Palette morphs into a title input — prompt() freezes Electron.
+    { id: 'new-note', label: 'Create new note', keepOpen: true, action: () => {
+      setMode('new-note');
+      setQuery('');
+      setSelectedIdx(0);
+      setTimeout(() => inputRef.current?.focus(), 50);
     }},
     { id: 'reindex', label: 'Re-index vault', action: () => {
       void ipc('core:index');
     }},
     { id: 'doctor', label: 'Run diagnostics', action: () => {
       void ipc('core:get-stats').then((stats) => {
-        alert(`Vault: ${stats.documentCount} docs, ${stats.chunkCount} chunks\nDB: ${(stats.dbSizeBytes / 1024 / 1024).toFixed(1)}MB\nLast indexed: ${stats.lastIndexed || 'Never'}`);
+        // Modal instead of alert() — alert() freezes Electron.
+        setStatsText(`Vault: ${stats.documentCount} docs, ${stats.chunkCount} chunks\nDB: ${(stats.dbSizeBytes / 1024 / 1024).toFixed(1)}MB\nLast indexed: ${stats.lastIndexed || 'Never'}`);
       });
     }},
   ];
+
+  const createNote = useCallback((name: string) => {
+    void (async () => {
+      const vp = await ipc('vault:get-path');
+      const safeName = name.replace(/[<>:"/\\|?*]/g, '');
+      const path = `${vp}/${safeName}.md`;
+      await ipc('vault:create-file', path, `# ${name}\n\n`);
+      const content = await ipc('vault:read-file', path);
+      store.getState().openFile(path, name, content);
+      const tree = await ipc('vault:read-tree');
+      store.getState().setFileTree(tree);
+    })();
+  }, [store]);
 
   const filtered = query
     ? commands.filter((c) => c.label.toLowerCase().includes(query.toLowerCase()))
@@ -72,24 +86,56 @@ export function CommandPalette() {
     if (open) {
       setQuery('');
       setSelectedIdx(0);
+      setMode('command');
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open]);
 
   const handleSelect = useCallback((cmd: Command) => {
-    setOpen(false);
+    if (!cmd.keepOpen) setOpen(false);
     cmd.action();
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (mode === 'new-note') {
+      if (e.key === 'Escape') {
+        // Back to command list instead of closing; stop the window
+        // listener (which closes the palette) from seeing this key.
+        e.preventDefault();
+        e.stopPropagation();
+        setMode('command');
+        setQuery('');
+        setSelectedIdx(0);
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const name = query.trim();
+        if (!name) return;
+        setOpen(false);
+        createNote(name);
+      }
+      return;
+    }
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx((i) => Math.max(i - 1, 0)); }
     if (e.key === 'Enter' && filtered[selectedIdx]) { e.preventDefault(); handleSelect(filtered[selectedIdx]); }
-  }, [filtered, selectedIdx, handleSelect]);
+  }, [mode, query, filtered, selectedIdx, handleSelect, createNote]);
 
-  if (!open) return null;
+  const statsModal = (
+    <Modal open={statsText !== null} onClose={() => setStatsText(null)} title="Vault diagnostics" width={360}>
+      <pre style={{
+        margin: 0, fontSize: 12, lineHeight: 1.7, color: 'var(--ink-dim)',
+        fontFamily: 'inherit', whiteSpace: 'pre-wrap',
+      }}>
+        {statsText}
+      </pre>
+    </Modal>
+  );
 
-  return (
+  if (!open) return statsModal;
+
+  return (<>
+    {statsModal}
     <div
       onClick={() => setOpen(false)}
       style={{
@@ -110,21 +156,26 @@ export function CommandPalette() {
           <input
             ref={inputRef}
             type="text"
-            role="combobox"
-            aria-label="Command palette"
-            aria-expanded={true}
-            aria-controls="sv-cmd-list"
-            aria-activedescendant={filtered[selectedIdx] ? `sv-cmd-${filtered[selectedIdx].id}` : undefined}
+            role={mode === 'command' ? 'combobox' : undefined}
+            aria-label={mode === 'command' ? 'Command palette' : 'New note title'}
+            aria-expanded={mode === 'command' ? true : undefined}
+            aria-controls={mode === 'command' ? 'sv-cmd-list' : undefined}
+            aria-activedescendant={mode === 'command' && filtered[selectedIdx] ? `sv-cmd-${filtered[selectedIdx].id}` : undefined}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIdx(0); }}
             onKeyDown={handleKeyDown}
-            placeholder="Type a command..."
+            placeholder={mode === 'command' ? 'Type a command...' : 'Note title...'}
             style={{
               width: '100%', background: 'transparent', border: 'none',
               outline: 'none', fontSize: 14, color: 'var(--ink)',
             }}
           />
         </div>
+        {mode === 'new-note' ? (
+          <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--ink-faint)' }}>
+            Press Enter to create the note.
+          </div>
+        ) : (
         <div id="sv-cmd-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
           {filtered.map((cmd, i) => (
             <div
@@ -150,15 +201,25 @@ export function CommandPalette() {
             </div>
           ))}
         </div>
+        )}
         <div style={{
           padding: '6px 14px', borderTop: '1px solid var(--border)',
           fontSize: 10, color: 'var(--ink-faint)', display: 'flex', gap: 16,
         }}>
-          <span>↑↓ navigate</span>
-          <span>↵ run</span>
-          <span>esc close</span>
+          {mode === 'new-note' ? (
+            <>
+              <span>↵ create</span>
+              <span>esc back</span>
+            </>
+          ) : (
+            <>
+              <span>↑↓ navigate</span>
+              <span>↵ run</span>
+              <span>esc close</span>
+            </>
+          )}
         </div>
       </div>
     </div>
-  );
+  </>);
 }

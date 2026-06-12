@@ -1,8 +1,12 @@
 // TipTap-based markdown editor — full-featured with 15+ extensions.
 // Supports: tables, task lists, code highlighting, images, math (future),
 // underline, highlight, superscript/subscript, text alignment, typography.
+//
+// B1: `content` in/out is ALWAYS markdown source (never HTML). The Markdown
+// extension parses incoming markdown; onUpdate serializes back via
+// editorToMarkdown — see ../../lib/markdown.ts (plan §4-A).
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -13,7 +17,6 @@ import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import Highlight from '@tiptap/extension-highlight';
 import Underline from '@tiptap/extension-underline';
 import Superscript from '@tiptap/extension-superscript';
 import Subscript from '@tiptap/extension-subscript';
@@ -25,17 +28,21 @@ import { common, createLowlight } from 'lowlight';
 import { WikilinkExtension } from './WikilinkSuggestion.js';
 import { SlashCommandExtension } from './SlashCommands.js';
 import { MathExtension } from './MathExtension.js';
+import { MarkdownSerializerExtension, MarkdownHighlight, editorToMarkdown, markdownToEditor } from '../../lib/markdown.js';
+import { PromptModal } from '../ui/Modal.js';
 
 const lowlight = createLowlight(common);
 
 interface Props {
-  content: string;
-  onChange: (content: string) => void;
+  content: string;   // markdown source (never HTML)
+  onChange: (content: string) => void;  // emits markdown source
 }
 
 export function MarkdownEditor({ content, onChange }: Props) {
+  const [imagePromptOpen, setImagePromptOpen] = useState(false);
   const editor = useEditor({
     extensions: [
+      MarkdownSerializerExtension,
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4, 5, 6] },
         codeBlock: false, // Replaced by CodeBlockLowlight
@@ -49,7 +56,7 @@ export function MarkdownEditor({ content, onChange }: Props) {
       TableHeader,
       TaskList,
       TaskItem.configure({ nested: true }),
-      Highlight.configure({ multicolor: true }),
+      MarkdownHighlight.configure({ multicolor: true }),
       Underline,
       Superscript,
       Subscript,
@@ -60,9 +67,9 @@ export function MarkdownEditor({ content, onChange }: Props) {
       SlashCommandExtension,
       MathExtension,
     ],
-    content,
+    content: markdownToEditor(content),  // Markdown extension parses this as markdown
     onUpdate: ({ editor: e }) => {
-      onChange(e.getHTML());
+      onChange(editorToMarkdown(e));
     },
     editorProps: {
       attributes: {
@@ -187,10 +194,7 @@ export function MarkdownEditor({ content, onChange }: Props) {
         <Sep />
 
         {/* Image */}
-        <ToolBtn active={false} onClick={() => {
-          const url = window.prompt('Image URL:');
-          if (url) editor.chain().focus().setImage({ src: url }).run();
-        }} label="🖼" title="Insert image (URL or paste/drop)" />
+        <ToolBtn active={false} onClick={() => setImagePromptOpen(true)} label="🖼" title="Insert image (URL or paste/drop)" />
 
         {/* Super/subscript */}
         <ToolBtn active={editor.isActive('superscript')} onClick={() => editor.chain().focus().toggleSuperscript().run()} label="x²" title="Superscript" style={{ fontSize: '10px' }} />
@@ -210,6 +214,15 @@ export function MarkdownEditor({ content, onChange }: Props) {
       </div>
 
       <EditorContent editor={editor} />
+
+      <PromptModal
+        open={imagePromptOpen}
+        onClose={() => setImagePromptOpen(false)}
+        onSubmit={(url) => editor.chain().focus().setImage({ src: url }).run()}
+        title="Insert image"
+        placeholder="https://… image URL"
+        submitLabel="Insert"
+      />
 
       <style>{`
         .sv-editor {

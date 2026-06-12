@@ -43,6 +43,7 @@ async function initCore(config: AppConfig): Promise<void> {
     const hub = core.createKnowledgeHub({
       vaultPath: config.vaultPath,
       dbPath: config.dbPath,
+      folders: core.DEFAULT_FOLDERS,
       embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
       chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
       search: { defaultLimit: 10, rrfK: 60 },
@@ -257,12 +258,16 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
-  // Graph
+  // Graph — [W1-8 owned block]
+  // Plan SC: §0-B2 — buildGraphData is now exported from @stellavault/core.
+  // Contract (§4-F): core nodes are { id, label, filePath, tags, clusterId, size } and
+  // NEVER carry positions — GraphPanel derives deterministic hash(id)-seeded layout.
   ipcMain.handle('graph:build', async (_e, mode: string) => {
     if (!coreReady || !store) return { nodes: [], edges: [] };
     try {
       const core = await import('@stellavault/core');
-      const data = await core.buildGraphData(store, { mode: mode as 'semantic' | 'folder' });
+      const safeMode: 'semantic' | 'folder' = mode === 'folder' ? 'folder' : 'semantic';
+      const data = await core.buildGraphData(store, { mode: safeMode });
       return data;
     } catch (err) {
       console.error('[main] Graph build failed:', err);
@@ -370,6 +375,7 @@ async function runSmokeCore(): Promise<void> {
     const hub = core.createKnowledgeHub({
       vaultPath,
       dbPath,
+      folders: core.DEFAULT_FOLDERS,
       embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
       chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
       search: { defaultLimit: 10, rrfK: 60 },
@@ -378,7 +384,8 @@ async function runSmokeCore(): Promise<void> {
     progress('hub-created');
     await hub.store.initialize();
     progress('store-initialized');
-    hub.store.getDb()?.prepare('SELECT 1 AS ok').get();
+    // getDb() is typed `unknown` in core (store/types.ts) — cast for the raw smoke query.
+    (hub.store.getDb() as { prepare(sql: string): { get(): unknown } } | undefined)?.prepare('SELECT 1 AS ok').get();
     progress('query-ok');
     writeFileSync(outFile, `SMOKE_OK better-sqlite3 + sqlite-vec + @stellavault/core loaded under Electron (db=${dbPath})\n`, 'utf-8');
     app.exit(0);

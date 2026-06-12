@@ -8,7 +8,10 @@ export interface OpenTab {
   filePath: string;
   title: string;
   isDirty: boolean;
-  content: string;   // Current editor content
+  // Markdown SOURCE of the note — never TipTap HTML (B1, plan §4-A).
+  // Loaded verbatim from vault:read-file; updated via editorToMarkdown
+  // (renderer/lib/markdown.ts); written verbatim by vault:write-file.
+  content: string;
 }
 
 interface AppState {

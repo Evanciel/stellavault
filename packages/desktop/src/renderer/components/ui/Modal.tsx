@@ -97,9 +97,10 @@ interface PromptModalProps {
   title: string;
   placeholder?: string;
   defaultValue?: string;
+  submitLabel?: string;
 }
 
-export function PromptModal({ open, onClose, onSubmit, title, placeholder, defaultValue = '' }: PromptModalProps) {
+export function PromptModal({ open, onClose, onSubmit, title, placeholder, defaultValue = '', submitLabel = 'Create' }: PromptModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -137,7 +138,7 @@ export function PromptModal({ open, onClose, onSubmit, title, placeholder, defau
           Cancel
         </button>
         <button onClick={handleSubmit} style={{ padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 12 }}>
-          Create
+          {submitLabel}
         </button>
       </div>
     </Modal>

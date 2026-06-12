@@ -1,4 +1,7 @@
 // Editor area — tab bar + markdown editor + split view.
+// B1: tab.content is ALWAYS markdown source. It flows unchanged:
+// vault:read-file → openFile() → tab.content → MarkdownEditor (parses md)
+// → onChange (markdown via editorToMarkdown) → vault:write-file.
 
 import { useCallback, useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
@@ -20,6 +23,7 @@ export function EditorArea() {
 
   const handleSave = useCallback(async () => {
     if (!activeTab || !activeTab.isDirty) return;
+    // tab.content is markdown source (B1) — safe to write to the .md file as-is.
     await ipc('vault:write-file', activeTab.filePath, activeTab.content);
     markTabClean(activeTab.id);
   }, [activeTab, markTabClean]);
@@ -48,7 +52,7 @@ export function EditorArea() {
     return <DailyBrief />;
   }
 
-  const editorPane = (tab: typeof activeTab, isPrimary: boolean) => {
+  const editorPane = (tab: typeof activeTab | null, isPrimary: boolean) => {
     if (!tab) return null;
     return (
       <div style={{ flex: 1, overflow: 'auto', background: 'var(--editor-bg)', padding: '24px 48px', minWidth: 0 }}>

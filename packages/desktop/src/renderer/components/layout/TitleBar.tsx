@@ -3,6 +3,13 @@
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 
+// Electron-only CSS property for frameless-window drag regions.
+declare module 'react' {
+  interface CSSProperties {
+    WebkitAppRegion?: 'drag' | 'no-drag';
+  }
+}
+
 export function TitleBar() {
   const theme = useAppStore((s) => s.theme);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -19,7 +26,7 @@ export function TitleBar() {
       borderBottom: '1px solid var(--border)',
       display: 'flex',
       alignItems: 'center',
-      WebkitAppRegion: 'drag' as never,
+      WebkitAppRegion: 'drag',
       paddingLeft: isMac ? 78 : 12,
       paddingRight: 8,
       gap: 8,
@@ -36,7 +43,7 @@ export function TitleBar() {
         color: 'var(--ink-dim)',
         fontSize: '11px',
         letterSpacing: '0.5px',
-        WebkitAppRegion: 'drag' as never,
+        WebkitAppRegion: 'drag',
       }}>
         Stellavault
       </span>
@@ -79,7 +86,7 @@ export function TitleBar() {
 
 function btnStyle(isDark: boolean): React.CSSProperties {
   return {
-    WebkitAppRegion: 'no-drag' as never,
+    WebkitAppRegion: 'no-drag',
     background: 'transparent',
     border: 'none',
     color: isDark ? '#8a8aa0' : '#666',

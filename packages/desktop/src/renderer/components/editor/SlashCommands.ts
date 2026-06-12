@@ -5,6 +5,7 @@ import { Extension } from '@tiptap/core';
 import Suggestion from '@tiptap/suggestion';
 import { PluginKey } from '@tiptap/pm/state';
 import type { Editor } from '@tiptap/core';
+import { requestImageUrl } from '../../lib/ui-requests.js';
 
 interface SlashCommand {
   id: string;
@@ -58,8 +59,10 @@ const COMMANDS: SlashCommand[] = [
   {
     id: 'image', label: 'Image', icon: '🖼', description: 'Insert image from URL',
     action: (e) => {
-      const url = window.prompt('Image URL:');
-      if (url) e.chain().focus().setImage({ src: url }).run();
+      // Async modal — window.prompt() freezes Electron's main thread.
+      void requestImageUrl().then((url) => {
+        if (url) e.chain().focus().setImage({ src: url }).run();
+      });
     },
   },
   {
