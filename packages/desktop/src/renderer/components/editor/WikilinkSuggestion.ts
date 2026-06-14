@@ -6,6 +6,8 @@ import Suggestion from '@tiptap/suggestion';
 import { PluginKey } from '@tiptap/pm/state';
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion';
 import { ipc } from '../../lib/ipc-client.js';
+import { useAppStore } from '../../stores/app-store.js';
+import type { FileTreeNode } from '../../../shared/ipc-types.js';
 
 let cachedNotes: string[] = [];
 let cacheTime = 0;
@@ -16,6 +18,59 @@ async function getNotes(): Promise<string[]> {
   cachedNotes = await ipc('vault:list-notes');
   cacheTime = Date.now();
   return cachedNotes;
+}
+
+// ─── T2-13: heading suggestions after `#` ([[Note#heading]]) ────────────────
+
+/** Resolve a wikilink note title → vault file path via the file tree (same
+ *  basename/path-suffix matching the click-resolver uses, WikilinkNode.ts). */
+function findNotePath(nodes: FileTreeNode[], target: string): string | null {
+  const wanted = `${target.toLowerCase()}.md`;
+  const wantedSuffix = `/${wanted}`;
+  for (const node of nodes) {
+    if (node.isDir) {
+      const hit = node.children ? findNotePath(node.children, target) : null;
+      if (hit) return hit;
+    } else {
+      const name = node.name.toLowerCase();
+      const path = node.path.replace(/\\/g, '/').toLowerCase();
+      if (name === wanted || path.endsWith(wantedSuffix)) return node.path;
+    }
+  }
+  return null;
+}
+
+/** Extract ATX heading texts (`#`..`######`) from raw markdown, skipping
+ *  fenced code blocks. Order = document order (so anchors resolve top-down). */
+function extractHeadings(md: string): string[] {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of md.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const m = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (m) out.push(m[2].trim());
+  }
+  return out;
+}
+
+const headingCache = new Map<string, { time: number; headings: string[] }>();
+
+/** Headings of the note named `noteTitle` (cached 5s per note). */
+async function getHeadings(noteTitle: string): Promise<string[]> {
+  const key = noteTitle.toLowerCase();
+  const cached = headingCache.get(key);
+  if (cached && Date.now() - cached.time < CACHE_TTL) return cached.headings;
+  const path = findNotePath(useAppStore.getState().fileTree, noteTitle);
+  if (!path) return [];
+  try {
+    const content = await ipc('vault:read-file', path);
+    const headings = extractHeadings(content);
+    headingCache.set(key, { time: Date.now(), headings });
+    return headings;
+  } catch {
+    return [];
+  }
 }
 
 // Fuzzy filter: matches if all chars of query appear in order in the target
@@ -149,6 +204,18 @@ export const WikilinkExtension = Extension.create<WikilinkSuggestionOptions>({
         startOfLine: false,
 
         items: async ({ query }) => {
+          // T2-13: once the query carries a `#`, switch to suggesting the
+          // target note's headings — items become `Note#Heading` targets.
+          const hashAt = query.indexOf('#');
+          if (hashAt !== -1) {
+            const note = query.slice(0, hashAt);
+            const headingQuery = query.slice(hashAt + 1);
+            const headings = await getHeadings(note);
+            const matched = headingQuery
+              ? headings.filter((h) => fuzzyMatch(headingQuery, h))
+              : headings;
+            return matched.slice(0, 20).map((h) => `${note}#${h}`);
+          }
           const notes = await getNotes();
           if (!query) return notes.slice(0, 20);
           return notes.filter((n) => fuzzyMatch(query, n)).slice(0, 20);
@@ -156,7 +223,8 @@ export const WikilinkExtension = Extension.create<WikilinkSuggestionOptions>({
 
         command: ({ editor, range, props }) => {
           // W1-9: replace the typed "[[query" with a real wikilink NODE
-          // (clickable, serialized as [[Title]] by WikilinkNode's markdown spec).
+          // (clickable, serialized as [[Title]] / [[Note#Heading]] by
+          // WikilinkNode's markdown spec). props.id may carry a `#anchor`.
           editor
             .chain()
             .focus()

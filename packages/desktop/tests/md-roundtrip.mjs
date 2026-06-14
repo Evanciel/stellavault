@@ -79,6 +79,28 @@ function ok(cond, name) {
   eq(p2.alias, null, 'parse no-alias → null');
 }
 
+// ─── T2-14: math survives restoreEscapedSyntax (round-trip guard) ───
+// prosemirror-markdown escapes `_ * [ ]` inside plain-text math; restoreSegment
+// must hand back the original `$…$` / `$$…$$` byte-for-byte (inner unescaped).
+{
+  // Inline math with no escapable chars — must pass through untouched.
+  eq(restoreEscapedSyntax('mass: $E = mc^2$ here'), 'mass: $E = mc^2$ here', 'inline math untouched');
+
+  // Inline math whose inner tex was escaped by the serializer (x\_1) → restored.
+  eq(restoreEscapedSyntax('$x\\_1 + a\\*b$'), '$x_1 + a*b$', 'inline math inner unescaped');
+
+  // Display math single-line — untouched.
+  eq(restoreEscapedSyntax('$$\\int_0^\\infty e^{-x} dx = 1$$'),
+     '$$\\int_0^\\infty e^{-x} dx = 1$$', 'display math untouched');
+
+  // Display math with escaped inner → restored.
+  eq(restoreEscapedSyntax('$$a\\_i \\* b\\_j$$'), '$$a_i * b_j$$', 'display math inner unescaped');
+
+  // Math inside a code fence must NOT be touched.
+  const fenced = '```ts\nconst s = "$x_1 * y_2$";\n```';
+  eq(restoreEscapedSyntax(fenced), fenced, 'math inside code fence untouched');
+}
+
 // ─── isSafeCssColor sanity (used by color serializers) ───
 {
   ok(isSafeCssColor('#fff'), 'hex3 safe');

@@ -94,6 +94,14 @@ export function TitleBar() {
       >
         &#x21C4;
       </button>
+      {/* T2-6: Coach — gaps + learning path (the dormant FSRS/gap differentiators). */}
+      <button
+        onClick={() => setRightPanel(rightPanel === 'coach' ? 'none' : 'coach')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'coach' ? 'var(--accent-2)' : undefined }}
+        title="Coach — knowledge gaps + learning path" aria-label="Toggle Coach panel"
+      >
+        &#x2316;
+      </button>
       <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme" aria-label="Toggle dark/light theme">
         {isDark ? '\u263C' : '\u263E'}
       </button>

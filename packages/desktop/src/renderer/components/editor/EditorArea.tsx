@@ -11,8 +11,11 @@
 
 import { Suspense, lazy, useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
+import { useUiStore } from '../../lib/commands.js';
 import { TabBar } from './TabBar.js';
 import { MarkdownEditor } from './MarkdownEditor.js';
+import { SourceView } from './SourceView.js';
+import { ViewModeToggle } from './ViewModeToggle.js';
 import { PropertiesEditor } from './PropertiesEditor.js';
 import { DailyBrief } from '../shared/DailyBrief.js';
 // T2-12: GraphView drags in three/fiber/drei (the "three" chunk). Lazy-load it
@@ -46,6 +49,9 @@ export function EditorArea() {
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const markTabClean = useAppStore((s) => s.markTabClean);
+  // T2-3: per-tab view modes (live/reading/source). Subscribe so the pane
+  // re-renders when a mode command or the toggle fires.
+  const viewModes = useUiStore((s) => s.viewModes);
   const [splitMode, setSplitMode] = useState<'none' | 'horizontal' | 'vertical'>('none');
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
   // T1-7: which pane last received focus. Ctrl+S must save THAT pane's tab, not
@@ -137,6 +143,7 @@ export function EditorArea() {
     // tab.id and only consumes `content` at mount, so this does NOT re-feed
     // TipTap on every keystroke.
     const parsed = parseFrontmatter(tab.content);
+    const mode = viewModes[tab.id] ?? 'live';
     return (
       <div
         // T1-7: record which pane is focused so Ctrl+S saves THIS pane's tab.
@@ -191,18 +198,39 @@ export function EditorArea() {
             </select>
           </div>
         )}
-        <div style={{ maxWidth: 780, margin: '0 auto' }}>
-          <PropertiesEditor
-            key={tab.id}
-            frontmatter={parsed.frontmatter}
-            onChange={(fm) => handleFrontmatterChange(tab.id, fm)}
-          />
+        {/* T2-3: view-mode toggle (Live / Reading / Source) */}
+        <div style={{ maxWidth: 780, margin: '0 auto 8px', display: 'flex', justifyContent: 'flex-end' }}>
+          <ViewModeToggle tabId={tab.id} />
         </div>
-        <MarkdownEditor
-          key={tab.id}
-          content={parsed.body}
-          onChange={(bodyMd) => handleBodyChange(tab.id, bodyMd)}
-        />
+        {mode === 'source' ? (
+          // Source mode binds to the FULL content (frontmatter + body) and
+          // writes straight back — no TipTap normalization, no Properties grid.
+          <div style={{ maxWidth: 780, margin: '0 auto' }}>
+            <SourceView
+              key={tab.id}
+              content={tab.content}
+              onChange={(full) => useAppStore.getState().updateTabContent(tab.id, full)}
+            />
+          </div>
+        ) : (
+          <>
+            <div style={{ maxWidth: 780, margin: '0 auto' }}>
+              <PropertiesEditor
+                key={tab.id}
+                frontmatter={parsed.frontmatter}
+                onChange={(fm) => handleFrontmatterChange(tab.id, fm)}
+              />
+            </div>
+            <MarkdownEditor
+              // Re-key on mode so toggling Live↔Reading remounts with the right
+              // editable state and re-feeds the (possibly edited) body.
+              key={`${tab.id}:${mode}`}
+              content={parsed.body}
+              onChange={(bodyMd) => handleBodyChange(tab.id, bodyMd)}
+              readOnly={mode === 'reading'}
+            />
+          </>
+        )}
       </div>
     );
   };

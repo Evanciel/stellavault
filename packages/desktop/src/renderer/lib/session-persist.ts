@@ -9,16 +9,16 @@
 //    'file.daily-note' — same id + same mod+shift+d chord, so the palette
 //    keeps a single entry; a 'daily.open-today' alias id would double-bind
 //    the hotkey), bookmark current note, Ctrl+Tab / Ctrl+Shift+Tab cycling.
-//  • Close guard (B5, renderer-only): main/index.ts is owned by another
-//    agent this stage, so instead of the window:close-request round-trip we
-//    install a beforeunload guard — Electron blocks the close while any tab
-//    is dirty. Limitation: no native confirm dialog is shown (Chromium
-//    suppresses the beforeunload prompt in Electron); the close is silently
-//    refused until tabs are saved. Full main-side round-trip lands later.
+//  • Close guard (T2-18, full round-trip): main intercepts the window close,
+//    emits 'window:close-request'. Here we inspect dirty tabs and either confirm
+//    immediately (none dirty) or pop the native Save-all/Discard/Cancel dialog
+//    (via 'window:close-dialog' in main), then signal 'window:confirm-close'.
+//    This replaces the old renderer-only beforeunload hack, which Chromium
+//    silently suppressed under Electron (clicking X did nothing).
 
 import { useAppStore } from '../stores/app-store.js';
 import { useSettingsStore } from '../stores/settings-store.js';
-import { ipc, settingsSet } from './ipc-client.js';
+import { ipc, onIpc, settingsSet } from './ipc-client.js';
 import { registerBuiltinCommands, registerCommand } from './commands.js';
 import { openDailyNote } from '../components/sidebar/CalendarWidget.js';
 import { bookmarkCurrentNote } from '../components/sidebar/BookmarksSection.js';
@@ -111,15 +111,55 @@ function startPersist(): void {
   });
 }
 
-// ─── Window close guard (B5, renderer side) ───
+// ─── Window close guard (T2-18, renderer side of the main round-trip) ───
+
+/** Write every dirty tab to disk and mark it clean. Returns true if all saved. */
+async function saveAllDirtyTabs(): Promise<boolean> {
+  const s = useAppStore.getState();
+  const dirty = s.tabs.filter((t) => t.isDirty && t.kind !== 'graph');
+  for (const tab of dirty) {
+    try {
+      await ipc('vault:write-file', tab.filePath, tab.content);
+      s.markTabClean(tab.id);
+    } catch (err) {
+      console.error('[close] failed to save', tab.filePath, err);
+      return false; // abort close so the user doesn't lose this note silently
+    }
+  }
+  return true;
+}
+
+let closeInFlight = false;
 
 function installCloseGuard(): void {
-  window.addEventListener('beforeunload', (e) => {
-    const dirty = useAppStore.getState().tabs.some((t) => t.isDirty);
-    if (!dirty) return;
-    // Electron honors preventDefault in beforeunload — the close is refused.
-    e.preventDefault();
-    e.returnValue = false;
+  onIpc('window:close-request', () => {
+    if (closeInFlight) return; // ignore re-entrant requests while a dialog is up
+    closeInFlight = true;
+    void (async () => {
+      try {
+        const dirty = useAppStore.getState().tabs.some((t) => t.isDirty && t.kind !== 'graph');
+        if (!dirty) {
+          await ipc('window:confirm-close', true); // clean → close immediately
+          return;
+        }
+        const choice = await ipc('window:close-dialog');
+        if (choice === 'cancel') {
+          await ipc('window:confirm-close', false);
+          return;
+        }
+        if (choice === 'save') {
+          const ok = await saveAllDirtyTabs();
+          if (!ok) { await ipc('window:confirm-close', false); return; } // save failed → keep window
+        }
+        // 'save' (all saved) or 'discard' → proceed.
+        await ipc('window:confirm-close', true);
+      } catch (err) {
+        console.error('[close] round-trip failed:', err);
+        await ipc('window:confirm-close', false); // fail safe: don't lose data
+      } finally {
+        closeInFlight = false;
+      }
+    })();
   });
 }
 

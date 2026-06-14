@@ -43,13 +43,39 @@ function titleFromTarget(target: string): string {
 }
 
 /**
- * Open the note a wikilink points to; create it first if missing.
+ * After a note tab is opened, scroll to a `#heading` anchor (T2-13). The
+ * MarkdownEditor of the freshly-opened tab needs a tick to mount + parse its
+ * content before its `sv:scroll-to-heading` listener (MarkdownEditor.tsx) is
+ * live, so we retry a few animation frames. `index` is 0 — wikilink anchors
+ * name a heading by text; the first match wins (Obsidian behaviour).
+ */
+function scrollToAnchor(headingText: string): void {
+  const text = headingText.trim();
+  if (!text) return;
+  let tries = 0;
+  const fire = () => {
+    window.dispatchEvent(new CustomEvent('sv:scroll-to-heading', { detail: { text, index: 0 } }));
+    if (++tries < 6) requestAnimationFrame(fire);
+  };
+  requestAnimationFrame(fire);
+}
+
+/**
+ * Open the note a wikilink points to; create it first if missing. If the raw
+ * target carries a `#heading` anchor ([[Note#Heading]], T2-13), scroll the
+ * opened note to that heading after it mounts.
  * Exposed for WikilinkSuggestion / future command-palette use.
  */
 export async function openWikilinkTarget(rawTarget: string): Promise<void> {
-  // Strip heading/block anchors ([[Note#Heading]]) and trim for resolution.
-  const target = rawTarget.split('#')[0].trim();
-  if (!target) return;
+  // Split the heading/block anchor ([[Note#Heading]]) from the note target.
+  const hashAt = rawTarget.indexOf('#');
+  const anchor = hashAt === -1 ? '' : rawTarget.slice(hashAt + 1).trim();
+  const target = (hashAt === -1 ? rawTarget : rawTarget.slice(0, hashAt)).trim();
+  // Pure same-note anchor ([[#Heading]]): just scroll the current note.
+  if (!target) {
+    if (anchor) scrollToAnchor(anchor);
+    return;
+  }
 
   const store = useAppStore.getState();
   const existing = findNoteInTree(store.fileTree, target);
@@ -58,6 +84,7 @@ export async function openWikilinkTarget(rawTarget: string): Promise<void> {
     if (existing) {
       const content = await ipc('vault:read-file', existing.path);
       useAppStore.getState().openFile(existing.path, titleFromTarget(target), content);
+      if (anchor) scrollToAnchor(anchor);
       return;
     }
 
@@ -70,6 +97,7 @@ export async function openWikilinkTarget(rawTarget: string): Promise<void> {
     useAppStore.getState().setFileTree(tree);
     const content = await ipc('vault:read-file', filePath);
     useAppStore.getState().openFile(filePath, titleFromTarget(target), content);
+    if (anchor) scrollToAnchor(anchor);
   } catch (err) {
     console.error(`[wikilink] failed to open/create "${target}"`, err);
   }

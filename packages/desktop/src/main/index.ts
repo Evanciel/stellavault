@@ -7,7 +7,7 @@ import { join, relative, resolve, dirname, basename, extname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem } from '../shared/ipc-types.js';
+import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath } from '../shared/ipc-types.js';
 import { SettingsStore } from './settings-store.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
 import { validateSettingsPatch } from './settings-validate.js';
@@ -65,6 +65,10 @@ function loadAppConfig(): AppConfig {
 // lifecycle from the vault bootstrap config above (§4-B). Created in whenReady.
 
 let settingsStore: SettingsStore | null = null;
+
+// T2-18: windows whose dirty-close round-trip has been confirmed (renderer said
+// proceed). The 'close' handler lets these through instead of re-prompting.
+const closeConfirmed = new WeakSet<BrowserWindow>();
 
 function broadcastSettingsChanged(settings: AppSettings): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -720,6 +724,147 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
+  // ─── [T2-6 Coach panel — appended block] ─────────────
+  // Surfaces the dormant differentiators (zero IPC hits before this): cluster
+  // knowledge gaps + isolated notes (detectKnowledgeGaps), topology-predicted
+  // topics (predictKnowledgeGaps), and a fused review/learn next list
+  // (generateLearningPath over the decay report + gaps). Mirrors the engine
+  // calls core's mcp/server.ts wires for the MCP tools, called directly here.
+  // Each handler degrades to an empty payload when the vault is unindexed or an
+  // older core lacks the function — the panel renders a friendly empty state.
+
+  /** docId → { absolute filePath, title } via the documents table (same lookup
+   *  getDecayItems uses). '' filePath when the doc isn't in the index. */
+  const resolveDocFile = (documentId: string): { filePath: string; title: string } => {
+    try {
+      const db = store?.getDb?.();
+      const row = db?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(documentId) as
+        { file_path?: string; title?: string } | undefined;
+      return {
+        filePath: row?.file_path ? join(vp, row.file_path) : '',
+        title: row?.title ?? '',
+      };
+    } catch {
+      return { filePath: '', title: '' };
+    }
+  };
+
+  ipcMain.handle('core:gaps', async (): Promise<CoachGaps> => {
+    const empty: CoachGaps = { totalClusters: 0, totalGaps: 0, gaps: [], isolated: [], predicted: [] };
+    if (!coreReady || !store) return empty;
+    try {
+      const core = await import('@stellavault/core');
+      // Build the graph once and feed it to detectKnowledgeGaps (avoids a second
+      // internal buildGraphData) — same data the graph panel already caches.
+      let graphData: any;
+      try {
+        graphData = typeof (core as any).buildGraphData === 'function'
+          ? await (core as any).buildGraphData(store, { mode: 'semantic' })
+          : undefined;
+      } catch { graphData = undefined; }
+
+      const report = typeof (core as any).detectKnowledgeGaps === 'function'
+        ? await (core as any).detectKnowledgeGaps(store, graphData)
+        : { totalClusters: 0, totalGaps: 0, gaps: [], isolatedNodes: [] };
+
+      let predicted: CoachGaps['predicted'] = [];
+      try {
+        if (typeof (core as any).predictKnowledgeGaps === 'function') {
+          const preds = await (core as any).predictKnowledgeGaps(store, 8);
+          predicted = (preds ?? []).map((p: any) => ({
+            topic: p.topic ?? '',
+            reason: p.reason ?? '',
+            confidence: typeof p.confidence === 'number' ? p.confidence : 0,
+            category: p.category ?? 'adjacent',
+          }));
+        }
+      } catch (err) {
+        console.error('[main] predictKnowledgeGaps failed:', err);
+      }
+
+      return {
+        totalClusters: report?.totalClusters ?? 0,
+        totalGaps: report?.totalGaps ?? 0,
+        gaps: (report?.gaps ?? []).map((g: any) => ({
+          clusterA: g.clusterA ?? '',
+          clusterB: g.clusterB ?? '',
+          bridgeCount: g.bridgeCount ?? 0,
+          suggestedTopic: g.suggestedTopic ?? '',
+          severity: g.severity ?? 'low',
+        })),
+        isolated: (report?.isolatedNodes ?? []).map((n: any) => {
+          const f = resolveDocFile(n.id);
+          return {
+            documentId: n.id ?? '',
+            title: n.title || f.title || 'Untitled',
+            connections: n.connections ?? 0,
+            filePath: f.filePath,
+          };
+        }),
+        predicted,
+      };
+    } catch (err) {
+      console.error('[main] core:gaps failed:', err);
+      return empty;
+    }
+  });
+
+  ipcMain.handle('core:learning-path', async (_e, limit?: number): Promise<CoachLearningPath> => {
+    const empty: CoachLearningPath = {
+      items: [],
+      summary: { reviewCount: 0, exploreCount: 0, bridgeCount: 0, estimatedMinutes: 0 },
+    };
+    if (!coreReady || !store || !decayEngine) return empty;
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).generateLearningPath !== 'function') return empty;
+
+      // The decay report is the spine of the path (review queue); gaps add bridge
+      // suggestions. computeAll() returns the same DecayReport the engine builds.
+      const decayReport = await decayEngine.computeAll();
+
+      let gaps: any[] = [];
+      try {
+        if (typeof (core as any).detectKnowledgeGaps === 'function') {
+          const graphData = typeof (core as any).buildGraphData === 'function'
+            ? await (core as any).buildGraphData(store, { mode: 'semantic' })
+            : undefined;
+          const report = await (core as any).detectKnowledgeGaps(store, graphData);
+          gaps = (report?.gaps ?? []).map((g: any) => ({
+            clusterA: g.clusterA, clusterB: g.clusterB,
+            severity: g.severity, suggestedTopic: g.suggestedTopic,
+          }));
+        }
+      } catch { /* gaps optional — review-only path still useful */ }
+
+      const path = (core as any).generateLearningPath({ decayReport, gaps }, limit ?? 15);
+      return {
+        items: (path?.items ?? []).map((it: any) => {
+          const f = it.documentId ? resolveDocFile(it.documentId) : { filePath: '', title: '' };
+          return {
+            documentId: it.documentId ?? '',
+            title: it.title || f.title || 'Untitled',
+            reason: it.reason ?? '',
+            priority: it.priority ?? 'suggested',
+            score: it.score ?? 0,
+            category: it.category ?? 'review',
+            filePath: f.filePath,
+          };
+        }),
+        summary: {
+          reviewCount: path?.summary?.reviewCount ?? 0,
+          exploreCount: path?.summary?.exploreCount ?? 0,
+          bridgeCount: path?.summary?.bridgeCount ?? 0,
+          estimatedMinutes: path?.summary?.estimatedMinutes ?? 0,
+        },
+      };
+    } catch (err) {
+      console.error('[main] core:learning-path failed:', err);
+      return empty;
+    }
+  });
+  // ─── [end T2-6 Coach panel block] ────────────────────
+
   // Draft — generate a draft from vault knowledge
   ipcMain.handle('core:draft', async (_e, topic: string, format?: string) => {
     if (!coreReady || !searchEngine) return { title: '', content: '', sources: [] };
@@ -813,6 +958,43 @@ function registerIpcHandlers(config: AppConfig) {
     if (win?.isMaximized()) win.unmaximize(); else win?.maximize();
   });
   ipcMain.handle('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+
+  // ─── [file-tree/close agent owned block — T2-18 dirty-close round-trip] ───
+  // window:close-dialog — main shows the native Save/Discard/Cancel box and
+  // returns the user's choice. Called by the renderer only when dirty tabs exist
+  // (see session-persist.ts close guard). Kept in main because dialog.showMessageBox
+  // is a main-process API and we want a real OS-modal dialog (Chromium suppresses
+  // the renderer beforeunload prompt under Electron).
+  ipcMain.handle('window:close-dialog', async (e): Promise<'save' | 'discard' | 'cancel'> => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const opts = {
+      type: 'warning' as const,
+      buttons: ['Save all', 'Discard', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: 'Unsaved changes',
+      message: 'You have unsaved changes.',
+      detail: 'Save all notes before closing, discard them, or cancel and keep working.',
+    };
+    // Window-modal when we can resolve the sender's window; falls back to app-modal.
+    const { response } = win
+      ? await dialog.showMessageBox(win, opts)
+      : await dialog.showMessageBox(opts);
+    return response === 0 ? 'save' : response === 1 ? 'discard' : 'cancel';
+  });
+
+  // window:confirm-close — renderer's verdict for the pending close. proceed=true
+  // destroys the window (bypassing the guard); false aborts and keeps running.
+  ipcMain.handle('window:confirm-close', (e, proceed: boolean) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    if (proceed) {
+      closeConfirmed.add(win);
+      win.destroy();
+    }
+    // proceed=false → nothing to do; the 'close' handler already preventDefaulted.
+  });
 
   // ─── App menu (W2) — zoom + shell helpers ───────────
   // window:zoom — webContents zoom factor, clamped 0.5..3.0.
@@ -1070,9 +1252,17 @@ function createWindow() {
   };
   win.on('resize', saveBoundsDebounced);
   win.on('move', saveBoundsDebounced);
-  win.on('close', () => {
+  win.on('close', (event) => {
     if (boundsTimer) clearTimeout(boundsTimer);
     saveBounds();
+    // T2-18: dirty-close round-trip. The first close attempt is intercepted and
+    // delegated to the renderer (which knows tab dirty-state). The renderer either
+    // saves/discards then signals window:confirm-close(true) → win.destroy(), which
+    // re-enters here with closeConfirmed set so we let it through.
+    if (closeConfirmed.has(win)) return;
+    if (win.webContents.isDestroyed()) return; // nothing to ask; allow.
+    event.preventDefault();
+    win.webContents.send('window:close-request');
   });
 
   // Load the Vite dev server or built renderer

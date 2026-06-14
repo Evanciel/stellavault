@@ -69,9 +69,12 @@ interface Props {
   // splits/recombines the YAML block via lib/frontmatter.ts).
   content: string;
   onChange: (content: string) => void;  // emits markdown body source
+  // T2-3: Reading mode — render the document read-only with no editing chrome
+  // (toolbar/bubble/table controls hidden). Wikilink click-nav still works.
+  readOnly?: boolean;
 }
 
-export function MarkdownEditor({ content, onChange }: Props) {
+export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
   const [imagePromptOpen, setImagePromptOpen] = useState(false);
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);
   // Toolbar dropdown palettes (text color / highlight / callout type)
@@ -112,7 +115,9 @@ export function MarkdownEditor({ content, onChange }: Props) {
       MathExtension,
     ],
     content: markdownToEditor(content),  // Markdown extension parses this as markdown
+    editable: !readOnly,  // T2-3: Reading mode = read-only, no caret/typing
     onUpdate: ({ editor: e }) => {
+      if (readOnly) return; // defensive: read-only never emits content changes
       onChange(editorToMarkdown(e));
     },
     editorProps: {
@@ -234,8 +239,9 @@ export function MarkdownEditor({ content, onChange }: Props) {
   );
 
   return (
-    <div style={{ maxWidth: 780, margin: '0 auto' }}>
-      {/* Toolbar */}
+    <div style={{ maxWidth: 780, margin: '0 auto' }} className={readOnly ? 'sv-reading' : undefined}>
+      {/* Toolbar — hidden in Reading mode (T2-3: no editing chrome) */}
+      {!readOnly && (
       <div style={{
         display: 'flex',
         gap: 2,
@@ -371,22 +377,21 @@ export function MarkdownEditor({ content, onChange }: Props) {
 
         <Sep />
 
-        {/* Math */}
-        <ToolBtn active={false} onClick={() => {
-          editor.chain().focus().insertContent('$$E = mc^2$$').run();
-        }} label="∑" title="Insert math (KaTeX)" />
+        {/* Math — inserts a real display-math block (click to edit raw $$…$$) */}
+        <ToolBtn active={editor.isActive('mathBlock')} onClick={() => {
+          editor.chain().focus().insertMathBlock('E = mc^2').run();
+        }} label="∑" title="Insert math block (KaTeX)" />
 
         {/* Slash hint */}
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ink-faint)', alignSelf: 'center', paddingRight: 4 }}>
           Type / for commands
         </span>
       </div>
+      )}
 
-      {/* Table context bar — appears when the cursor is inside a table */}
-      <TableControls editor={editor} />
-
-      {/* Notion-style selection bubble menu */}
-      <BubbleMenuBar editor={editor} />
+      {/* Table context bar + bubble menu — editing chrome, hidden in Reading mode */}
+      {!readOnly && <TableControls editor={editor} />}
+      {!readOnly && <BubbleMenuBar editor={editor} />}
 
       <EditorContent editor={editor} />
 
@@ -589,12 +594,35 @@ export function MarkdownEditor({ content, onChange }: Props) {
           display: inline;
           margin: 0 2px;
         }
+        /* T2-14: raw inline math source is dimmed (still editable in place). */
+        .sv-editor .sv-math-src { color: var(--ink-faint); opacity: 0.55; }
+        .sv-math-error { color: #ef4444; font-family: 'JetBrains Mono', monospace; }
+        .sv-math-pending { color: var(--accent-2); font-family: 'JetBrains Mono', monospace; }
         .sv-math-display {
           text-align: center;
           margin: 16px 0;
           padding: 12px;
           background: var(--bg-3);
           border-radius: 6px;
+          cursor: text;
+        }
+        .sv-math-display .sv-math-empty { color: var(--ink-faint); font-size: 13px; }
+        /* T2-14: raw-source editor shown on focus of a display-math node. */
+        .sv-math-display .sv-math-editor {
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+          resize: none;
+          background: var(--bg-2);
+          border: 1px solid var(--accent);
+          border-radius: 4px;
+          color: var(--ink);
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 13px;
+          line-height: 1.5;
+          padding: 8px 10px;
+          text-align: left;
+          outline: none;
         }
 
         /* Callouts (> [!type] in markdown) */
@@ -715,6 +743,10 @@ export function MarkdownEditor({ content, onChange }: Props) {
           box-shadow: 0 8px 28px rgba(0,0,0,0.5);
           z-index: 1000;
         }
+
+        /* T2-3: Reading mode — read-only, no caret / no top toolbar gap */
+        .sv-reading .sv-editor { caret-color: transparent; }
+        .sv-reading .sv-editor .sv-wikilink { cursor: pointer; }
 
         /* Placeholder */
         .sv-editor .is-empty::before {

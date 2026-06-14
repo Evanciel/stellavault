@@ -21,6 +21,8 @@ import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { SearchPanel } from './components/panels/SearchPanel.js';
 import { OutlinePanel } from './components/panels/OutlinePanel.js';
 import { TagsPanel } from './components/panels/TagsPanel.js';
+import { CoachPanel } from './components/panels/CoachPanel.js'; // T2-6
+import { FindReplace } from './components/editor/FindReplace.js'; // T2-4
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
 
@@ -31,6 +33,7 @@ const PANEL_TITLES: Record<string, string> = {
   search: 'Search',
   outline: 'Outline',
   tags: 'Tags',
+  coach: 'Coach', // T2-6
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -203,8 +206,11 @@ export function App() {
           />
         )}
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* T2-4: position:relative so the FindReplace overlay anchors to the
+            editor column (not the viewport). */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
           <EditorArea />
+          <FindReplace />
         </div>
 
         {rightPanel !== 'none' && (
@@ -262,6 +268,7 @@ export function App() {
               {rightPanel === 'search' && <SearchPanel />}
               {rightPanel === 'outline' && <OutlinePanel />}
               {rightPanel === 'tags' && <TagsPanel />}
+              {rightPanel === 'coach' && <CoachPanel />}
             </div>
           </div>
         )}

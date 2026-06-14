@@ -46,6 +46,12 @@ export function runCommand(id: string): void {
 /** Settings modal tab ids — mirrored by SettingsModal.tsx. */
 export type SettingsTabId = 'general' | 'editor' | 'appearance' | 'hotkeys' | 'about';
 
+/** T2-3: per-tab editor view mode.
+ *  - live    → WYSIWYG TipTap editor (default)
+ *  - reading → rendered, read-only (no toolbar/editing chrome)
+ *  - source  → raw markdown in a plain textarea (verbatim tab.content) */
+export type ViewMode = 'live' | 'reading' | 'source';
+
 interface UiState {
   paletteOpen: boolean;
   paletteMode: 'command' | 'new-note';
@@ -55,11 +61,19 @@ interface UiState {
   settingsTab: SettingsTabId;
   /** Diagnostics text shown by the palette's stats modal. */
   statsText: string | null;
+  /** T2-3: view mode per tab id. Absent → 'live'. */
+  viewModes: Record<string, ViewMode>;
+  // T2-4: in-note find & replace overlay. 'find' = Ctrl+F (search only);
+  // 'replace' = Ctrl+H (search + replace row). null = closed.
+  findReplaceMode: 'find' | 'replace' | null;
 
   setPaletteOpen: (open: boolean, mode?: 'command' | 'new-note') => void;
   setSwitcherOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean, tab?: SettingsTabId) => void;
   setStatsText: (text: string | null) => void;
+  /** T2-3: set a tab's view mode. */
+  setViewMode: (tabId: string, mode: ViewMode) => void;
+  setFindReplaceMode: (mode: 'find' | 'replace' | null) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -69,12 +83,29 @@ export const useUiStore = create<UiState>((set) => ({
   settingsOpen: false,
   settingsTab: 'general',
   statsText: null,
+  viewModes: {},
+  findReplaceMode: null,
 
   setPaletteOpen: (open, mode = 'command') => set({ paletteOpen: open, paletteMode: mode }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   setSettingsOpen: (open, tab) => set((s) => ({ settingsOpen: open, settingsTab: open ? (tab ?? 'general') : s.settingsTab })),
   setStatsText: (text) => set({ statsText: text }),
+  setViewMode: (tabId, mode) => set((s) => ({ viewModes: { ...s.viewModes, [tabId]: mode } })),
+  setFindReplaceMode: (mode) => set({ findReplaceMode: mode }),
 }));
+
+/** T2-3: read/cycle the active tab's view mode (shared by the mode commands
+ *  and the EditorArea toolbar). */
+export function getActiveViewMode(): ViewMode {
+  const activeId = useAppStore.getState().activeTabId;
+  if (!activeId) return 'live';
+  return useUiStore.getState().viewModes[activeId] ?? 'live';
+}
+
+function setActiveViewMode(mode: ViewMode): void {
+  const activeId = useAppStore.getState().activeTabId;
+  if (activeId) useUiStore.getState().setViewMode(activeId, mode);
+}
 
 // ─── Helpers used by built-in commands ───
 
@@ -176,6 +207,18 @@ export function registerBuiltinCommands(): void {
       defaultKeys: 'mod+shift+d',
       run: () => openDailyNote(),
     },
+    // T2-4: in-note find & replace. allowInEditor so Ctrl+F/Ctrl+H fire while
+    // typing. The FindReplace overlay reads ui.findReplaceMode.
+    {
+      id: 'editor.find', title: 'Find in note', category: 'Edit',
+      defaultKeys: 'mod+f', allowInEditor: true,
+      run: () => ui().setFindReplaceMode('find'),
+    },
+    {
+      id: 'editor.replace', title: 'Find & replace in note', category: 'Edit',
+      defaultKeys: 'mod+h', allowInEditor: true,
+      run: () => ui().setFindReplaceMode('replace'),
+    },
     {
       id: 'view.toggle-sidebar', title: 'Toggle sidebar', category: 'View',
       defaultKeys: 'mod+b',
@@ -194,6 +237,28 @@ export function registerBuiltinCommands(): void {
       defaultKeys: 'mod+g',
       // Full main-pane graph TAB (Wave 2) — the side panel stays on 'panel.graph'.
       run: () => app().openGraphTab(),
+    },
+    // ─── T2-3: editor view modes ───
+    {
+      id: 'view.editor-live', title: 'Editor: Live (WYSIWYG)', category: 'View',
+      run: () => setActiveViewMode('live'),
+    },
+    {
+      id: 'view.editor-reading', title: 'Editor: Reading (rendered)', category: 'View',
+      run: () => setActiveViewMode('reading'),
+    },
+    {
+      id: 'view.editor-source', title: 'Editor: Source (raw markdown)', category: 'View',
+      run: () => setActiveViewMode('source'),
+    },
+    {
+      id: 'view.editor-cycle-mode', title: 'Editor: cycle view mode', category: 'View',
+      defaultKeys: 'mod+shift+m', allowInEditor: true,
+      run: () => {
+        const order: ViewMode[] = ['live', 'reading', 'source'];
+        const next = order[(order.indexOf(getActiveViewMode()) + 1) % order.length];
+        setActiveViewMode(next);
+      },
     },
     {
       id: 'panel.ai', title: 'Open AI panel', category: 'Panels',

@@ -183,6 +183,58 @@ export async function renameFolder(oldPath: string, rawNewName: string): Promise
   }
 }
 
+/** Move a file or folder INTO `destDir` (T2-11 drag-drop / "Move to…").
+ *  Reuses vault:rename for the actual move, then refreshes the tree and remaps
+ *  any open tab paths (single file or every tab under a moved folder).
+ *  No-ops when the destination equals the current parent, and refuses to move a
+ *  folder into itself or one of its own descendants. */
+export async function moveEntry(srcPath: string, isDir: boolean, destDir: string): Promise<OpResult> {
+  const sep = sepOf(srcPath);
+  const name = nameOf(srcPath);
+  const srcParent = dirOf(srcPath);
+  // Already there → nothing to do.
+  if (srcParent === destDir) return { ok: true, path: srcPath };
+  // Block moving a folder into itself or a descendant (would orphan / loop).
+  if (isDir && (destDir === srcPath || destDir.startsWith(srcPath + sep))) {
+    return { ok: false, error: 'Cannot move a folder into itself.' };
+  }
+  const newPath = `${destDir}${sepOf(destDir)}${name}`;
+  try {
+    if (await vaultExists(newPath)) {
+      return { ok: false, error: `"${name}" already exists in the destination folder.` };
+    }
+    const s = useAppStore.getState();
+    if (isDir) {
+      // Flush dirty tabs under the folder before the path shifts beneath them.
+      const prefix = srcPath + sep;
+      for (const tab of s.tabs) {
+        if (tab.filePath.startsWith(prefix)) await flushDirtyTab(tab.filePath);
+      }
+      await ipc('vault:rename', srcPath, newPath);
+      for (const tab of useAppStore.getState().tabs) {
+        if (tab.filePath.startsWith(prefix)) {
+          useAppStore.getState().renameTabPath(
+            tab.filePath,
+            newPath + sep + tab.filePath.slice(prefix.length),
+          );
+        }
+      }
+    } else {
+      await flushDirtyTab(srcPath);
+      await ipc('vault:rename', srcPath, newPath);
+      useAppStore.getState().renameTabPath(srcPath, newPath, titleOf(newPath));
+    }
+    await refreshTree();
+    // Reveal the destination so the moved entry is visible.
+    if (!useAppStore.getState().expandedFolders.has(destDir)) {
+      useAppStore.getState().toggleFolder(destDir);
+    }
+    return { ok: true, path: newPath };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Move a file or folder to the OS trash (§4-G) after confirmation; closes
  *  any open tabs whose files lived under it. */
 export async function deleteEntry(path: string, isDir: boolean, confirm: Confirm): Promise<OpResult> {

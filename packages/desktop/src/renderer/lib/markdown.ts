@@ -280,6 +280,83 @@ export function registerCalloutRule(md: MarkdownItLike): void {
   });
 }
 
+// ─── Math block markdown rule (T2-14) ──────────────────────────────────────
+// Display math on disk (Obsidian/Pandoc style):
+//   $$
+//   \int_0^\infty e^{-x} dx = 1
+//   $$
+// or a single line `$$tex$$`. Parse: a block rule emits an html_block token
+// rendering <div data-math-block data-tex="…"> which MathExtension.parseHTML
+// turns into the real `mathBlock` node. Serialize: the node's storage.markdown
+// spec writes `$$tex$$` back out (see MathExtension.ts). Inline `$…$` stays
+// plain text (round-trips via restoreEscapedSyntax). idempotent.
+
+/** markdown-it block rule for `$$ … $$` fenced display math. */
+export function registerMathBlockRule(md: MarkdownItLike): void {
+  const tagged = md as MarkdownItLike & { __svMathBlock?: boolean };
+  if (tagged.__svMathBlock) return;
+  tagged.__svMathBlock = true;
+
+  const block = (md as any).block;
+  if (!block?.ruler?.before) return;
+
+  block.ruler.before('fence', 'sv_math_block', (state: any, startLine: number, endLine: number, silent: boolean) => {
+    const start = state.bMarks[startLine] + state.tShift[startLine];
+    const max = state.eMarks[startLine];
+    const src: string = state.src;
+    // Must begin with `$$`.
+    if (start + 2 > max) return false;
+    if (src.charCodeAt(start) !== 0x24 /* $ */ || src.charCodeAt(start + 1) !== 0x24) return false;
+
+    const firstLine = src.slice(start + 2, max);
+    // Single-line form: `$$tex$$`.
+    const singleClose = firstLine.indexOf('$$');
+    if (singleClose !== -1) {
+      if (silent) return true;
+      const tex = firstLine.slice(0, singleClose).trim();
+      pushMathToken(state, startLine, startLine + 1, tex);
+      state.line = startLine + 1;
+      return true;
+    }
+
+    // Multi-line form: scan for a line that is exactly (or ends with) `$$`.
+    let nextLine = startLine;
+    let haveEnd = false;
+    const buf: string[] = [];
+    if (firstLine.trim()) buf.push(firstLine);
+    while (++nextLine < endLine) {
+      const lstart = state.bMarks[nextLine] + state.tShift[nextLine];
+      const lmax = state.eMarks[nextLine];
+      const line = src.slice(lstart, lmax);
+      const trimmed = line.trim();
+      if (trimmed === '$$' || trimmed.endsWith('$$')) {
+        haveEnd = true;
+        const body = trimmed === '$$' ? '' : trimmed.slice(0, -2);
+        if (body) buf.push(body);
+        break;
+      }
+      buf.push(line);
+    }
+    if (!haveEnd) return false;
+    if (silent) return true;
+    pushMathToken(state, startLine, nextLine + 1, buf.join('\n').trim());
+    state.line = nextLine + 1;
+    return true;
+  });
+
+  md.renderer.rules.sv_math_block = (tokens, idx) => {
+    const { tex } = tokens[idx].meta as { tex: string };
+    return `<div data-math-block data-tex="${md.utils.escapeHtml(tex)}"></div>\n`;
+  };
+}
+
+function pushMathToken(state: any, startLine: number, endLine: number, tex: string): void {
+  const token = state.push('sv_math_block', 'div', 0);
+  token.map = [startLine, endLine];
+  token.block = true;
+  token.meta = { tex };
+}
+
 /** Serialize the current editor document to markdown source. */
 export function editorToMarkdown(editor: Editor): string {
   const raw: string = editor.storage.markdown.getMarkdown();

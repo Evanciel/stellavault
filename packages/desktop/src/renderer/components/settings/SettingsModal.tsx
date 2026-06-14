@@ -6,7 +6,7 @@ import type { AppSettings } from '../../../shared/ipc-types.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
-import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts } from '../../lib/hotkeys.js';
+import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'hotkeys' | 'about';
@@ -251,15 +251,24 @@ function HotkeysTab() {
       {commands.map((cmd) => {
         const chord = bindingFor(cmd, settings.hotkeys);
         const isConflict = chord !== '' && (conflicts.get(chord)?.length ?? 0) > 1;
+        // T2-17: a command bound to a TipTap-owned chord silently does nothing
+        // while the editor is focused — UNLESS the command runs in the editor
+        // (allowInEditor), in which case there's no conflict to warn about.
+        const isEditorConflict = chord !== '' && !cmd.allowInEditor && isEditorChord(chord);
         const isCustom = settings.hotkeys[cmd.id] !== undefined;
         const isCapturing = capturingId === cmd.id;
+        // Visual emphasis: hard conflict (red) takes precedence over the softer
+        // editor-chord warning (amber).
+        const warnColor = isConflict ? '#ef4444' : isEditorConflict ? '#f59e0b' : 'var(--border)';
         return (
           <div
             key={cmd.id}
             style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
               borderRadius: 5, fontSize: 12,
-              background: isConflict ? 'rgba(239, 68, 68, 0.08)' : 'transparent',
+              background: isConflict
+                ? 'rgba(239, 68, 68, 0.08)'
+                : isEditorConflict ? 'rgba(245, 158, 11, 0.08)' : 'transparent',
             }}
           >
             <span style={{ flex: 1, color: 'var(--ink-dim)' }}>
@@ -267,13 +276,21 @@ function HotkeysTab() {
               {cmd.title}
             </span>
             {isConflict && <span title="Conflicts with another command" style={{ color: '#ef4444', fontSize: 10 }}>conflict</span>}
+            {!isConflict && isEditorConflict && (
+              <span
+                title="Conflicts with the editor — will do nothing while editing"
+                style={{ color: '#f59e0b', fontSize: 10 }}
+              >
+                editor
+              </span>
+            )}
             <button
               onClick={() => setCapturingId(isCapturing ? null : cmd.id)}
               aria-label={`Rebind ${cmd.title}`}
               style={{
                 minWidth: 110, padding: '3px 10px', fontSize: 11, fontFamily: 'monospace',
                 background: isCapturing ? 'var(--selection)' : 'var(--hover)',
-                border: `1px solid ${isConflict ? '#ef4444' : 'var(--border)'}`,
+                border: `1px solid ${warnColor}`,
                 borderRadius: 4, cursor: 'pointer',
                 color: isCapturing ? 'var(--accent-2)' : chord ? 'var(--ink)' : 'var(--ink-faint)',
               }}

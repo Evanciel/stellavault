@@ -8,13 +8,15 @@ import { useUiStore } from '../../lib/commands.js';
 import { fuzzyFilter } from '../../lib/fuzzy.js';
 import { ipc } from '../../lib/ipc-client.js';
 
-interface NoteEntry {
+// T2-16: exported so the command palette can reuse the same fuzzy file list
+// (one entry point — mod+p — finds both commands and files). QuickSwitcher stays.
+export interface NoteEntry {
   title: string;        // file name without .md
   filePath: string;     // absolute path
   relPath: string;      // vault-relative path (disambiguates same titles)
 }
 
-function collectNotes(nodes: FileTreeNode[], vaultPath: string, out: NoteEntry[] = []): NoteEntry[] {
+export function collectNotes(nodes: FileTreeNode[], vaultPath: string, out: NoteEntry[] = []): NoteEntry[] {
   for (const node of nodes) {
     if (node.isDir) {
       if (node.children) collectNotes(node.children, vaultPath, out);

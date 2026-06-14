@@ -31,12 +31,16 @@ const ALLOWED_CHANNELS = new Set<string>([
   'core:record-access',
   'core:decay-list',
   'core:related',
+  'core:gaps',          // T2-6 Coach panel — knowledge gaps
+  'core:learning-path', // T2-6 Coach panel — learning path
   'graph:build',
   'backlinks:find',
   'window:minimize',
   'window:maximize',
   'window:close',
   'window:zoom',
+  'window:close-dialog',  // T2-18: native Save/Discard/Cancel box on dirty close
+  'window:confirm-close', // T2-18: renderer → main close decision
   'shell:open-path',
   'shell:open-external',
   'settings:get',
@@ -49,6 +53,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'file:changed',
   'index:progress',
   'settings:changed',
+  'window:close-request', // T2-18: main → renderer dirty-close vetting
 ]);
 
 const api = {

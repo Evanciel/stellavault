@@ -72,6 +72,49 @@ export function findConflicts(hotkeys: Record<string, string>): Map<string, stri
   return conflicts;
 }
 
+/**
+ * T2-17: chords TipTap (the note editor) owns by default. A global hotkey bound
+ * to one of these does nothing while the editor is focused — the editor handles
+ * the keystroke first (global hotkeys skip editable targets unless allowInEditor).
+ * The Settings UI surfaces this as a soft warning so users aren't surprised.
+ *
+ * Derived from the enabled extensions (MarkdownEditor.tsx): StarterKit marks/
+ * nodes + Underline + Sub/Superscript + TextAlign + Link. All normalized to the
+ * 'mod+…' canonical form. Heading chords (mod+alt+1..6) are matched by prefix.
+ */
+const EDITOR_CHORDS = new Set<string>([
+  'mod+b',          // bold
+  'mod+i',          // italic
+  'mod+u',          // underline
+  'mod+e',          // inline code
+  'mod+k',          // link (commonly editor-owned; assignment example)
+  'mod+z',          // undo
+  'mod+y',          // redo
+  'mod+shift+z',    // redo (alt)
+  'mod+shift+s',    // strike
+  'mod+shift+b',    // blockquote
+  'mod+shift+7',    // ordered list
+  'mod+shift+8',    // bullet list
+  'mod+shift+9',    // task list
+  'mod+alt+0',      // paragraph
+  'mod+alt+c',      // code block
+  'mod+,',          // subscript
+  'mod+.',          // superscript
+  'mod+shift+l',    // align left
+  'mod+shift+e',    // align center
+  'mod+shift+r',    // align right
+  'mod+shift+j',    // align justify
+]);
+
+/** True if `chord` is a TipTap-owned editing shortcut (see EDITOR_CHORDS). */
+export function isEditorChord(chord: string): boolean {
+  if (!chord) return false;
+  const c = normalizeChord(chord);
+  if (EDITOR_CHORDS.has(c)) return true;
+  // Heading toggles: mod+alt+1 … mod+alt+6.
+  return /^mod\+alt\+[1-6]$/.test(c);
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;

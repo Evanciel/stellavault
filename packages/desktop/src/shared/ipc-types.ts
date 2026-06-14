@@ -49,6 +49,52 @@ export interface AskResponse {
   citations: { filePath: string; title: string; snippet: string }[];
 }
 
+// Coach panel (T2-6) — surfaces the dormant gap/learning-path engines.
+// CoachGaps mirrors core's GapReport + predictive gaps, mapped to absolute
+// filePaths where a document is involved (clickable to open). Topics/bridges
+// have no single source note (filePath === '') and render as prompts.
+export interface CoachIsolatedNote {
+  documentId: string;
+  title: string;
+  connections: number;
+  filePath: string;     // absolute; '' if not resolvable
+}
+export interface CoachGapPair {
+  clusterA: string;
+  clusterB: string;
+  bridgeCount: number;
+  suggestedTopic: string;
+  severity: 'high' | 'medium' | 'low';
+}
+export interface CoachPredictedGap {
+  topic: string;
+  reason: string;
+  confidence: number;   // 0-1
+  category: 'adjacent' | 'bridging' | 'deepening';
+}
+export interface CoachGaps {
+  totalClusters: number;
+  totalGaps: number;
+  gaps: CoachGapPair[];
+  isolated: CoachIsolatedNote[];
+  predicted: CoachPredictedGap[];
+}
+// One learning-path entry. filePath is absolute when a concrete note backs the
+// item (category 'review'); '' for bridge/explore prompts that have no note yet.
+export interface CoachLearningItem {
+  documentId: string;
+  title: string;
+  reason: string;
+  priority: 'critical' | 'important' | 'suggested';
+  score: number;        // 0-100, higher = more urgent
+  category: 'review' | 'explore' | 'bridge';
+  filePath: string;     // absolute; '' if no backing note
+}
+export interface CoachLearningPath {
+  items: CoachLearningItem[];
+  summary: { reviewCount: number; exploreCount: number; bridgeCount: number; estimatedMinutes: number };
+}
+
 // App settings — persisted at ~/.stellavault/desktop-settings.json (W1-1).
 // Defaults live in main/settings-store.ts (getDefaults) and mirror this shape.
 export interface AppSettings {
@@ -117,6 +163,13 @@ export interface IpcChannelMap {
   // Related notes (W1-16)
   'core:related':       { args: [filePath: string, limit?: number]; result: SearchResult[] };
 
+  // Coach panel (T2-6) — dormant differentiators surfaced. 'core:gaps' fuses
+  // detectKnowledgeGaps (cluster bridges + isolated notes) with predictKnowledgeGaps
+  // (topology-predicted topics); 'core:learning-path' fuses the decay report with
+  // gaps via generateLearningPath. Both degrade to empty on an unindexed vault.
+  'core:gaps':          { args: []; result: CoachGaps };
+  'core:learning-path': { args: [limit?: number]; result: CoachLearningPath };
+
   // Draft (Express)
   'core:draft':         { args: [topic: string, format?: string]; result: { title: string; content: string; sources: string[] } };
 
@@ -132,6 +185,14 @@ export interface IpcChannelMap {
   'window:close':       { args: []; result: void };
   // App menu (W2) — webContents zoom; returns the new zoom factor.
   'window:zoom':        { args: [action: 'in' | 'out' | 'reset']; result: number };
+  // T2-18: dirty-close round-trip. Main intercepts the window close, emits the
+  // 'window:close-request' event; the renderer inspects dirty tabs. If any are
+  // dirty it invokes 'window:close-dialog' (main shows a native Save/Discard/
+  // Cancel box and returns the choice), then signals the outcome back via
+  // 'window:confirm-close' (proceed=true → main destroys the window; false →
+  // abort and keep running).
+  'window:close-dialog':  { args: []; result: 'save' | 'discard' | 'cancel' };
+  'window:confirm-close': { args: [proceed: boolean]; result: void };
 
   // Shell (W2 — app menu). open-path is vault-root restricted; open-external is https-only.
   'shell:open-path':     { args: [path: string]; result: void };
@@ -152,6 +213,8 @@ export interface IpcEventMap {
   'file:changed':     { filePath: string; event: 'add' | 'change' | 'unlink' };
   'index:progress':   { current: number; total: number; title: string };
   'settings:changed': AppSettings;
+  // T2-18: main asks the renderer to vet a pending window close (dirty tabs).
+  'window:close-request': void;
 }
 
 // Helper types for typed invoke/on
