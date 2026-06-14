@@ -71,7 +71,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --legacy-peer-deps
+      - name: Install dependencies
+        # Same cross-platform lockfile workaround as the build job (npm/cli#4828):
+        # the committed Windows lockfile omits Linux native optional deps, and may
+        # lag package.json (e.g. an inert, not-yet-installed dep) — npm ci then
+        # hard-fails on the mismatch. Resolve fresh from package.json ranges.
+        run: |
+          rm -f package-lock.json
+          npm install --legacy-peer-deps --no-fund
       - name: Check for known vulnerabilities (gating, baseline-allowlisted)
         # T1-2: production audit is now GATING. A plain `npm audit
         # --audit-level=high` cannot be used directly: the repo currently carries

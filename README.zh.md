@@ -9,7 +9,7 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
-[**⬇ 下载桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.1) · [**⚡ 快速开始**](#安装) · [**🤖 MCP 配置**](#mcp-集成-21-个工具) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
+[**⬇ 下载桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 快速开始**](#安装) · [**🤖 MCP 配置**](#mcp-集成-21-个工具) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -62,8 +62,8 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.1/Stellavault-win32-x64-0.2.1.zip"><br/><b>⬇ 下载 Windows 版</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.1/Stellavault-linux-x64-0.2.1.zip"><br/><b>⬇ 下载 Linux 版</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-win32-x64-0.3.0.zip"><br/><b>⬇ 下载 Windows 版</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-linux-x64-0.3.0.zip"><br/><b>⬇ 下载 Linux 版</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>即将推出</sub></td>
   </tr>
 </table>
@@ -428,7 +428,7 @@ MIT — 全部源代码可供审计。
 
 ## 链接
 
-- **[⬇ 下载桌面应用](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.1)**
+- **[⬇ 下载桌面应用](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0)**
 - [着陆页](https://evanciel.github.io/stellavault/)
 - [Obsidian 插件](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
