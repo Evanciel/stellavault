@@ -57,6 +57,41 @@ export function updateStability(
 }
 
 /**
+ * Update stability after a *graded* recall (T2-5 — FSRS spaced-repetition).
+ * Grades follow FSRS semantics:
+ *   1 Again — recall failed → stability is reset to a small post-lapse value
+ *             (forgetting curve restarts), scaled down by difficulty.
+ *   2 Hard  — recalled with effort → small growth.
+ *   3 Good  — normal recall → the baseline {@link updateStability} growth.
+ *   4 Easy  — effortless recall → amplified growth.
+ *
+ * @param currentS - Current stability
+ * @param difficulty - Note difficulty (1~10)
+ * @param currentR - Retrievability at access time
+ * @param grade - 1 Again / 2 Hard / 3 Good / 4 Easy
+ * @returns New stability (>= currentS for Hard/Good/Easy; reset for Again)
+ */
+export function updateStabilityGraded(
+  currentS: number,
+  difficulty: number,
+  currentR: number,
+  grade: 1 | 2 | 3 | 4,
+): number {
+  // Again: lapse — restart the forgetting curve. Post-lapse stability is a small
+  // fraction of the initial stability, harder notes recover even less.
+  if (grade === 1) {
+    const postLapse = FSRS_PARAMS.initialStability * 0.2 * Math.pow(difficulty, -FSRS_PARAMS.b);
+    return Math.max(0.1, Math.min(postLapse, currentS));
+  }
+  // Good = baseline growth. Hard/Easy scale that growth multiplicatively.
+  const good = updateStability(currentS, difficulty, currentR);
+  const baseGrowth = good - currentS; // >= 0
+  const gradeFactor = grade === 2 ? 0.5 : grade === 4 ? 1.8 : 1.0;
+  const newS = currentS + baseGrowth * gradeFactor;
+  return Math.min(newS, 365);
+}
+
+/**
  * Estimate initial stability based on note characteristics.
  * Longer notes and more connected notes are more stable.
  */

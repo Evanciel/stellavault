@@ -9,13 +9,16 @@
 //   prop edit  → recompose stringify(body, newFm)     → updateTabFrontmatter
 //   Ctrl+S     → vault:write-file(tab.content)  (save path intact)
 
-import { useCallback, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { TabBar } from './TabBar.js';
 import { MarkdownEditor } from './MarkdownEditor.js';
 import { PropertiesEditor } from './PropertiesEditor.js';
 import { DailyBrief } from '../shared/DailyBrief.js';
-import { GraphView } from '../graph/GraphView.js';
+// T2-12: GraphView drags in three/fiber/drei (the "three" chunk). Lazy-load it
+// so that bundle is fetched only when a graph tab is actually opened, keeping it
+// off the startup/editor path.
+const GraphView = lazy(() => import('../graph/GraphView.js').then((m) => ({ default: m.GraphView })));
 import { ipc } from '../../lib/ipc-client.js';
 import { showToast } from '../../lib/toast.js';
 import { parse as parseFrontmatter, stringify as stringifyFrontmatter } from '../../lib/frontmatter.js';
@@ -124,7 +127,9 @@ export function EditorArea() {
     if (tab.kind === 'graph') {
       return (
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
-          <GraphView />
+          <Suspense fallback={<div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>Loading graph…</div>}>
+            <GraphView />
+          </Suspense>
         </div>
       );
     }

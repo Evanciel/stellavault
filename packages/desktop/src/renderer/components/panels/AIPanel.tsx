@@ -389,6 +389,15 @@ function daysSince(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
 }
 
+// T2-5: FSRS recall grades surfaced as buttons. Color ramps from "forgot" (red)
+// to "effortless" (green) so the judgement reads at a glance.
+const GRADE_BUTTONS: { grade: 1 | 2 | 3 | 4; label: string; bg: string }[] = [
+  { grade: 1, label: 'Again', bg: '#e5484d' },
+  { grade: 2, label: 'Hard', bg: '#d97706' },
+  { grade: 3, label: 'Good', bg: 'var(--accent)' },
+  { grade: 4, label: 'Easy', bg: '#30a46c' },
+];
+
 function ReviewQueue() {
   const [items, setItems] = useState<DecayItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -409,9 +418,11 @@ function ReviewQueue() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const handleReviewed = useCallback(async (filePath: string) => {
-    // Await directly (recordAccess() is fire-and-forget — refresh would race it).
-    await invokeIpcRaw<void>('core:record-access', filePath, 'review').catch((err) => {
+  // T2-5: grade the recall (1 Again / 2 Hard / 3 Good / 4 Easy). The grade is
+  // passed through to core's FSRS recordAccess — Again resets stability, the
+  // others raise it progressively. Await directly (refresh would race the write).
+  const handleGrade = useCallback(async (filePath: string, grade: 1 | 2 | 3 | 4) => {
+    await invokeIpcRaw<void>('core:record-access', filePath, 'review', grade).catch((err) => {
       console.warn('[AIPanel] record-access(review) failed:', err);
     });
     await refresh();
@@ -498,15 +509,25 @@ function ReviewQueue() {
               >
                 Open
               </button>
-              <button
-                onClick={() => void handleReviewed(item.filePath)}
-                style={{
-                  padding: '2px 10px', fontSize: 10, cursor: 'pointer',
-                  background: 'var(--accent)', border: 'none', borderRadius: 3, color: '#fff',
-                }}
-              >
-                Reviewed ✓
-              </button>
+            </div>
+
+            {/* T2-5: FSRS grade buttons — how well did you recall this note?
+                Again resets decay; Hard/Good/Easy strengthen it progressively. */}
+            <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
+              {GRADE_BUTTONS.map(({ grade, label, bg }) => (
+                <button
+                  key={grade}
+                  onClick={() => void handleGrade(item.filePath, grade)}
+                  title={`Mark recall as "${label}"`}
+                  aria-label={`Grade ${item.title} as ${label}`}
+                  style={{
+                    flex: 1, padding: '3px 0', fontSize: 10, cursor: 'pointer',
+                    background: bg, border: 'none', borderRadius: 3, color: '#fff',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
         );

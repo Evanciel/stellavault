@@ -8,10 +8,21 @@ export interface DecayState {
   retrievability: number;  // 0~1 (computed)
 }
 
+/**
+ * FSRS recall grade (T2-5). 1=Again, 2=Hard, 3=Good, 4=Easy.
+ * Omitted → plain open: weak access (legacy behavior, treated like Good but
+ * without an explicit recall judgement).
+ */
+export type ReviewGrade = 1 | 2 | 3 | 4;
+
 export interface AccessEvent {
   documentId: string;
   type: 'view' | 'search' | 'mcp_query';
   timestamp: string;
+  /** T2-5 — optional spaced-repetition grade. Branches the stability update:
+   *  Again resets stability, Hard/Good/Easy raise it progressively. When omitted,
+   *  the access is a plain open (weak access — default legacy update). */
+  grade?: ReviewGrade;
 }
 
 export interface DecayReport {

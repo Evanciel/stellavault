@@ -1,15 +1,32 @@
 // Stellavault Desktop — Main Process
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem } from '../shared/ipc-types.js';
 import { SettingsStore } from './settings-store.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
 import { validateSettingsPatch } from './settings-validate.js';
+
+// ─── Asset protocol (T2-1) ───────────────────────────
+// Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
+// under CSP, and base64 is the only thing that rendered before. We register a
+// privileged custom scheme `app://vault/<relpath>` whose handler streams the
+// file straight off disk — but ONLY after assertInsideVault, so the renderer
+// can never read outside the vault via a crafted src. Registration MUST happen
+// BEFORE app `ready`; the actual protocol.handle wiring is in whenReady once the
+// vault path is known. img-src in the renderer CSP is widened to `app:`.
+const ASSET_SCHEME = 'app';
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ASSET_SCHEME,
+    privileges: { secure: true, stream: true, supportFetchAPI: true, bypassCSP: false },
+  },
+]);
 
 // ─── Config ──────────────────────────────────────────
 
@@ -65,6 +82,22 @@ let decayEngine: any = null;
 // Chunk options resolved at initCore time — reused by core:index and the watcher reindex.
 let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } = { maxTokens: 300, overlap: 50, minTokens: 50 };
 
+// ─── Graph build cache (T2-7) ────────────────────────
+// GraphView (main pane) + GraphPanel (right panel) both call 'graph:build' on
+// mount → the build used to run TWICE per open. Cache by (mode, index version):
+// graphCacheVersion is bumped on any reindex (core:index) or watcher-detected
+// file change so a stale layout is never served after the vault changes.
+let graphCacheVersion = 0;
+const graphBuildCache = new Map<string, { nodes: unknown[]; edges: unknown[] }>();
+const graphBuildInflight = new Map<string, Promise<{ nodes: unknown[]; edges: unknown[] }>>();
+function bumpGraphCacheVersion(): void {
+  graphCacheVersion++;
+  graphBuildCache.clear();
+  // In-flight builds for the old version still resolve their own callers; they
+  // just won't be cached under the new key (their finally only deletes the old
+  // inflight entry). Next call rebuilds against the fresh index.
+}
+
 async function initCore(config: AppConfig): Promise<void> {
   if (coreReady) return;
   try {
@@ -102,13 +135,20 @@ async function initCore(config: AppConfig): Promise<void> {
     searchEngine = hub.searchEngine;
     embedder = hub.embedder;
 
-    // Initialize decay engine if DB is accessible
+    // T2-15: use the SAME DecayEngine the hub's search recency re-rank uses,
+    // instead of constructing a standalone `new core.DecayEngine(db)`. The hub
+    // exposes its lazy getDecayEngine (memoized over the same DB) — recordAccess
+    // and the ±10% recency re-rank now share one instance, so grades recorded
+    // here are live in search ranking. Fall back to the standalone constructor
+    // for older core builds that don't return getDecayEngine.
     try {
-      const dbInstance = store.getDb();
-      if (dbInstance) {
-        decayEngine = new core.DecayEngine(dbInstance);
-        await decayEngine.initializeNewDocuments();
+      if (typeof (hub as any).getDecayEngine === 'function') {
+        decayEngine = (hub as any).getDecayEngine();
+      } else {
+        const dbInstance = store.getDb();
+        if (dbInstance) decayEngine = new core.DecayEngine(dbInstance);
       }
+      if (decayEngine) await decayEngine.initializeNewDocuments();
     } catch (err) {
       console.error('[main] DecayEngine init skipped:', err);
     }
@@ -120,58 +160,9 @@ async function initCore(config: AppConfig): Promise<void> {
 }
 
 // ─── File tree builder ───────────────────────────────
-
-function buildFileTree(dirPath: string, depth = 0): FileTreeNode[] {
-  if (depth > 10) return []; // Safety limit
-  try {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    const nodes: FileTreeNode[] = [];
-    for (const entry of entries) {
-      // Skip hidden dirs and known non-content dirs
-      if (entry.name.startsWith('.')) continue;
-      if (entry.name === 'node_modules') continue;
-
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        nodes.push({
-          name: entry.name,
-          path: fullPath,
-          isDir: true,
-          children: buildFileTree(fullPath, depth + 1),
-        });
-      } else if (entry.name.endsWith('.md')) {
-        nodes.push({ name: entry.name, path: fullPath, isDir: false });
-      }
-    }
-    // Sort: folders first, then alphabetical
-    nodes.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    return nodes;
-  } catch {
-    return [];
-  }
-}
-
-function collectAllNotes(dirPath: string): string[] {
-  const results: string[] = [];
-  function walk(dir: string) {
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.md')) {
-          // Return title (filename without extension)
-          results.push(entry.name.replace(/\.md$/, ''));
-        }
-      }
-    } catch { /* skip unreadable dirs */ }
-  }
-  walk(dirPath);
-  return results;
-}
+// T2-8: the former sync buildFileTree / collectAllNotes were moved into the
+// async + cached "[T2-8 owned block]" below (buildFileTreeAsync/getFileTree,
+// walkMarkdownFiles/getAllNoteTitles) to keep the main thread free on big vaults.
 
 // ─── Path safety ─────────────────────────────────────
 // CRIT-01: Every IPC handler that touches the filesystem MUST validate that the
@@ -235,6 +226,7 @@ const recentSelfWrites = new Map<string, number>();
 
 function noteSelfWrite(filePath: string): void {
   recentSelfWrites.set(resolve(filePath), Date.now());
+  bumpVaultFsVersion(); // T2-8: every IPC vault mutation funnels here → invalidate FS-scan caches
   // Bounded cleanup — drop expired entries opportunistically.
   if (recentSelfWrites.size > 256) {
     const now = Date.now();
@@ -252,6 +244,140 @@ function isSelfWrite(filePath: string): boolean {
   recentSelfWrites.delete(key);
   return false;
 }
+
+// ─── [T2-8 owned block — async/cached full-vault FS scans] ───────────
+// Full-vault sync scans (backlinks:find, vault:update-links, buildFileTree/
+// collectAllNotes) blocked the main thread on note-open/rename → UI jank on
+// big (8k+) vaults. This block makes them async (fs.promises) and caches the
+// read-heavy ones (file tree, note titles, backlinks) by an FS version that is
+// bumped on every vault mutation — IPC self-writes (noteSelfWrite paths) and the
+// external file watcher both invalidate via bumpVaultFsVersion(). Behavior is
+// identical to the previous sync versions; only sync→async+cache changed.
+
+let vaultFsVersion = 0;
+/** Invalidate all T2-8 caches. Called on any vault mutation (IPC writes/renames/
+ *  deletes/folder-creates) and from the file watcher on external changes. */
+function bumpVaultFsVersion(): void {
+  vaultFsVersion += 1;
+}
+
+// Async recursive directory walk yielding *.md absolute paths. Skips hidden +
+// node_modules dirs (same filter as the old sync walkers). Depth-limited to
+// mirror buildFileTree's safety cap and bound a pathological symlink loop.
+async function walkMarkdownFiles(dirPath: string, depth = 0): Promise<string[]> {
+  if (depth > 20) return [];
+  let entries;
+  try {
+    entries = await fsp.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return []; // unreadable dir
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const full = join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...await walkMarkdownFiles(full, depth + 1));
+    } else if (entry.name.endsWith('.md')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+// Async file-tree builder (replaces the sync buildFileTree). Cached by FS version.
+async function buildFileTreeAsync(dirPath: string, depth = 0): Promise<FileTreeNode[]> {
+  if (depth > 10) return []; // Safety limit (parity with old sync buildFileTree)
+  let entries;
+  try {
+    entries = await fsp.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const nodes: FileTreeNode[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.name === 'node_modules') continue;
+    const fullPath = join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      nodes.push({
+        name: entry.name,
+        path: fullPath,
+        isDir: true,
+        children: await buildFileTreeAsync(fullPath, depth + 1),
+      });
+    } else if (entry.name.endsWith('.md')) {
+      nodes.push({ name: entry.name, path: fullPath, isDir: false });
+    }
+  }
+  // Sort: folders first, then alphabetical (parity with old sync version).
+  nodes.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return nodes;
+}
+
+let fileTreeCache: { version: number; tree: FileTreeNode[] } | null = null;
+async function getFileTree(vaultPath: string): Promise<FileTreeNode[]> {
+  if (fileTreeCache && fileTreeCache.version === vaultFsVersion) return fileTreeCache.tree;
+  const tree = await buildFileTreeAsync(vaultPath);
+  fileTreeCache = { version: vaultFsVersion, tree };
+  return tree;
+}
+
+let noteTitlesCache: { version: number; titles: string[] } | null = null;
+async function getAllNoteTitles(vaultPath: string): Promise<string[]> {
+  if (noteTitlesCache && noteTitlesCache.version === vaultFsVersion) return noteTitlesCache.titles;
+  const files = await walkMarkdownFiles(vaultPath);
+  const titles = files.map((f) => basename(f).replace(/\.md$/, ''));
+  noteTitlesCache = { version: vaultFsVersion, titles };
+  return titles;
+}
+
+// Backlinks cache: keyed by FS version → per-title results. A note-open scans the
+// whole vault once per version, then every subsequent open in that version (e.g.
+// tab-switching, hover previews) is a Map hit. Bounded so an active session that
+// opens hundreds of notes can't grow it without limit.
+const BACKLINKS_CACHE_MAX = 512;
+let backlinksCache: { version: number; byTitle: Map<string, Array<{ filePath: string; name: string; line: string }>> } | null = null;
+async function findBacklinks(vaultPath: string, title: string): Promise<Array<{ filePath: string; name: string; line: string }>> {
+  if (!backlinksCache || backlinksCache.version !== vaultFsVersion) {
+    backlinksCache = { version: vaultFsVersion, byTitle: new Map() };
+  }
+  const cached = backlinksCache.byTitle.get(title);
+  if (cached) return cached;
+
+  const pattern = `[[${title}]]`;
+  const files = await walkMarkdownFiles(vaultPath);
+  const results: Array<{ filePath: string; name: string; line: string }> = [];
+  // Read files concurrently in bounded chunks — keeps memory/FD use sane on huge
+  // vaults while staying off the main thread (vs the old blocking readFileSync loop).
+  const CONCURRENCY = 32;
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
+    const slice = files.slice(i, i + CONCURRENCY);
+    const read = await Promise.all(slice.map(async (full) => {
+      try {
+        const content = await fsp.readFile(full, 'utf-8');
+        if (!content.includes(pattern)) return null;
+        const lineMatch = content.split('\n').find((l) => l.includes(pattern));
+        return {
+          filePath: full,
+          name: basename(full).replace(/\.md$/, ''),
+          line: (lineMatch ?? '').trim().slice(0, 120),
+        };
+      } catch {
+        return null; // skip unreadable
+      }
+    }));
+    for (const r of read) if (r) results.push(r);
+  }
+
+  if (backlinksCache.byTitle.size >= BACKLINKS_CACHE_MAX) backlinksCache.byTitle.clear();
+  backlinksCache.byTitle.set(title, results);
+  return results;
+}
+// ─── [end T2-8 owned block] ───
 
 // ─── IPC Handlers ────────────────────────────────────
 
@@ -286,7 +412,7 @@ function registerIpcHandlers(config: AppConfig) {
       unlinkSync(safe);
     }
   });
-  ipcMain.handle('vault:read-tree', () => buildFileTree(vp));
+  ipcMain.handle('vault:read-tree', () => getFileTree(vp)); // T2-8: async + cached by FS version
   ipcMain.handle('vault:create-file', (_e, filePath: string, content?: string) => {
     const safe = assertInsideVault(vp, filePath);
     // Stage D (W1-3) exists-guard — no silent clobber. Callers must check
@@ -363,7 +489,10 @@ function registerIpcHandlers(config: AppConfig) {
   // W1-9: rename → update [[wikilinks]] across the vault. Line-based with
   // code-fence state tracking (``` / ~~~) so fenced code is never touched.
   // Matches [[old]], [[old|alias]], [[old#heading]]. Returns changed FILE count.
-  ipcMain.handle('vault:update-links', (_e, oldTitle: string, newTitle: string): number => {
+  // T2-8: async (fs.promises) + batched concurrency - whole-vault rewrite off the
+  // main thread on rename. Same line/fence semantics; each rewritten file still
+  // goes through noteSelfWrite (W1-15 echo guard). Mutating op -> bumpVaultFsVersion().
+  ipcMain.handle('vault:update-links', async (_e, oldTitle: string, newTitle: string): Promise<number> => {
     if (!oldTitle?.trim() || !newTitle?.trim() || oldTitle === newTitle) return 0;
     const escaped = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // [[old immediately followed by ]] / | / # — lookahead keeps the delimiter.
@@ -372,10 +501,10 @@ function registerIpcHandlers(config: AppConfig) {
     const needle = `[[${oldTitle}`;
     let changedFiles = 0;
 
-    const processFile = (full: string): void => {
+    const processFile = async (full: string): Promise<void> => {
       let content: string;
       try {
-        content = readFileSync(full, 'utf-8');
+        content = await fsp.readFile(full, 'utf-8');
       } catch {
         return;
       }
@@ -394,33 +523,26 @@ function registerIpcHandlers(config: AppConfig) {
       });
       if (fileChanged) {
         noteSelfWrite(full); // register with the W1-15 watcher echo guard
-        writeFileSync(full, out.join('\n'), 'utf-8');
+        await fsp.writeFile(full, out.join('\n'), 'utf-8');
         changedFiles += 1;
       }
     };
 
-    const walk = (dir: string): void => {
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.md')) processFile(full);
-      }
-    };
-    walk(vp);
+    // Async walk (shared T2-8 helper) -> process in bounded concurrent batches so a
+    // large vault doesn't open thousands of FDs at once.
+    const files = await walkMarkdownFiles(vp);
+    const CONCURRENCY = 32;
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      await Promise.all(files.slice(i, i + CONCURRENCY).map(processFile));
+    }
+    if (changedFiles > 0) bumpVaultFsVersion(); // links rewritten -> invalidate caches
     return changedFiles;
   });
   ipcMain.handle('vault:create-folder', (_e, folderPath: string) => {
     const safe = assertInsideVault(vp, folderPath);
     mkdirSync(safe, { recursive: true });
   });
-  ipcMain.handle('vault:list-notes', () => collectAllNotes(vp));
+  ipcMain.handle('vault:list-notes', () => getAllNoteTitles(vp)); // T2-8: async + cached by FS version
 
   // Core
   ipcMain.handle('core:search', async (_e, query: string, limit?: number) => {
@@ -445,6 +567,7 @@ function registerIpcHandlers(config: AppConfig) {
     if (!coreReady) return { indexed: 0, totalChunks: 0 };
     const core = await import('@stellavault/core');
     const result = await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
+    bumpGraphCacheVersion(); // T2-7: a manual reindex changes the graph
     return { indexed: result.indexed, totalChunks: result.totalChunks };
   });
 
@@ -467,12 +590,12 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
-  // W1-14: FSRS loop — record an access event for a note.
-  // DEVIATION from plan: core's recordAccess (AccessEvent.type 'view'|'search'|
-  // 'mcp_query') has no FSRS grade parameter — every access fully resets R to 1.0.
-  // So 'open' and 'review' map to the same 'view' strength for now; weak/strong
-  // grading needs a core API change (tracked as Wave-2 follow-up).
-  ipcMain.handle('core:record-access', async (_e, filePath: string, _kind: 'open' | 'review') => {
+  // W1-14 / T2-5: FSRS loop — record an access event for a note.
+  // The optional 4th arg is the FSRS grade (1 Again / 2 Hard / 3 Good / 4 Easy)
+  // from the Memory-tab review buttons. When omitted (plain 'open' from opening a
+  // tab), recordAccess applies the legacy weak-access stability update. With a
+  // grade it branches: Again resets stability, Hard/Good/Easy raise it.
+  ipcMain.handle('core:record-access', async (_e, filePath: string, _kind: 'open' | 'review', grade?: 1 | 2 | 3 | 4) => {
     if (!coreReady || !decayEngine) return;
     try {
       const safe = assertInsideVault(vp, filePath);
@@ -481,6 +604,7 @@ function registerIpcHandlers(config: AppConfig) {
         documentId,
         type: 'view',
         timestamp: new Date().toISOString(),
+        ...(grade ? { grade } : {}),
       });
     } catch (err) {
       console.error('[main] core:record-access failed:', err);
@@ -629,47 +753,44 @@ function registerIpcHandlers(config: AppConfig) {
   // Plan SC: §0-B2 — buildGraphData is now exported from @stellavault/core.
   // Contract (§4-F): core nodes are { id, label, filePath, tags, clusterId, size } and
   // NEVER carry positions — GraphPanel derives deterministic hash(id)-seeded layout.
+  //
+  // T2-7: GraphView (main pane) and GraphPanel (right panel) each fire
+  // 'graph:build' independently → the build ran TWICE per graph open, freezing
+  // the window each time. Cache the result per (mode, index version); the second
+  // caller (and every reopen until the next edit) gets the cached build. An
+  // in-flight Map coalesces the two near-simultaneous mount calls so the build
+  // executes once even before it resolves. Invalidated by bumpGraphCacheVersion()
+  // on reindex / file:changed (see core:index + startVaultWatcher below).
   ipcMain.handle('graph:build', async (_e, mode: string) => {
     if (!coreReady || !store) return { nodes: [], edges: [] };
-    try {
-      const core = await import('@stellavault/core');
-      const safeMode: 'semantic' | 'folder' = mode === 'folder' ? 'folder' : 'semantic';
-      const data = await core.buildGraphData(store, { mode: safeMode });
-      return data;
-    } catch (err) {
-      console.error('[main] Graph build failed:', err);
-      return { nodes: [], edges: [] };
-    }
+    const safeMode: 'semantic' | 'folder' = mode === 'folder' ? 'folder' : 'semantic';
+    const cacheKey = `${safeMode}@${graphCacheVersion}`;
+    const cached = graphBuildCache.get(cacheKey);
+    if (cached) return cached;
+    const inflight = graphBuildInflight.get(cacheKey);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const core = await import('@stellavault/core');
+        const data = await core.buildGraphData(store, { mode: safeMode });
+        graphBuildCache.set(cacheKey, data);
+        return data;
+      } catch (err) {
+        console.error('[main] Graph build failed:', err);
+        return { nodes: [], edges: [] };
+      } finally {
+        graphBuildInflight.delete(cacheKey);
+      }
+    })();
+    graphBuildInflight.set(cacheKey, p);
+    return p;
   });
 
   // Backlinks — find notes that contain [[title]]
-  ipcMain.handle('backlinks:find', (_e, title: string) => {
-    const results: Array<{ filePath: string; name: string; line: string }> = [];
-    const pattern = `[[${title}]]`;
-    function walk(dir: string) {
-      try {
-        for (const entry of readdirSync(dir, { withFileTypes: true })) {
-          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-          const full = join(dir, entry.name);
-          if (entry.isDirectory()) { walk(full); continue; }
-          if (!entry.name.endsWith('.md')) continue;
-          try {
-            const content = readFileSync(full, 'utf-8');
-            if (content.includes(pattern)) {
-              const lineMatch = content.split('\n').find((l) => l.includes(pattern));
-              results.push({
-                filePath: full,
-                name: entry.name.replace(/\.md$/, ''),
-                line: (lineMatch ?? '').trim().slice(0, 120),
-              });
-            }
-          } catch { /* skip unreadable */ }
-        }
-      } catch { /* skip */ }
-    }
-    walk(vp);
-    return results;
-  });
+  // T2-8: async (fs.promises, bounded concurrency) + cached per FS version so a
+  // note-open scans the vault once, then later opens in the same version are Map
+  // hits. Invalidated by bumpVaultFsVersion() on any vault mutation. See block above.
+  ipcMain.handle('backlinks:find', (_e, title: string) => findBacklinks(vp, title));
 
   // Settings (W1-1) — get/set + broadcast to all windows on change
   ipcMain.handle('settings:get', () => {
@@ -785,15 +906,25 @@ function startVaultWatcher(config: AppConfig): void {
         const batch = pending;
         pending = new Map();
         if (batch.size === 0) break;
-        // Incremental reindex — indexVault skips unchanged docs by content hash.
+        // T2-2: targeted incremental reindex — pass ONLY the changed batch to
+        // core.indexFiles (per-file hash-skip; absent paths = deletions) instead
+        // of re-walking + re-hashing the whole vault via indexVault. Falls back
+        // to indexVault on older core builds that lack indexFiles.
         if (coreReady && store && embedder) {
           try {
             const core = await import('@stellavault/core');
-            await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
+            const changedPaths = [...batch.keys()];
+            if (typeof (core as any).indexFiles === 'function') {
+              await (core as any).indexFiles(vp, changedPaths, { store, embedder, chunkOptions: coreChunkOptions });
+            } else {
+              await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
+            }
           } catch (err) {
             console.error('[main] watcher reindex failed:', err);
           }
         }
+        bumpGraphCacheVersion(); // T2-7: external vault changes invalidate the graph
+        bumpVaultFsVersion(); // T2-8: external vault changes invalidate file-tree/note-title/backlinks caches
         for (const [filePath, event] of batch) {
           for (const win of BrowserWindow.getAllWindows()) {
             win.webContents.send('file:changed', { filePath, event });
@@ -842,6 +973,36 @@ function startVaultWatcher(config: AppConfig): void {
       console.error('[main] fs.watch failed — vault watcher disabled:', err);
     }
   })();
+}
+
+// ─── Asset protocol handler (T2-1) ───────────────────
+// Streams app://vault/<relpath> off disk after the same assertInsideVault gate
+// every FS IPC handler uses. The host segment is fixed to "vault"; everything
+// after it is treated as a vault-relative path. net.fetch over a file:// URL
+// (Electron 35) gives us a proper streamed Response with the right Content-Type
+// for free — no manual mime mapping. Anything that fails path-safety or doesn't
+// exist resolves to a 403/404 Response rather than throwing.
+function registerAssetProtocol(config: AppConfig): void {
+  const vp = config.vaultPath;
+  protocol.handle(ASSET_SCHEME, async (request) => {
+    try {
+      const url = new URL(request.url);
+      // app://vault/<relpath> — only the "vault" host is served.
+      if (url.hostname !== 'vault') {
+        return new Response('Not found', { status: 404 });
+      }
+      // Decode percent-encoding (spaces, CJK filenames) and strip the leading /.
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      if (!rel) return new Response('Not found', { status: 404 });
+      // CRIT-01 invariant: resolve inside the vault or reject. Throws on escape.
+      const safe = assertInsideVault(vp, join(vp, rel));
+      if (!existsSync(safe)) return new Response('Not found', { status: 404 });
+      return net.fetch(pathToFileURL(safe).toString());
+    } catch (err) {
+      console.error('[main] asset protocol denied:', err);
+      return new Response('Forbidden', { status: 403 });
+    }
+  });
 }
 
 // ─── Window ──────────────────────────────────────────
@@ -1028,6 +1189,7 @@ app.whenReady().then(async () => {
   }
 
   registerIpcHandlers(config);
+  registerAssetProtocol(config);
 
   const win = createWindow();
 

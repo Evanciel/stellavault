@@ -1,6 +1,6 @@
 // Root app layout — sidebar | editor | optional right panel.
 
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { useAppStore } from './stores/app-store.js';
 import { useSettingsStore, initSettings, resolveTheme } from './stores/settings-store.js';
 import { registerBuiltinCommands, registerCommand } from './lib/commands.js';
@@ -14,7 +14,9 @@ import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
 import { CommandPalette } from './components/shared/CommandPalette.js';
 import { SettingsModal } from './components/settings/SettingsModal.js';
 import { AIPanel } from './components/panels/AIPanel.js';
-import { GraphPanel } from './components/panels/GraphPanel.js';
+// T2-12: GraphPanel pulls in the three/fiber/drei "three" chunk — lazy-load so
+// it's fetched only when the graph panel is opened, not on app startup.
+const GraphPanel = lazy(() => import('./components/panels/GraphPanel.js').then((m) => ({ default: m.GraphPanel })));
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { SearchPanel } from './components/panels/SearchPanel.js';
 import { OutlinePanel } from './components/panels/OutlinePanel.js';
@@ -251,7 +253,11 @@ export function App() {
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
               {rightPanel === 'ai' && <AIPanel />}
-              {rightPanel === 'graph' && <GraphPanel />}
+              {rightPanel === 'graph' && (
+                <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>Loading graph…</div>}>
+                  <GraphPanel />
+                </Suspense>
+              )}
               {rightPanel === 'backlinks' && <BacklinksPanel />}
               {rightPanel === 'search' && <SearchPanel />}
               {rightPanel === 'outline' && <OutlinePanel />}

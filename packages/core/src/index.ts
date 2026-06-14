@@ -22,7 +22,7 @@ export type { Embedder } from './indexer/embedder.js';
 export { createSqliteVecStore } from './store/index.js';
 
 // Indexer
-export { indexVault, scanVault, chunkDocument, createLocalEmbedder, createWatcher } from './indexer/index.js';
+export { indexVault, indexFiles, scanVault, scanFile, docIdForPath, chunkDocument, createLocalEmbedder, createWatcher } from './indexer/index.js';
 export type { IndexResult, IndexerOptions, SkipReason, SkippedFile } from './indexer/index.js';
 
 // Search
@@ -50,8 +50,8 @@ export type { BuildGraphOptions, GraphMode } from './api/graph-data.js';
 
 // Intelligence (Phase 4b)
 export { DecayEngine } from './intelligence/decay-engine.js';
-export type { DecayState, AccessEvent, DecayReport } from './intelligence/types.js';
-export { computeRetrievability, updateStability, estimateInitialStability, elapsedDays } from './intelligence/fsrs.js';
+export type { DecayState, AccessEvent, DecayReport, ReviewGrade } from './intelligence/types.js';
+export { computeRetrievability, updateStability, updateStabilityGraded, estimateInitialStability, elapsedDays } from './intelligence/fsrs.js';
 export { detectDuplicates } from './intelligence/duplicate-detector.js';
 export { detectKnowledgeGaps } from './intelligence/gap-detector.js';
 export type { KnowledgeGap, GapReport } from './intelligence/gap-detector.js';
@@ -184,5 +184,9 @@ export function createKnowledgeHub(
   });
   const mcpServer = _createMcp({ store, searchEngine, vaultPath: config.vaultPath, ready: options.ready });
 
-  return { store, embedder, searchEngine, mcpServer, config };
+  // T2-15: expose the SAME lazy DecayEngine the search recency re-rank uses, so
+  // desktop (and other embedders) record accesses against the identical instance
+  // instead of constructing a standalone `new DecayEngine(db)`. Both share one DB,
+  // but a single instance avoids divergent in-process state / double-init.
+  return { store, embedder, searchEngine, mcpServer, config, getDecayEngine };
 }

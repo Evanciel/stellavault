@@ -95,45 +95,68 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
   }, [applyHover]);
 
   // Edges: dim layer always (#4466aa, signature), lit overlay for the hovered node.
-  const [litVersion, setLitVersion] = useState(0);
-  const litRef = useRef<Float32Array>(new Float32Array(0));
-  const edgePositions = useMemo(() => {
-    const nodeMap = new Map(nodes.map((n, i) => [n.id, i]));
-    const pts: number[] = [];
+  // T2-10: hover used to rebuild a Map + a fresh Float32Array + force a React
+  // re-render (setLitVersion) on EVERY pointermove → jank. Adopt the imperative
+  // litLinksRef/drawRange pattern from GraphView: index pairs are computed once,
+  // a single max-size lit buffer is reused, and hover only rewrites the buffer +
+  // sets the geometry draw range. No allocations, no React state, on hover.
+  const litRef = useRef<THREE.LineSegments>(null);
+
+  // Index pairs for the dim + lit edge buffers (shared layout: link k →
+  // floats k*6..k*6+5). Computed once per node/edge set.
+  const linkPairs = useMemo(() => {
+    const idToIndex = new Map(nodes.map((n, i) => [n.id, i]));
+    const pairs: Array<[number, number]> = [];
     for (const e of edges) {
-      const si = nodeMap.get(e.source);
-      const ti = nodeMap.get(e.target);
-      if (si == null || ti == null) continue;
-      pts.push(
-        nodes[si].position[0], nodes[si].position[1], nodes[si].position[2],
-        nodes[ti].position[0], nodes[ti].position[1], nodes[ti].position[2],
-      );
+      const a = idToIndex.get(e.source);
+      const b = idToIndex.get(e.target);
+      if (a == null || b == null || a === b) continue;
+      pairs.push([a, b]);
     }
-    return new Float32Array(pts);
+    return pairs;
   }, [nodes, edges]);
 
+  // Static dim-edge positions (panel nodes don't move — no sim).
+  const edgePositions = useMemo(() => {
+    const arr = new Float32Array(linkPairs.length * 6);
+    for (let k = 0; k < linkPairs.length; k++) {
+      const [a, b] = linkPairs[k];
+      const o = k * 6;
+      arr[o] = nodes[a].position[0]; arr[o + 1] = nodes[a].position[1]; arr[o + 2] = nodes[a].position[2];
+      arr[o + 3] = nodes[b].position[0]; arr[o + 4] = nodes[b].position[1]; arr[o + 5] = nodes[b].position[2];
+    }
+    return arr;
+  }, [nodes, linkPairs]);
+
+  // Lit overlay reuses a max-size buffer; drawRange controls how much is drawn.
+  const litPositions = useMemo(
+    () => new Float32Array(Math.max(1, linkPairs.length) * 6),
+    [linkPairs],
+  );
+
+  // Imperatively fill the lit buffer for the hovered node + set drawRange.
+  // No React re-render — runs on the same frame as the hover event.
   const updateLitEdges = useCallback((hovered: number | null) => {
+    const seg = litRef.current;
+    if (!seg) return;
     if (hovered == null) {
-      litRef.current = new Float32Array(0);
-      setLitVersion((v) => v + 1);
+      seg.geometry.setDrawRange(0, 0);
       return;
     }
-    const hoveredId = nodes[hovered]?.id;
-    const nodeMap = new Map(nodes.map((n, i) => [n.id, i]));
-    const pts: number[] = [];
-    for (const e of edges) {
-      if (e.source !== hoveredId && e.target !== hoveredId) continue;
-      const si = nodeMap.get(e.source);
-      const ti = nodeMap.get(e.target);
-      if (si == null || ti == null) continue;
-      pts.push(
-        nodes[si].position[0], nodes[si].position[1], nodes[si].position[2],
-        nodes[ti].position[0], nodes[ti].position[1], nodes[ti].position[2],
-      );
+    const attr = seg.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const arr = attr.array as Float32Array;
+    let count = 0;
+    for (let k = 0; k < linkPairs.length; k++) {
+      const [a, b] = linkPairs[k];
+      if (a !== hovered && b !== hovered) continue;
+      const o = count * 6;
+      arr[o] = nodes[a].position[0]; arr[o + 1] = nodes[a].position[1]; arr[o + 2] = nodes[a].position[2];
+      arr[o + 3] = nodes[b].position[0]; arr[o + 4] = nodes[b].position[1]; arr[o + 5] = nodes[b].position[2];
+      count++;
     }
-    litRef.current = new Float32Array(pts);
-    setLitVersion((v) => v + 1);
-  }, [nodes, edges]);
+    attr.needsUpdate = true;
+    seg.geometry.setDrawRange(0, count * 2);
+  }, [nodes, linkPairs]);
 
   // Idle-only auto-rotate: start after 5s of no interaction, ease in over 3s.
   useFrame(() => {
@@ -155,8 +178,8 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
       <ZoomToFit signal={fitSignal} nodes={nodes} controlsRef={controlsRef} />
 
       {/* Dim edges — signature steel-blue */}
-      {edgePositions.length > 0 && (
-        <lineSegments key={`edges-${edgePositions.length}`} raycast={() => null}>
+      {linkPairs.length > 0 && (
+        <lineSegments key={`edges-${linkPairs.length}`} raycast={() => null} frustumCulled={false}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[edgePositions, 3]} />
           </bufferGeometry>
@@ -164,11 +187,11 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         </lineSegments>
       )}
 
-      {/* Lit edges for the hovered node — accent */}
-      {litRef.current.length > 0 && (
-        <lineSegments key={`lit-${litVersion}`} raycast={() => null}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" args={[litRef.current, 3]} />
+      {/* Lit edges for the hovered node — accent (drawRange-controlled, T2-10) */}
+      {linkPairs.length > 0 && (
+        <lineSegments key={`lit-${linkPairs.length}`} ref={litRef} raycast={() => null} frustumCulled={false}>
+          <bufferGeometry drawRange={{ start: 0, count: 0 }}>
+            <bufferAttribute attach="attributes-position" args={[litPositions, 3]} />
           </bufferGeometry>
           <lineBasicMaterial color={accent} transparent opacity={0.85} depthWrite={false} />
         </lineSegments>

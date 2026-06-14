@@ -12,7 +12,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
 import { useAppStore } from '../../stores/app-store.js';
@@ -26,22 +26,30 @@ import {
 } from './graph-core.js';
 import { ForceSim, DEFAULT_SIM_SETTINGS, type SimSettings } from './force-sim.js';
 
-const LABEL_COUNT = 18;        // top-N largest nodes get HTML labels
-const LABEL_NEAR = 140;        // full opacity within this camera distance
-const LABEL_FAR = 460;         // invisible beyond this
+// T2-9: zoom-adaptive labels. We keep a POOL of DOM label elements for the
+// top-N largest nodes; how many are actually shown scales with zoom (camera
+// distance) — only the biggest few when zoomed out, up to the whole pool when
+// zoomed in. So the graph isn't cluttered far out but is legible up close.
+const LABEL_POOL = 60;         // top-N largest nodes get a (possibly hidden) DOM label
+const LABEL_MIN_VISIBLE = 8;   // always show at least this many (biggest)
+const LABEL_NEAR = 140;        // full opacity / max labels within this camera distance
+const LABEL_FAR = 600;         // invisible beyond this (also raised for 2D zoom-out)
 
 // ─── Scene ───────────────────────────────────────────
 
-function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, onNodeClick, onHover, labelEls }: {
+function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, mode2d, onNodeClick, onHover, labelEls, labelRank }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
   accent: string;
   fitSignal: number;
   settingsRef: React.MutableRefObject<SimSettings>;
   reheatSignal: number;
+  mode2d: boolean;
   onNodeClick: (node: GraphNode) => void;
   onHover: (info: HoverInfo | null) => void;
   labelEls: React.MutableRefObject<Map<number, HTMLDivElement>>;
+  // T2-9: index → size rank (0 = largest). Drives zoom-adaptive label cutoff.
+  labelRank: React.MutableRefObject<Map<number, number>>;
 }) {
   const coreRef = useRef<THREE.Points>(null);
   const glowRef = useRef<THREE.Points>(null);
@@ -90,6 +98,13 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     const t = setTimeout(() => sim.cool(), 600);
     return () => clearTimeout(t);
   }, [reheatSignal, sim]);
+
+  // T2-9: 2D ↔ 3D — constrain/release the z axis (setFlat reheats internally).
+  useEffect(() => {
+    sim.setFlat(mode2d);
+    const t = setTimeout(() => sim.cool(), 800);
+    return () => clearTimeout(t);
+  }, [mode2d, sim]);
 
   const edgePositions = useMemo(
     () => new Float32Array(linkPairs.length * 6),
@@ -177,17 +192,27 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     }
     const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(20, box.getSize(new THREE.Vector3()).length() / 2);
-    const fov = ((camera as THREE.PerspectiveCamera).fov ?? 55) * (Math.PI / 180);
-    const dist = (radius / Math.tan(fov / 2)) * 1.2;
-    camera.position.set(center.x, center.y + radius * 0.3, center.z + dist);
-    camera.lookAt(center);
+    if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+      // T2-9: ortho fit — look straight down z, set zoom from the viewport span.
+      const ortho = camera as THREE.OrthographicCamera;
+      camera.position.set(center.x, center.y, center.z + Math.max(radius * 2, 300));
+      camera.lookAt(center);
+      const span = Math.max(ortho.right - ortho.left, ortho.top - ortho.bottom) || size.height;
+      ortho.zoom = Math.max(0.3, Math.min(3, span / (radius * 2.4)));
+      ortho.updateProjectionMatrix();
+    } else {
+      const fov = ((camera as THREE.PerspectiveCamera).fov ?? 55) * (Math.PI / 180);
+      const dist = (radius / Math.tan(fov / 2)) * 1.2;
+      camera.position.set(center.x, center.y + radius * 0.3, center.z + dist);
+      camera.lookAt(center);
+    }
     if (controlsRef.current) {
       controlsRef.current.target.copy(center);
       controlsRef.current.update();
     }
-    // Intentionally re-fit only when signal changes.
+    // Re-fit on explicit signal AND on mode switch (camera type changed).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitSignal]);
+  }, [fitSignal, mode2d]);
 
   // ── Main loop: tick sim → write buffers → labels ──
   useFrame((_state, delta) => {
@@ -239,21 +264,38 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     }
 
     // HTML labels — project every 3rd frame (throttled), distance fade.
+    // T2-9: zoom-adaptive count. Derive a label budget from how zoomed-in we are
+    // (ortho cameras have no perspective distance, so we use zoom; perspective
+    // uses distance to the controls target). When zoomed in → reveal the whole
+    // pool; zoomed out → only the biggest LABEL_MIN_VISIBLE. The per-node `rank`
+    // (0 = largest) is compared against this budget.
     if (frameRef.current % 3 === 0 && labelEls.current.size > 0) {
+      const ortho = (camera as THREE.OrthographicCamera).isOrthographicCamera;
+      // 0 (zoomed out) → 1 (zoomed in)
+      let zoomT: number;
+      if (ortho) {
+        zoomT = Math.min(1, Math.max(0, ((camera as THREE.OrthographicCamera).zoom - 0.4) / (3 - 0.4)));
+      } else {
+        const target = controlsRef.current?.target as THREE.Vector3 | undefined;
+        const dist = target ? camera.position.distanceTo(target) : camera.position.length();
+        zoomT = Math.min(1, Math.max(0, (LABEL_FAR - dist) / (LABEL_FAR - LABEL_NEAR)));
+      }
+      const budget = Math.round(LABEL_MIN_VISIBLE + zoomT * (LABEL_POOL - LABEL_MIN_VISIBLE));
       const v = new THREE.Vector3();
       for (const [idx, el] of labelEls.current) {
-        if (idx >= sim.n) { el.style.opacity = '0'; continue; }
+        const rank = labelRank.current.get(idx) ?? Number.MAX_SAFE_INTEGER;
+        if (idx >= sim.n || rank >= budget) { el.style.opacity = '0'; continue; }
         v.set(sim.pos[idx * 3], sim.pos[idx * 3 + 1], sim.pos[idx * 3 + 2]);
         const dist = camera.position.distanceTo(v);
         v.project(camera);
-        if (v.z > 1 || dist > LABEL_FAR) {
+        if (v.z > 1 || (!ortho && dist > LABEL_FAR)) {
           el.style.opacity = '0';
           continue;
         }
         const x = (v.x * 0.5 + 0.5) * size.width;
         const y = (-v.y * 0.5 + 0.5) * size.height;
-        const fade = Math.min(1, Math.max(0, (LABEL_FAR - dist) / (LABEL_FAR - LABEL_NEAR)));
-        el.style.opacity = String(0.9 * fade);
+        const fade = ortho ? 0.9 : 0.9 * Math.min(1, Math.max(0, (LABEL_FAR - dist) / (LABEL_FAR - LABEL_NEAR)));
+        el.style.opacity = String(fade);
         el.style.transform = `translate(-50%, 0) translate(${x.toFixed(1)}px, ${(y + 8).toFixed(1)}px)`;
       }
     }
@@ -337,6 +379,15 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         </points>
       )}
 
+      {/* T2-9: swap camera by mode. makeDefault hands the active camera to R3F +
+          OrbitControls. 2D = top-down orthographic (rotation disabled, pan/zoom
+          only); 3D = the original perspective camera. */}
+      {mode2d ? (
+        <OrthographicCamera makeDefault position={[0, 0, 600]} zoom={1} near={0.1} far={4000} />
+      ) : (
+        <PerspectiveCamera makeDefault position={[0, 50, 200]} fov={55} near={0.1} far={4000} />
+      )}
+
       <OrbitControls
         ref={controlsRef}
         enableDamping
@@ -344,6 +395,9 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         minDistance={10}
         maxDistance={1500}
         rotateSpeed={0.5}
+        enableRotate={!mode2d}
+        // 2D: lock the view straight down the z axis (no orbit).
+        {...(mode2d ? { minPolarAngle: 0, maxPolarAngle: 0 } : {})}
       />
     </>
   );
@@ -397,8 +451,13 @@ export function GraphView() {
     return g ? { ...DEFAULT_SIM_SETTINGS, ...g } : { ...DEFAULT_SIM_SETTINGS };
   });
   const [reheatSignal, setReheatSignal] = useState(0);
+  // T2-9: 2D (flat, orthographic) vs 3D (default). Persisted only in-session.
+  const [mode2d, setMode2d] = useState(false);
   const settingsRef = useRef<SimSettings>(settings);
   const labelEls = useRef<Map<number, HTMLDivElement>>(new Map());
+  // T2-9: node index → size rank (0 = largest), consumed by the zoom-adaptive
+  // label budget in the frame loop. Kept in a ref so it doesn't re-render.
+  const labelRank = useRef<Map<number, number>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
 
   const coreReady = useAppStore((s) => s.coreReady);
@@ -440,12 +499,19 @@ export function GraphView() {
     return { visibleNodes: allNodes, visibleEdges: allEdges };
   }, [allNodes, allEdges]);
 
-  // Top-N largest nodes get HTML labels (positioned imperatively by the scene).
+  // Top-N largest nodes get a (possibly hidden) HTML label, positioned
+  // imperatively by the scene. T2-9: pool is LABEL_POOL; the frame loop reveals
+  // a zoom-dependent subset. We also record each node index's size rank so the
+  // loop can apply the budget cutoff.
   const labelNodes = useMemo(() => {
-    return visibleNodes
+    const ranked = visibleNodes
       .map((n, i) => ({ index: i, title: n.title, size: n.size }))
       .sort((a, b) => b.size - a.size)
-      .slice(0, LABEL_COUNT);
+      .slice(0, LABEL_POOL);
+    const rankMap = new Map<number, number>();
+    ranked.forEach((l, rank) => rankMap.set(l.index, rank));
+    labelRank.current = rankMap;
+    return ranked;
   }, [visibleNodes]);
 
   const updateSetting = useCallback((patch: Partial<SimSettings>) => {
@@ -527,7 +593,6 @@ export function GraphView() {
     >
       <GraphErrorBoundary>
         <Canvas
-          camera={{ position: [0, 50, 200], fov: 55 }}
           style={{ background: 'transparent' }}
           gl={{ antialias: true, alpha: true }}
         >
@@ -538,9 +603,11 @@ export function GraphView() {
             fitSignal={fitSignal}
             settingsRef={settingsRef}
             reheatSignal={reheatSignal}
+            mode2d={mode2d}
             onNodeClick={handleNodeClick}
             onHover={handleHover}
             labelEls={labelEls}
+            labelRank={labelRank}
           />
         </Canvas>
       </GraphErrorBoundary>
@@ -592,6 +659,19 @@ export function GraphView() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button style={overlayButtonStyle} title="Zoom to fit" onClick={() => setFitSignal((s) => s + 1)}>
             Fit
+          </button>
+          {/* T2-9: 2D ↔ 3D toggle */}
+          <button
+            style={{
+              ...overlayButtonStyle,
+              background: mode2d ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
+              color: mode2d ? '#fff' : 'var(--ink-dim)',
+            }}
+            title={mode2d ? 'Switch to 3D' : 'Switch to 2D (flat, top-down)'}
+            onClick={() => setMode2d((m) => !m)}
+            aria-pressed={mode2d}
+          >
+            {mode2d ? '2D' : '3D'}
           </button>
           <button
             style={{

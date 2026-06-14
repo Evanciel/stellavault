@@ -48,6 +48,12 @@ export class ForceSim {
   /** Pinned node during drag (fx/fy/fz semantics) — null when free. */
   private fixedIndex: number | null = null;
   private readonly fixedPos = new Float32Array(3);
+  /**
+   * T2-9: 2D mode. When true the sim is constrained to the z=0 plane — every
+   * tick zeroes z position + velocity so the layout is flat (paired with an
+   * orthographic, top-down camera in GraphView). Toggled live via setFlat().
+   */
+  private flat = false;
   // Grid scratch (reused across ticks).
   private readonly grid = new Map<number, number[]>();
 
@@ -78,6 +84,23 @@ export class ForceSim {
   /** Cool back down (drag release). */
   cool(): void {
     this.alphaTarget = 0;
+  }
+
+  /**
+   * T2-9: enter/leave 2D mode. On entering, immediately flatten z so the switch
+   * is instant; the per-tick constraint then keeps it flat. Re-heats so the
+   * layout settles into the plane.
+   */
+  setFlat(flat: boolean): void {
+    if (this.flat === flat) return;
+    this.flat = flat;
+    if (flat) {
+      for (let i = 0; i < this.n; i++) {
+        this.pos[i * 3 + 2] = 0;
+        this.vel[i * 3 + 2] = 0;
+      }
+    }
+    this.reheat(0.3);
   }
 
   /** Pin a node at a world position (drag). Keeps the sim running. */
@@ -206,6 +229,8 @@ export class ForceSim {
       pos[i * 3] += vx * step;
       pos[i * 3 + 1] += vy * step;
       pos[i * 3 + 2] += vz * step;
+      // T2-9: 2D mode — pin to the z=0 plane.
+      if (this.flat) { pos[i * 3 + 2] = 0; vel[i * 3 + 2] = 0; }
     }
     return true;
   }

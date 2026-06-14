@@ -39,6 +39,31 @@ import { ipc } from '../../lib/ipc-client.js';
 
 const lowlight = createLowlight(common);
 
+// T2-1: render vault-relative image sources (e.g. assets/x.png) via the
+// app://vault/<relpath> protocol so they actually load in-editor under CSP.
+// CRUCIAL: this only touches the RENDERED <img src>. The ProseMirror node's
+// `src` attribute is left untouched, so tiptap-markdown serializes the original
+// plain relative path back out → markdown round-trip is preserved (the on-disk
+// note never sees app://). Absolute URLs (http(s), data:, blob:, file:, already
+// app://) and root-absolute paths are passed through unchanged.
+function toAssetUrl(src: string): string {
+  if (!src) return src;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return src; // has a scheme — leave it
+  if (src.startsWith('//') || src.startsWith('/')) return src; // protocol-/root-absolute
+  // Vault-relative: encode each path segment (spaces, CJK) but keep the slashes.
+  const encoded = src.split('/').map(encodeURIComponent).join('/');
+  return `app://vault/${encoded}`;
+}
+
+// Override only renderHTML: rewrite src for display, preserve the stored attr.
+const VaultImage = Image.extend({
+  renderHTML({ HTMLAttributes }) {
+    const attrs = { ...HTMLAttributes };
+    if (typeof attrs.src === 'string') attrs.src = toAssetUrl(attrs.src);
+    return ['img', attrs];
+  },
+});
+
 interface Props {
   // W1-7: markdown BODY source (never HTML, never frontmatter — EditorArea
   // splits/recombines the YAML block via lib/frontmatter.ts).
@@ -80,7 +105,7 @@ export function MarkdownEditor({ content, onChange }: Props) {
       Subscript,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Typography,
-      Image.configure({ inline: false, allowBase64: true }),
+      VaultImage.configure({ inline: false, allowBase64: true }), // T2-1: app:// src rewrite for vault-relative images
       WikilinkNode,      // W1-9: real [[wikilink]] node (parse/serialize + click-nav)
       WikilinkExtension, // [[ autocomplete — inserts WikilinkNode
       SlashCommandExtension,

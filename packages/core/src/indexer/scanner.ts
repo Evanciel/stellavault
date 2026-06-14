@@ -70,6 +70,42 @@ function findMdFiles(dir: string, files: string[] = []): string[] {
   return files;
 }
 
+/**
+ * Parse a single file into a Document, applying the same empty/too-large guards
+ * as scanVault. Returns the parsed Document, or a SkippedFile if it was skipped.
+ * Exported for the targeted incremental indexer (T2-2 — indexFiles).
+ */
+export function scanFile(
+  vaultPath: string,
+  filePath: string,
+): { document: Document } | { skipped: SkippedFile } {
+  const rel = relative(vaultPath, filePath).replace(/\\/g, '/');
+  try {
+    const stat = statSync(filePath);
+    if (stat.size === 0) return { skipped: { path: rel, reason: 'empty' } };
+    if (stat.size > MAX_FILE_BYTES) return { skipped: { path: rel, reason: 'too-large', detail: `${stat.size}B` } };
+    const doc = parseDocument(vaultPath, filePath);
+    if (!doc.content || doc.content.trim().length === 0) {
+      return { skipped: { path: rel, reason: 'empty', detail: 'no content after frontmatter' } };
+    }
+    return { document: doc };
+  } catch (err) {
+    const msg = (err as Error)?.message ?? String(err);
+    const reason: SkipReason = /ENOENT|EACCES|EPERM/.test(msg) ? 'unreadable' : 'parse-error';
+    return { skipped: { path: rel, reason, detail: msg.slice(0, 200) } };
+  }
+}
+
+/**
+ * Compute the stable document id for a vault-relative path (sha256 of the
+ * normalized relative path, first 16 hex). Used to map a deleted file path back
+ * to its index row without re-reading the (now absent) file. (T2-2)
+ */
+export function docIdForPath(vaultPath: string, filePath: string): string {
+  const relativePath = relative(vaultPath, filePath).replace(/\\/g, '/');
+  return createHash('sha256').update(relativePath).digest('hex').slice(0, 16);
+}
+
 function parseDocument(vaultPath: string, filePath: string): Document {
   const raw = readFileSync(filePath, 'utf-8');
   const stat = statSync(filePath);

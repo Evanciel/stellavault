@@ -109,7 +109,9 @@ export interface IpcChannelMap {
   'core:ask':           { args: [question: string]; result: AskResponse };
 
   // FSRS loop (W1-14) — record access + generalized decay list (decay-top kept).
-  'core:record-access': { args: [filePath: string, kind: 'open' | 'review']; result: void };
+  // T2-5: optional grade = FSRS recall judgement (1 Again / 2 Hard / 3 Good / 4 Easy)
+  // from the Memory-tab review buttons. Omitted for plain opens (weak access).
+  'core:record-access': { args: [filePath: string, kind: 'open' | 'review', grade?: 1 | 2 | 3 | 4]; result: void };
   'core:decay-list':    { args: [limit?: number]; result: DecayItem[] };
 
   // Related notes (W1-16)

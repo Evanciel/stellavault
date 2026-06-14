@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeRetrievability,
   updateStability,
+  updateStabilityGraded,
   estimateInitialStability,
   elapsedDays,
   FSRS_PARAMS,
@@ -61,6 +62,36 @@ describe('FSRS updateStability', () => {
   it('caps at 365 days', () => {
     const s = updateStability(300, 1, 0.1);
     expect(s).toBeLessThanOrEqual(365);
+  });
+});
+
+describe('FSRS updateStabilityGraded (T2-5)', () => {
+  it('Again (grade 1) resets stability below current', () => {
+    const newS = updateStabilityGraded(50, 5, 0.5, 1);
+    expect(newS).toBeLessThan(50);
+    expect(newS).toBeGreaterThan(0);
+  });
+
+  it('Hard/Good/Easy all raise stability', () => {
+    expect(updateStabilityGraded(7, 5, 0.5, 2)).toBeGreaterThanOrEqual(7);
+    expect(updateStabilityGraded(7, 5, 0.5, 3)).toBeGreaterThan(7);
+    expect(updateStabilityGraded(7, 5, 0.5, 4)).toBeGreaterThan(7);
+  });
+
+  it('growth is progressive: Hard < Good < Easy', () => {
+    const hard = updateStabilityGraded(7, 5, 0.5, 2);
+    const good = updateStabilityGraded(7, 5, 0.5, 3);
+    const easy = updateStabilityGraded(7, 5, 0.5, 4);
+    expect(hard).toBeLessThan(good);
+    expect(good).toBeLessThan(easy);
+  });
+
+  it('Good (grade 3) matches the ungraded updateStability baseline', () => {
+    expect(updateStabilityGraded(7, 5, 0.5, 3)).toBeCloseTo(updateStability(7, 5, 0.5), 6);
+  });
+
+  it('caps at 365 days', () => {
+    expect(updateStabilityGraded(360, 1, 0.1, 4)).toBeLessThanOrEqual(365);
   });
 });
 

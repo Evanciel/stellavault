@@ -6,6 +6,7 @@ import type { DecayState, AccessEvent, DecayReport } from './types.js';
 import {
   computeRetrievability,
   updateStability,
+  updateStabilityGraded,
   estimateInitialStability,
   elapsedDays,
   FSRS_PARAMS,
@@ -73,8 +74,14 @@ export class DecayEngine {
     if (existing) {
       const elapsed = elapsedDays(existing.last_access, now);
       const currentR = computeRetrievability(existing.stability, elapsed);
-      const newS = updateStability(existing.stability, existing.difficulty, currentR);
-
+      // T2-5: branch on the FSRS grade. No grade → plain open (weak access) keeps
+      // the legacy updateStability behavior. With a grade, Again resets stability
+      // while Hard/Good/Easy raise it progressively.
+      const newS = event.grade
+        ? updateStabilityGraded(existing.stability, existing.difficulty, currentR, event.grade)
+        : updateStability(existing.stability, existing.difficulty, currentR);
+      // last_access = now → R is 1.0 at this instant for every grade; an Again
+      // lapse decays back fast because newS was reset to a small value.
       this.db.prepare(`
         UPDATE decay_state SET stability = ?, last_access = ?, retrievability = 1.0, updated_at = ?
         WHERE document_id = ?
