@@ -7,10 +7,14 @@ import { join, relative, resolve, dirname, basename, extname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath } from '../shared/ipc-types.js';
+import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
+import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
 import { validateSettingsPatch } from './settings-validate.js';
+// T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
+// from desktop-settings.ai when an API key is configured; null → extractive.
+import { makeSynthesizer } from './llm-synthesizer.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -76,6 +80,18 @@ function broadcastSettingsChanged(settings: AppSettings): void {
   }
 }
 
+// T3-2: read the persisted AI provider/key from desktop-settings. Returns the
+// raw {provider, apiKey, model} or undefined. NEVER log the result — the key is
+// only ever handed to makeSynthesizer (which sends it to api.anthropic.com).
+function getAiConfig(): { provider: 'anthropic' | 'none'; apiKey: string; model: string } | undefined {
+  try {
+    if (!settingsStore) settingsStore = new SettingsStore();
+    return settingsStore.get().ai;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Core engine (lazy loaded to avoid blocking startup) ───
 
 let coreReady = false;
@@ -85,6 +101,94 @@ let embedder: any = null;
 let decayEngine: any = null;
 // Chunk options resolved at initCore time — reused by core:index and the watcher reindex.
 let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } = { maxTokens: 300, overlap: 50, minTokens: 50 };
+// T3-3: the active vault path, captured at initCore — passed to the embedded MCP
+// server (vaultPath-dependent tools like decision-journal need it).
+let currentVaultPath = '';
+
+// ─── Agent Memory / MCP server (T3-3) ────────────────
+// The embedded MCP server ("Agent Memory") lets a local agent (Claude) read/write
+// the FSRS-pruned vault over MCP. It is OFF by default and toggled from Settings.
+// We keep the running handle + a small in-process activity ring buffer (tool name
+// + short detail) that the server's onToolCall callback feeds; both surface via
+// 'mcp:status' / the 'mcp:status-changed' event. Bound to 127.0.0.1 only.
+const MCP_DEFAULT_PORT = 3334;        // core startHttp default (loopback only)
+const MCP_TOOL_COUNT = 21;            // 21 tools per project spec (createMcpServer)
+const MCP_ACTIVITY_MAX = 20;
+let mcpHandle: { port: number; close: () => Promise<void> } | null = null;
+let mcpStarting = false;
+let mcpLastError: string | undefined;
+const mcpActivity: { tool: string; detail: string; ts: number }[] = [];
+
+function mcpStatus(): { running: boolean; port: number; toolCount: number; recent: typeof mcpActivity; error?: string } {
+  return {
+    running: !!mcpHandle,
+    port: mcpHandle?.port ?? MCP_DEFAULT_PORT,
+    toolCount: MCP_TOOL_COUNT,
+    recent: mcpActivity.slice(0, MCP_ACTIVITY_MAX),
+    error: mcpLastError,
+  };
+}
+
+function broadcastMcpStatus(): void {
+  const status = mcpStatus();
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('mcp:status-changed', status);
+  }
+}
+
+function recordMcpActivity(info: { tool: string; detail: string }): void {
+  mcpActivity.unshift({ tool: info.tool, detail: info.detail, ts: Date.now() });
+  if (mcpActivity.length > MCP_ACTIVITY_MAX) mcpActivity.length = MCP_ACTIVITY_MAX;
+  broadcastMcpStatus();
+}
+
+async function startMcpServer(): Promise<void> {
+  if (mcpHandle || mcpStarting) return;
+  if (!coreReady || !store || !searchEngine) {
+    mcpLastError = 'Core is still initializing — try again in a moment.';
+    broadcastMcpStatus();
+    return;
+  }
+  mcpStarting = true;
+  mcpLastError = undefined;
+  try {
+    const core = await import('@stellavault/core');
+    const server = (core as any).createMcpServer({
+      store,
+      searchEngine,
+      embedder,
+      decayEngine,
+      vaultPath: currentVaultPath,
+      onToolCall: recordMcpActivity,
+    });
+    // startHttp returns a closable handle (core T3-3 addition); guard for older core.
+    const handle = await server.startHttp(MCP_DEFAULT_PORT);
+    if (handle && typeof handle.close === 'function') {
+      mcpHandle = { port: handle.port ?? MCP_DEFAULT_PORT, close: handle.close };
+    } else {
+      // Older core without a closable handle — running but non-stoppable.
+      mcpHandle = { port: MCP_DEFAULT_PORT, close: async () => { /* no-op */ } };
+    }
+  } catch (err) {
+    mcpLastError = err instanceof Error ? err.message : String(err);
+    console.error('[main] MCP server start failed:', err);
+  } finally {
+    mcpStarting = false;
+    broadcastMcpStatus();
+  }
+}
+
+async function stopMcpServer(): Promise<void> {
+  if (!mcpHandle) return;
+  try {
+    await mcpHandle.close();
+  } catch (err) {
+    console.error('[main] MCP server stop failed:', err);
+  } finally {
+    mcpHandle = null;
+    broadcastMcpStatus();
+  }
+}
 
 // ─── Graph build cache (T2-7) ────────────────────────
 // GraphView (main pane) + GraphPanel (right panel) both call 'graph:build' on
@@ -131,6 +235,7 @@ async function initCore(config: AppConfig): Promise<void> {
     }
     // The desktop bootstrap (vault picker dialog) is authoritative for paths.
     hubConfig = { ...hubConfig, vaultPath: config.vaultPath, dbPath: config.dbPath || hubConfig.dbPath };
+    currentVaultPath = config.vaultPath; // T3-3: MCP server vaultPath-dependent tools
     coreChunkOptions = { ...coreChunkOptions, ...hubConfig.chunking };
     const hub = core.createKnowledgeHub(hubConfig);
     await hub.store.initialize();
@@ -673,7 +778,12 @@ function registerIpcHandlers(config: AppConfig) {
     try {
       const core = await import('@stellavault/core');
       if (typeof (core as any).askVault === 'function') {
-        const res = await (core as any).askVault(searchEngine, question, { limit: 8 });
+        // T3-2: if an API key is configured, hand askVault an LLM synthesizer so it
+        // returns a real synthesized + cited answer; otherwise null → askVault uses
+        // its extractive search-list fallback (and the synthesizer itself falls back
+        // internally on any LLM error, so a bad key never breaks Ask).
+        const synthesizer = makeSynthesizer(getAiConfig()) ?? undefined;
+        const res = await (core as any).askVault(searchEngine, question, { limit: 8, synthesizer });
         return {
           answer: res?.answer ?? '',
           citations: (res?.sources ?? []).map((s: any) => ({
@@ -1015,11 +1125,18 @@ function registerIpcHandlers(config: AppConfig) {
     if (err) throw new Error(`Failed to open path: ${err}`);
   });
 
-  // shell:open-external — https-only allowlist (no file:, javascript:, http:).
+  // shell:open-external — https-only allowlist, PLUS loopback http for the local
+  // Publish server (T3-7): http://127.0.0.1:<port> / http://localhost:<port> are
+  // safe to hand to the OS browser (they only reach our own server bound to
+  // 127.0.0.1). Everything else (file:, javascript:, remote http:) stays blocked.
   ipcMain.handle('shell:open-external', async (_e, url: string) => {
     let parsed: URL;
     try { parsed = new URL(url); } catch { throw new Error('Invalid URL'); }
-    if (parsed.protocol !== 'https:') throw new Error('Only https:// URLs are allowed');
+    const isLoopbackHttp = parsed.protocol === 'http:' &&
+      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost');
+    if (parsed.protocol !== 'https:' && !isLoopbackHttp) {
+      throw new Error('Only https:// or loopback http:// URLs are allowed');
+    }
     await shell.openExternal(parsed.toString());
   });
 
@@ -1054,7 +1171,544 @@ function registerIpcHandlers(config: AppConfig) {
     return toVaultRel(vp, target);
   });
   // ─── [end editor-upgrade agent block] ───
+
+  // ─── [auto-update agent owned block — T3-12] ───
+  // app:get-version returns the running app version (About box / update UI).
+  ipcMain.handle('app:get-version', (): string => app.getVersion());
+  // update:check triggers a manual check. The autoUpdater is configured in
+  // setupAutoUpdate() (called from whenReady); here we delegate to its
+  // checkForUpdatesNow() and return a human status string. Progress/result is
+  // also pushed asynchronously via the 'update:status' broadcast event.
+  ipcMain.handle('update:check', (): string => checkForUpdatesNow());
+  // ─── [end auto-update agent block] ───
+
+  // ─── [publish/multi-vault agent owned block — T3-7 / T3-9 / T3-4] ───────
+  // Three appended, self-contained feature slices. They reuse the existing
+  // `vp`/`config`/`store`/`embedder`/`settingsStore` closures above; nothing in
+  // the blocks above is modified. See registerPublishVaultClip for the impl.
+  registerPublishVaultClip(config);
+  // ─── [end publish/multi-vault agent block] ─────────────────────────────
+
+  // ─── [AI-synthesis agent owned block — T3-1 / T3-8 appended] ───────────
+  // T3-1 Wiki Synthesis: compile a cited article on a topic from the vault.
+  // Search → gather sources → synthesize. With an API key configured, the LLM
+  // synthesizer writes a real article citing [[Note]] backlinks; without one it
+  // degrades to an extractive outline (still cited) so the panel always works.
+  ipcMain.handle('core:synthesize', async (_e, topic: string): Promise<SynthesisResult> => {
+    const t = (topic ?? '').trim();
+    const empty: SynthesisResult = { topic: t, article: '', synthesized: false, sources: [] };
+    if (!coreReady || !searchEngine || !t) return empty;
+    try {
+      const results = await searchEngine.search({ query: t, limit: 10 });
+      const sources: SynthesisResult['sources'] = results.map((r: any) => {
+        const m = mapCoreSearchResult(vp, r);
+        return { title: m.title, filePath: m.filePath, snippet: m.snippet };
+      });
+      if (sources.length === 0) {
+        return { topic: t, synthesized: false, sources: [], article:
+          `# ${t}\n\nNo notes in your vault cover **${t}** yet. Capture a few notes on it, then synthesize again.` };
+      }
+
+      // LLM path. core's SynthesisSource uses title + snippet for grounding.
+      const synthesizer = makeSynthesizer(getAiConfig());
+      if (synthesizer) {
+        try {
+          const article = await synthesizer.synthesize({
+            question: t,
+            mode: 'wiki',
+            sources: sources.map((s) => ({ title: s.title, filePath: s.filePath, snippet: s.snippet, score: 0 })),
+          });
+          return { topic: t, article, synthesized: true, sources };
+        } catch (err) {
+          console.error('[main] core:synthesize LLM failed — extractive fallback:', err);
+        }
+      }
+
+      // Extractive fallback: structured outline citing each source as [[Title]].
+      const lines: string[] = [`# ${t}`, ''];
+      lines.push(`*Compiled from ${sources.length} of your notes. Add an AI provider key in Settings for a synthesized article.*`, '');
+      lines.push('## Key points', '');
+      for (const s of sources.slice(0, 8)) {
+        const snip = (s.snippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        lines.push(`- [[${s.title}]]${snip ? ` — ${snip}…` : ''}`);
+      }
+      lines.push('', '## Related notes', '');
+      for (const s of sources) lines.push(`- [[${s.title}]]`);
+      return { topic: t, article: lines.join('\n'), synthesized: false, sources };
+    } catch (err) {
+      console.error('[main] core:synthesize failed:', err);
+      return empty;
+    }
+  });
+
+  // T3-8: contradiction nudges — wire core.detectContradictions. Statements +
+  // absolute filePaths so the Coach panel can open either side of the pair.
+  ipcMain.handle('core:contradictions', async (_e, limit?: number): Promise<ContradictionNudge[]> => {
+    if (!coreReady || !store) return [];
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).detectContradictions !== 'function') return [];
+      const pairs = await (core as any).detectContradictions(store, limit ?? 10);
+      return (pairs ?? []).map((p: any) => ({
+        docA: { title: p.docA?.title ?? 'Untitled', filePath: p.docA?.filePath ? join(vp, p.docA.filePath) : '', statement: p.docA?.statement ?? '' },
+        docB: { title: p.docB?.title ?? 'Untitled', filePath: p.docB?.filePath ? join(vp, p.docB.filePath) : '', statement: p.docB?.statement ?? '' },
+        similarity: typeof p.similarity === 'number' ? p.similarity : 0,
+        confidence: typeof p.confidence === 'number' ? p.confidence : 0,
+        type: p.type ?? 'semantic',
+      }));
+    } catch (err) {
+      console.error('[main] core:contradictions failed:', err);
+      return [];
+    }
+  });
+
+  // T3-8: duplicate nudges — wire core.detectDuplicates (vector cosine ≥ 0.88).
+  ipcMain.handle('core:duplicates', async (_e, limit?: number): Promise<DuplicateNudge[]> => {
+    if (!coreReady || !store) return [];
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).detectDuplicates !== 'function') return [];
+      const pairs = await (core as any).detectDuplicates(store, 0.88, limit ?? 10);
+      return (pairs ?? []).map((p: any) => ({
+        docA: { title: p.docA?.title ?? 'Untitled', filePath: p.docA?.filePath ? join(vp, p.docA.filePath) : '' },
+        docB: { title: p.docB?.title ?? 'Untitled', filePath: p.docB?.filePath ? join(vp, p.docB.filePath) : '' },
+        similarity: typeof p.similarity === 'number' ? p.similarity : 0,
+      }));
+    } catch (err) {
+      console.error('[main] core:duplicates failed:', err);
+      return [];
+    }
+  });
+  // ─── [end AI-synthesis agent block] ────────────────────────────────────
+
+  // ─── [capture/automation agent owned block — T3-5 / T3-6 / T3-3 appended] ─
+  // T3-5 decision journal / ADR capture, T3-6 auto-linker, T3-3 Agent Memory MCP
+  // toggle. All reuse the `vp`/`store`/`searchEngine` closures above; nothing
+  // above is modified. Decision files live under <vault>/decisions/ (core handles
+  // path-traversal guarding via assertInsideVault-equivalent in decision-journal).
+
+  // T3-5: log a structured decision (ADR) → <vault>/decisions/<date>-<slug>.md.
+  ipcMain.handle('decision:log', async (_e, input: DecisionInput): Promise<{ filePath: string; fileName: string }> => {
+    if (!input || typeof input.title !== 'string' || typeof input.decision !== 'string' || typeof input.reasoning !== 'string') {
+      throw new Error('decision:log: title, decision, and reasoning are required');
+    }
+    const core = await import('@stellavault/core');
+    const res = await (core as any).handleLogDecision(vp, {
+      title: input.title,
+      context: input.context,
+      decision: input.decision,
+      alternatives: Array.isArray(input.alternatives) ? input.alternatives : undefined,
+      reasoning: input.reasoning,
+      project: input.project,
+    });
+    // core returns an absolute path in `saved`; assert it stayed inside the vault
+    // (defense-in-depth — core already guards, but the IPC boundary re-verifies).
+    const filePath = res?.saved ?? '';
+    if (filePath) assertInsideVault(vp, filePath);
+    noteSelfWrite(filePath); // W1-15 echo guard — our own write
+    bumpVaultFsVersion();
+    return { filePath, fileName: res?.fileName ?? '' };
+  });
+
+  // T3-5: list past decisions (newest first). Empty query → list all (capped).
+  ipcMain.handle('decision:list', async (_e, query?: string): Promise<DecisionEntry[]> => {
+    const decisionsDir = join(vp, 'decisions');
+    if (!existsSync(decisionsDir)) return [];
+    const core = await import('@stellavault/core');
+    // core.handleFindDecisions requires a query; for the unfiltered list we read
+    // the directory directly (same shape) so the view shows everything by default.
+    let files: { file: string; content: string }[];
+    const q = (query ?? '').trim();
+    if (q) {
+      const found = await (core as any).handleFindDecisions(vp, { query: q });
+      files = (found?.decisions ?? []).map((d: any) => ({ file: d.file, content: d.content ?? '' }));
+    } else {
+      const names = readdirSync(decisionsDir).filter((f) => f.endsWith('.md')).sort().reverse();
+      files = names.map((f) => {
+        let content = '';
+        try { content = readFileSync(join(decisionsDir, f), 'utf-8'); } catch { /* unreadable — skip body */ }
+        return { file: f, content };
+      });
+    }
+    return files.map((f): DecisionEntry => {
+      const titleMatch = f.content.match(/^title:\s*"?([^"\n]+)"?\s*$/m);
+      const dateMatch = f.content.match(/^date:\s*([0-9-]+)\s*$/m);
+      const projMatch = f.content.match(/^project:\s*"?([^"\n]*)"?\s*$/m);
+      const dateFromName = f.file.match(/^(\d{4}-\d{2}-\d{2})/);
+      return {
+        fileName: f.file,
+        filePath: join(decisionsDir, f.file),
+        title: titleMatch?.[1]?.trim() || f.file.replace(/\.md$/, ''),
+        date: (dateMatch?.[1] || dateFromName?.[1] || '').trim(),
+        project: projMatch?.[1]?.trim() ?? '',
+        snippet: f.content.slice(0, 300),
+      };
+    });
+  });
+
+  // T3-5: knowledge-evolution timeline — which notes changed most recently.
+  // Reuses the core get-evolution MCP tool (no MCP server needed) against store.
+  ipcMain.handle('decision:evolution', async (_e, limit?: number): Promise<EvolutionEntry[]> => {
+    if (!coreReady || !store) return [];
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).createGetEvolutionTool !== 'function') return [];
+      const tool = (core as any).createGetEvolutionTool(store);
+      const out = await tool.handler({ limit: limit ?? 12 });
+      const text = out?.content?.[0]?.text ?? '{}';
+      const parsed = JSON.parse(text);
+      const rows: any[] = parsed?.recentlyEvolved ?? [];
+      return rows.map((r): EvolutionEntry => {
+        const f = resolveDocFile(r.documentId);
+        return {
+          documentId: r.documentId ?? '',
+          title: r.title || f.title || 'Untitled',
+          filePath: f.filePath,
+          lastModified: r.lastModified ?? '',
+          daysSinceModified: typeof r.daysSinceModified === 'number' ? r.daysSinceModified : 0,
+          tags: Array.isArray(r.tags) ? r.tags : [],
+        };
+      });
+    } catch (err) {
+      console.error('[main] decision:evolution failed:', err);
+      return [];
+    }
+  });
+
+  // T3-6: auto-linker — find vault titles mentioned as plain text in `body` and
+  // return suggestions + an apply-all preview. selfTitle prevents self-linking.
+  // No write happens here; the renderer applies after the user confirms.
+  ipcMain.handle('autolink:suggest', async (_e, body: string, selfTitle?: string): Promise<AutoLinkResult> => {
+    const src = typeof body === 'string' ? body : '';
+    if (!src.trim()) return { suggestions: [], linkedBody: src };
+    try {
+      const core = await import('@stellavault/core');
+      const titles: string[] = typeof (core as any).collectVaultTitles === 'function'
+        ? (core as any).collectVaultTitles(vp)
+        : [];
+      if (titles.length === 0) return { suggestions: [], linkedBody: src };
+      const linkedBody: string = (core as any).insertWikilinks(src, titles, selfTitle);
+      // Derive the suggestion list by diffing newly-inserted [[target|phrase]]
+      // tokens against the original (insertWikilinks only adds the alias form).
+      const suggestions: LinkSuggestion[] = [];
+      const re = /\[\[([^\]|]+)\|([^\]]+)\]\]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(linkedBody)) !== null) {
+        const target = m[1];
+        const phrase = m[2];
+        // Only count links that did NOT already exist in the source as that alias.
+        if (!src.includes(`[[${target}|${phrase}]]`)) {
+          suggestions.push({ phrase, target });
+        }
+      }
+      return { suggestions, linkedBody };
+    } catch (err) {
+      console.error('[main] autolink:suggest failed:', err);
+      return { suggestions: [], linkedBody: src };
+    }
+  });
+
+  // T3-3: Agent Memory — start/stop/poll the embedded MCP server (loopback only).
+  ipcMain.handle('mcp:start', async (): Promise<McpStatus> => {
+    await startMcpServer();
+    return mcpStatus();
+  });
+  ipcMain.handle('mcp:stop', async (): Promise<McpStatus> => {
+    await stopMcpServer();
+    return mcpStatus();
+  });
+  ipcMain.handle('mcp:status', (): McpStatus => mcpStatus());
+  // ─── [end capture/automation agent block] ──────────────────────────────
 }
+
+// ─── [publish/multi-vault agent owned block — impl] ──────────────────────
+// T3-7 Publish (local read-only PWA+dashboard), T3-9 multi-vault switcher +
+// cross-vault search, T3-4 web clipper endpoint. Kept in one function so the
+// closures (vp/store/embedder/settingsStore) and the long-lived publish server
+// handle live together. Registered from registerIpcHandlers via the marked call.
+
+let publishServer: HttpServer | null = null;
+let publishPortInUse = 0;
+
+function getSettings(): AppSettings {
+  if (!settingsStore) settingsStore = new SettingsStore();
+  return settingsStore.get();
+}
+
+function publishStatus(): PublishStatus {
+  const running = !!publishServer && publishServer.listening;
+  return {
+    running,
+    url: running ? `http://127.0.0.1:${publishPortInUse}/dashboard` : '',
+    port: running ? publishPortInUse : (getSettings().publishPort ?? 3105),
+  };
+}
+
+/** Slugify a vault name/path into a short stable registry id. */
+function vaultSlug(name: string, path: string): string {
+  const base = (name || basename(path) || 'vault')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24) || 'vault';
+  // Disambiguate with a short path hash so two "Notes" folders don't collide.
+  const h = createHash('sha256').update(resolve(path)).digest('hex').slice(0, 6);
+  return `${base}-${h}`;
+}
+
+/** Ensure the booted vault is in the registry + flagged active. Idempotent.
+ *  Seeds the registry on first run (getDefaults ships an empty array). */
+function ensureActiveVaultRegistered(config: AppConfig): VaultRegistryEntry[] {
+  if (!settingsStore) settingsStore = new SettingsStore();
+  const current = settingsStore.get().vaults ?? [];
+  const activePath = resolve(config.vaultPath);
+  let list = current.map((v) => ({ ...v, active: resolve(v.path) === activePath }));
+  if (!list.some((v) => resolve(v.path) === activePath)) {
+    list = [
+      ...list,
+      {
+        id: vaultSlug(basename(config.vaultPath), config.vaultPath),
+        name: basename(config.vaultPath) || 'Vault',
+        path: config.vaultPath,
+        dbPath: config.dbPath,
+        active: true,
+      },
+    ];
+  }
+  settingsStore.set({ vaults: list });
+  return list;
+}
+
+function registerPublishVaultClip(config: AppConfig): void {
+  const vp = config.vaultPath;
+  ensureActiveVaultRegistered(config);
+
+  // ─── T3-7: Publish (local read-only PWA + dashboard) + T3-4 clip endpoint ──
+  ipcMain.handle('publish:status', () => publishStatus());
+
+  ipcMain.handle('publish:stop', async (): Promise<PublishStatus> => {
+    if (publishServer) {
+      await new Promise<void>((res) => publishServer!.close(() => res()));
+      publishServer = null;
+      publishPortInUse = 0;
+    }
+    return publishStatus();
+  });
+
+  ipcMain.handle('publish:start', async (): Promise<PublishStatus> => {
+    if (publishServer && publishServer.listening) return publishStatus();
+    if (!coreReady || !store || !searchEngine) {
+      throw new Error('AI engine still loading — try Publish again in a moment.');
+    }
+    const port = getSettings().publishPort ?? 3105;
+    if (port === 3000) throw new Error('Port 3000 is reserved — pick another in Settings.');
+
+    const core = await import('@stellavault/core');
+    // Build the read-only Express app via core's createApiServer (dashboard data
+    // routes + search), then layer the dormant dashboard HTML + PWA on top, plus
+    // our own clip endpoint (T3-4). We DON'T call the returned .start() — we own
+    // the http.Server so we can stop it cleanly.
+    const api = core.createApiServer({
+      store,
+      searchEngine,
+      port,
+      vaultName: basename(vp) || 'Vault',
+      vaultPath: vp,
+      ...(decayEngine ? { decayEngine } : {}),
+    });
+    const expressApp = api.app;
+
+    // Mount the dormant dashboard + PWA (read-only browsing / mobile on-ramp).
+    if (typeof (core as any).mountDashboard === 'function') (core as any).mountDashboard(expressApp);
+    if (typeof (core as any).mountPWA === 'function') (core as any).mountPWA(expressApp);
+
+    // T3-4: web clipper endpoint. Unlike core's /clip (which re-fetches the URL
+    // server-side), this accepts the page HTML/selection the BROWSER already has
+    // — no SSRF surface, and we capture exactly what the user selected. Writes a
+    // markdown note into the vault, then auto-embeds + seeds decay so it's
+    // searchable immediately. Local-only (server binds 127.0.0.1); no auth token
+    // is required for the extension POST since the surface is loopback + the
+    // payload is browser-supplied content, not a fetch instruction.
+    const { Router } = await import('express');
+    const clipRouter = Router();
+    clipRouter.post('/clip', async (req, res) => {
+      try {
+        const { url, html, selection, title } = req.body ?? {};
+        const text = String(selection || html || '').slice(0, 100_000);
+        if (!text.trim()) { res.status(400).json({ error: 'selection or html required' }); return; }
+
+        // Strip tags if raw HTML was sent (selection is usually plain text).
+        const looksHtml = /<\/?[a-z][\s\S]*>/i.test(text);
+        let body = looksHtml
+          ? text
+              .replace(/<script[\s\S]*?<\/script>/gi, '')
+              .replace(/<style[\s\S]*?<\/style>/gi, '')
+              .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
+              .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
+              .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
+              .replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
+              .replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
+              .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n')
+              .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n')
+              .replace(/<br\s*\/?>(?!\n)/gi, '\n')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+              .replace(/\n{3,}/g, '\n\n').trim()
+          : text.trim();
+        if (body.length > 20_000) body = body.slice(0, 20_000) + '\n\n…(truncated)';
+
+        const safeUrl = typeof url === 'string' ? url.slice(0, 2000) : '';
+        const rawTitle = String(title || (safeUrl ? new URL(safeUrl).hostname : 'Web clip')).trim();
+        const safeTitle = rawTitle.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Web clip';
+
+        const date = new Date().toISOString().slice(0, 10);
+        const clipDir = join(vp, 'Clips');
+        mkdirSync(clipDir, { recursive: true });
+        // Unique filename — never clobber an earlier clip the same day.
+        let fileName = `${date} ${safeTitle}.md`;
+        let i = 2;
+        while (existsSync(join(clipDir, fileName))) fileName = `${date} ${safeTitle} (${i++}).md`;
+        const fullPath = join(clipDir, fileName);
+
+        const sourceLine = safeUrl ? `\nsource: "${safeUrl.replace(/"/g, "'")}"` : '';
+        const md = `---\ntitle: "${safeTitle.replace(/"/g, "'")}"${sourceLine}\nclipped: ${date}\ntags: [clip]\n---\n\n# ${safeTitle}\n\n${safeUrl ? `> Source: ${safeUrl}\n\n` : ''}${body}\n`;
+        noteSelfWrite(fullPath); // W1-15 watcher echo guard — our own write
+        writeFileSync(fullPath, md, 'utf-8');
+        bumpVaultFsVersion();
+
+        // Auto-embed + seed decay so the clip is searchable + tracked immediately.
+        try {
+          if (typeof (core as any).indexFiles === 'function') {
+            await (core as any).indexFiles(vp, [fullPath], { store, embedder, chunkOptions: coreChunkOptions });
+          } else {
+            await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
+          }
+          bumpGraphCacheVersion();
+          if (decayEngine) {
+            const documentId = docIdForFile(vp, fullPath);
+            await decayEngine.recordAccess({ documentId, type: 'view', timestamp: new Date().toISOString() }).catch(() => {});
+          }
+        } catch (idxErr) {
+          console.error('[publish] clip auto-index failed:', idxErr);
+        }
+
+        res.json({ success: true, fileName, savedTo: toVaultRel(vp, fullPath) });
+      } catch (err) {
+        console.error('[publish] clip failed:', err);
+        res.status(500).json({ error: 'Clip failed' });
+      }
+    });
+    expressApp.use('/api', clipRouter);
+
+    publishServer = expressApp.listen(port, '127.0.0.1');
+    publishPortInUse = port;
+    await new Promise<void>((res, rej) => {
+      publishServer!.once('listening', () => res());
+      publishServer!.once('error', (e) => { publishServer = null; publishPortInUse = 0; rej(e); });
+    });
+    console.error(`[publish] read-only server at http://127.0.0.1:${port}/dashboard`);
+    return publishStatus();
+  });
+
+  // ─── T3-9: multi-vault switcher + cross-vault search ──────────────────────
+  ipcMain.handle('vault:list-registry', (): VaultRegistryEntry[] => {
+    return ensureActiveVaultRegistered(config);
+  });
+
+  ipcMain.handle('vault:add-to-registry', async (): Promise<VaultRegistryEntry | null> => {
+    const result = await dialog.showOpenDialog({
+      title: 'Add a vault folder',
+      message: 'Choose a folder containing .md notes',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const path = result.filePaths[0];
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const list = settingsStore.get().vaults ?? [];
+    // Don't double-add the same folder.
+    if (list.some((v) => resolve(v.path) === resolve(path))) {
+      return list.find((v) => resolve(v.path) === resolve(path)) ?? null;
+    }
+    // A new vault gets its own DB next to the shared store dir, keyed by slug so
+    // each vault has an independent index (cross-vault search opens each in turn).
+    const id = vaultSlug(basename(path), path);
+    const dbPath = join(homedir(), '.stellavault', `${id}.db`);
+    const entry: VaultRegistryEntry = { id, name: basename(path) || 'Vault', path, dbPath, active: false };
+    settingsStore.set({ vaults: [...list, entry] });
+    return entry;
+  });
+
+  ipcMain.handle('vault:remove-from-registry', (_e, id: string): VaultRegistryEntry[] => {
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const list = settingsStore.get().vaults ?? [];
+    // Never remove the active vault (the app is loaded for it).
+    const filtered = list.filter((v) => !(v.id === id && !v.active));
+    settingsStore.set({ vaults: filtered });
+    return filtered;
+  });
+
+  // Switching re-points ~/.stellavault.json then asks for a restart — core
+  // re-init (native SQLite + embedder reload + DB swap) is heavy and the watcher/
+  // asset-protocol/IPC closures are all bound to the boot vault path. A clean
+  // restart is far safer than hot-swapping every closure mid-session.
+  ipcMain.handle('vault:switch', (_e, id: string): { restartRequired: boolean } => {
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const list = settingsStore.get().vaults ?? [];
+    const target = list.find((v) => v.id === id);
+    if (!target) throw new Error(`Unknown vault: ${id}`);
+    settingsStore.set({ vaults: list.map((v) => ({ ...v, active: v.id === id })) });
+    // Rewrite the bootstrap config so the next launch loads the chosen vault.
+    try {
+      writeFileSync(
+        join(homedir(), '.stellavault.json'),
+        JSON.stringify({ vaultPath: target.path, dbPath: target.dbPath }, null, 2),
+        'utf-8',
+      );
+    } catch (err) {
+      console.error('[main] vault:switch — failed to rewrite bootstrap config:', err);
+      throw new Error('Could not persist vault switch.');
+    }
+    return { restartRequired: true };
+  });
+
+  ipcMain.handle('search:all-vaults', async (_e, query: string, limit?: number): Promise<CrossVaultResult[]> => {
+    if (!coreReady || !embedder || !query?.trim()) return [];
+    try {
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).searchAllVaults !== 'function') return [];
+      const list = getSettings().vaults ?? [];
+      // core's searchAllVaults reads its OWN ~/.stellavault/vaults.json registry;
+      // we keep the registry in desktop-settings, so mirror it across before the
+      // call (add/replace each entry). addVault throws on dupes → guard with list.
+      try {
+        const existing: any[] = typeof (core as any).listVaults === 'function' ? (core as any).listVaults() : [];
+        const existingIds = new Set(existing.map((v) => v.id));
+        for (const v of list) {
+          if (!existingIds.has(v.id) && typeof (core as any).addVault === 'function') {
+            (core as any).addVault(v.id, v.name, v.path, v.dbPath, false);
+          }
+        }
+      } catch (mirrorErr) {
+        console.error('[main] search:all-vaults registry mirror failed:', mirrorErr);
+      }
+      const dims = embedder.dimensions;
+      const createStore = (dbPath: string) => (core as any).createSqliteVecStore(dbPath, dims);
+      const results = await (core as any).searchAllVaults(query, embedder, createStore, { limit: limit ?? 20 });
+      return (results ?? []).map((r: any): CrossVaultResult => ({
+        vaultId: r.vaultId ?? '',
+        vaultName: r.vaultName ?? '',
+        title: r.title ?? 'Untitled',
+        score: Math.round((r.score ?? 0) * 1000) / 1000,
+        snippet: r.snippet ?? '',
+        filePath: r.filePath ?? '',
+      }));
+    } catch (err) {
+      console.error('[main] search:all-vaults failed:', err);
+      return [];
+    }
+  });
+}
+// ─── [end publish/multi-vault agent block — impl] ────────────────────────
 
 // ─── File watcher (W1-15) ────────────────────────────
 // Watches the vault for external *.md changes (Obsidian, Notion sync daemon,
@@ -1345,6 +1999,107 @@ process.on('uncaughtException', (err) => {
   } catch { /* dialog best-effort — never let the handler itself throw */ }
 });
 
+// ─── [auto-update agent owned block — T3-12] ─────────
+// In-app auto-update via update-electron-app (Squirrel.Windows + Squirrel.Mac
+// feed, served by the GitHub "Desktop Release" releases). Wired so installed
+// users can receive the T1-1 fix and future releases.
+//
+// SIGNING GATE (important): production auto-update REQUIRES code signing on both
+// Windows (Authenticode) and macOS (Developer ID + notarization). Without a
+// signed build, Squirrel either refuses to apply the update (mac) or installs an
+// unsigned/untrusted binary (win) — a security hazard and a broken UX. So the
+// updater stays OFF by default and only arms when STELLAVAULT_AUTO_UPDATE=1 is
+// set (CI sets it for signed release builds — see desktop-release.yml notes).
+// Unsigned local/dev builds therefore NEVER attempt a network update; 'update:check'
+// returns a clear "disabled" status and the app keeps working normally.
+//
+// update-electron-app is resolved via a runtime dynamic import so a missing dep
+// (it's optional in dev) degrades gracefully instead of crashing main startup.
+
+let autoUpdateArmed = false;
+let lastUpdateStatus = 'not configured';
+
+function broadcastUpdateStatus(kind: string, message: string, version?: string): void {
+  lastUpdateStatus = message;
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('update:status', { kind, message, ...(version ? { version } : {}) });
+  }
+}
+
+/** Manual "Check for updates" entry point (IPC update:check). */
+function checkForUpdatesNow(): string {
+  if (!autoUpdateArmed) {
+    const why = app.isPackaged
+      ? 'disabled: set STELLAVAULT_AUTO_UPDATE=1 on a signed build to enable'
+      : 'disabled: auto-update only runs in packaged signed builds';
+    broadcastUpdateStatus('disabled', why);
+    return why;
+  }
+  try {
+    // electron's autoUpdater is what update-electron-app drives under the hood.
+    const { autoUpdater } = require('electron') as typeof import('electron');
+    broadcastUpdateStatus('checking', 'checking for updates…');
+    autoUpdater.checkForUpdates();
+    return 'checking';
+  } catch (err) {
+    const msg = `check failed: ${err instanceof Error ? err.message : String(err)}`;
+    broadcastUpdateStatus('error', msg);
+    return msg;
+  }
+}
+
+/** Configure update-electron-app on startup. No-op (status only) when the build
+ *  is unpackaged or the signing gate (STELLAVAULT_AUTO_UPDATE=1) is not set. */
+async function setupAutoUpdate(): Promise<void> {
+  // Only packaged builds have a real updater + a feed; dev runs are skipped.
+  if (!app.isPackaged) {
+    broadcastUpdateStatus('disabled', 'disabled: development build');
+    return;
+  }
+  if (process.env.STELLAVAULT_AUTO_UPDATE !== '1') {
+    broadcastUpdateStatus('disabled', 'disabled: unsigned build (set STELLAVAULT_AUTO_UPDATE=1 on a signed release)');
+    return;
+  }
+  try {
+    // Indirected specifier so tsc doesn't statically require the (optional) dep
+    // at compile time — it's resolved at runtime in packaged builds (the dep is
+    // bundled then). vite-ignore keeps the Vite main build from pre-bundling it.
+    const specifier = 'update-electron-app';
+    const mod: any = await import(/* @vite-ignore */ specifier);
+    const updateElectronApp = mod.updateElectronApp ?? mod.default ?? mod;
+    const UpdateSourceType = mod.UpdateSourceType;
+    updateElectronApp({
+      // GitHub releases feed via update.electronjs.org (matches the repo the
+      // Desktop Release workflow publishes to).
+      ...(UpdateSourceType
+        ? {
+            updateSource: {
+              type: UpdateSourceType.ElectronPublicUpdateService,
+              repo: 'Evanciel/stellavault',
+            },
+          }
+        : {}),
+      updateInterval: '1 hour',
+      notifyUser: true,
+      logger: { log: (...a: unknown[]) => console.log('[update]', ...a), info: () => {}, warn: () => {}, error: (...a: unknown[]) => console.error('[update]', ...a) },
+    });
+    // Surface autoUpdater lifecycle to the renderer (manual-check feedback).
+    const { autoUpdater } = require('electron') as typeof import('electron');
+    autoUpdater.on('checking-for-update', () => broadcastUpdateStatus('checking', 'checking for updates…'));
+    autoUpdater.on('update-available', () => broadcastUpdateStatus('available', 'update available — downloading…'));
+    autoUpdater.on('update-not-available', () => broadcastUpdateStatus('not-available', 'you are on the latest version'));
+    autoUpdater.on('update-downloaded', (_e: unknown, _notes: string, name: string) =>
+      broadcastUpdateStatus('downloaded', 'update downloaded — restart to install', name));
+    autoUpdater.on('error', (err: Error) => broadcastUpdateStatus('error', `update error: ${err?.message ?? err}`));
+    autoUpdateArmed = true;
+    broadcastUpdateStatus('idle', 'auto-update enabled');
+  } catch (err) {
+    console.error('[main] setupAutoUpdate failed:', err);
+    broadcastUpdateStatus('error', `auto-update unavailable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+// ─── [end auto-update agent block] ───
+
 // ─── App lifecycle ───────────────────────────────────
 
 app.whenReady().then(async () => {
@@ -1389,7 +2144,24 @@ app.whenReady().then(async () => {
     // W1-15: start after core init so the first change-batch can reindex
     // immediately. Events still flow if core failed (reindex is guarded).
     startVaultWatcher(config);
+    // T3-3: auto-start the Agent Memory MCP server if the user opted in. Off the
+    // critical path; only after core is ready so the server has a live store.
+    try {
+      if (!settingsStore) settingsStore = new SettingsStore();
+      if (settingsStore.get().mcpAutoStart) void startMcpServer();
+    } catch (err) {
+      console.error('[main] MCP auto-start check failed:', err);
+    }
   });
+
+  // T3-12: configure in-app auto-update (no-op on unsigned/dev builds — see
+  // setupAutoUpdate's signing gate). Off the critical path; failures are logged.
+  void setupAutoUpdate();
+});
+
+// T3-3: stop the embedded MCP server on quit so its loopback port is released.
+app.on('before-quit', () => {
+  void stopMcpServer();
 });
 
 app.on('window-all-closed', () => {

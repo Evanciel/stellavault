@@ -22,7 +22,9 @@ import { SearchPanel } from './components/panels/SearchPanel.js';
 import { OutlinePanel } from './components/panels/OutlinePanel.js';
 import { TagsPanel } from './components/panels/TagsPanel.js';
 import { CoachPanel } from './components/panels/CoachPanel.js'; // T2-6
+import { SynthesisPanel } from './components/panels/SynthesisPanel.js'; // T3-1
 import { FindReplace } from './components/editor/FindReplace.js'; // T2-4
+import { CaptureHost } from './components/decisions/CaptureHost.js'; // T3-5/T3-6 capture & automation modals
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
 
@@ -34,6 +36,7 @@ const PANEL_TITLES: Record<string, string> = {
   outline: 'Outline',
   tags: 'Tags',
   coach: 'Coach', // T2-6
+  synthesis: 'Synthesize', // T3-1
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -269,6 +272,7 @@ export function App() {
               {rightPanel === 'outline' && <OutlinePanel />}
               {rightPanel === 'tags' && <TagsPanel />}
               {rightPanel === 'coach' && <CoachPanel />}
+              {rightPanel === 'synthesis' && <SynthesisPanel />}
             </div>
           </div>
         )}
@@ -278,6 +282,7 @@ export function App() {
       <QuickSwitcher />
       <CommandPalette />
       <SettingsModal />
+      <CaptureHost />
     </div>
   );
 }

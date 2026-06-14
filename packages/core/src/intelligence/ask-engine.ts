@@ -13,6 +13,35 @@ export interface AskResult {
   savedTo: string | null; // vault에 저장된 경로 (null이면 미저장)
 }
 
+// ─── T3-2: pluggable Synthesizer ─────────────────────────────────────────────
+// askVault is extractive by default (no API key → search-list summary, see
+// composeAnswer). A Synthesizer lets a caller (the desktop main process) inject a
+// real LLM that turns the retrieved sources into a synthesized, cited answer.
+// The interface is intentionally provider-agnostic: core never imports an LLM SDK
+// or holds an API key. The desktop wires an Anthropic-backed implementation; the
+// no-key path stays the extractive fallback. The synthesizer receives the already
+// retrieved sources (title + snippet) so it can ground its answer and cite them.
+
+/** One retrieved source handed to a Synthesizer. */
+export interface SynthesisSource {
+  title: string;
+  filePath: string;
+  snippet: string;   // chunk/document excerpt used for grounding
+  score: number;
+}
+
+/** Pluggable LLM synthesizer. Returns the synthesized answer text (markdown).
+ *  Implementations MUST ground the answer in `sources` and SHOULD cite notes as
+ *  [[Title]] wikilinks so the desktop can render clickable backlinks. */
+export interface Synthesizer {
+  synthesize(input: {
+    question: string;
+    sources: SynthesisSource[];
+    /** Optional: 'ask' (Q&A) or 'wiki' (compiled article on a topic). */
+    mode?: 'ask' | 'wiki';
+  }): Promise<string>;
+}
+
 /**
  * 질문에 대해 vault를 검색하고 구조화된 답변을 생성.
  * LLM 없이 검색 결과를 구조화하는 버전 (LLM 연동은 MCP ask tool에서 처리).
@@ -26,9 +55,13 @@ export async function askVault(
     vaultPath?: string;
     outputDir?: string;
     mode?: 'default' | 'quotes';
+    // T3-2: optional LLM synthesizer. When provided (an API key is configured),
+    // the answer is synthesized + cited instead of the extractive search-list.
+    // Failure inside the synthesizer falls back to the extractive composeAnswer.
+    synthesizer?: Synthesizer;
   } = {},
 ): Promise<AskResult> {
-  const { limit = 10, save = false, vaultPath, outputDir = '_stellavault/answers', mode = 'default' } = options;
+  const { limit = 10, save = false, vaultPath, outputDir = '_stellavault/answers', mode = 'default', synthesizer } = options;
 
   // 1. 검색
   const results = await searchEngine.search({ query: question, limit });
@@ -41,10 +74,20 @@ export async function askVault(
     snippet: r.chunk?.content?.substring(0, 200) ?? '',
   }));
 
-  // 3. 답변 구성 (검색 결과 기반 구조화)
-  const answer = mode === 'quotes'
-    ? composeQuotes(question, results)
-    : composeAnswer(question, results);
+  // 3. 답변 구성 — synthesizer가 있으면 LLM 합성, 없으면(또는 실패 시) 추출형 폴백
+  let answer: string;
+  if (synthesizer && results.length > 0 && mode !== 'quotes') {
+    try {
+      answer = await synthesizer.synthesize({ question, sources, mode: 'ask' });
+    } catch {
+      // LLM 실패 → 추출형 폴백 (no-key 경로와 동일). 호출자에 에러를 던지지 않음.
+      answer = composeAnswer(question, results);
+    }
+  } else {
+    answer = mode === 'quotes'
+      ? composeQuotes(question, results)
+      : composeAnswer(question, results);
+  }
 
   // 4. vault에 저장 (선택)
   let savedTo: string | null = null;

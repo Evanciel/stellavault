@@ -95,6 +95,141 @@ export interface CoachLearningPath {
   summary: { reviewCount: number; exploreCount: number; bridgeCount: number; estimatedMinutes: number };
 }
 
+// ─── Publish / multi-vault / web clipper (T3-7 / T3-9 / T3-4) ───
+
+// T3-7: state of the local read-only Publish server. running=false → never
+// started or stopped; url is the loopback address (127.0.0.1:<port>) to open in
+// a browser. The server hosts the dormant core dashboard + read-only PWA and the
+// clip endpoint (T3-4) for the browser extension. LOCAL ONLY — bound to 127.0.0.1.
+export interface PublishStatus {
+  running: boolean;
+  url: string;     // '' when not running
+  port: number;
+}
+
+// T3-9: a registered vault in the desktop vault registry (mirrors core's
+// multi-vault VaultEntry, but stored in desktop-settings so the switcher and the
+// "search all vaults" toggle work without the core CLI). `active` marks the vault
+// the app booted with (loadAppConfig). Switching is a restart (re-init is heavy).
+export interface VaultRegistryEntry {
+  id: string;       // short stable alias (slug of name/path)
+  name: string;     // display name
+  path: string;     // vault folder path
+  dbPath: string;   // index.db path
+  active: boolean;   // currently loaded vault
+}
+
+// T3-9: one cross-vault search hit (title + similarity + snippet only — never the
+// full note), tagged with the source vault so the UI can group/label by vault.
+export interface CrossVaultResult {
+  vaultId: string;
+  vaultName: string;
+  title: string;
+  score: number;
+  snippet: string;
+  filePath: string;   // vault-relative (cross-vault notes aren't all open-able locally)
+}
+
+// ─── T3-1: Wiki Synthesis panel ──────────────────────────────────────────────
+// 'core:synthesize' compiles a cited article on a topic (or the current note's
+// title) from the vault. `article` is markdown with [[Title]] backlinks the panel
+// renders as clickable wikilinks. `synthesized` distinguishes a real LLM answer
+// (API key configured) from the extractive fallback. `sources` back the citations.
+export interface SynthesisSourceRef {
+  title: string;
+  filePath: string;   // absolute; '' if not resolvable
+  snippet: string;
+}
+export interface SynthesisResult {
+  topic: string;
+  article: string;        // markdown, may contain [[Title]] wikilinks
+  synthesized: boolean;   // true = LLM-synthesized, false = extractive fallback
+  sources: SynthesisSourceRef[];
+}
+
+// ─── T3-8: contradiction + duplicate nudges ──────────────────────────────────
+// Wired from core detectContradictions / detectDuplicates. Both pairs carry
+// absolute filePaths (clickable to open the pair). Empty on an unindexed vault.
+export interface DuplicateNudge {
+  docA: { title: string; filePath: string };
+  docB: { title: string; filePath: string };
+  similarity: number;   // 0-1
+}
+export interface ContradictionNudge {
+  docA: { title: string; filePath: string; statement: string };
+  docB: { title: string; filePath: string; statement: string };
+  similarity: number;   // 0-1
+  confidence: number;   // 0-1
+  type: 'negation' | 'value_conflict' | 'temporal' | 'semantic';
+}
+
+// ─── Decision journal / ADR capture (T3-5) ──────────────────────────────────
+// Mirrors the core decision-journal MCP tool. A decision is a markdown file under
+// <vault>/decisions/ with frontmatter (title/date/project/type:decision). The
+// capture modal collects these fields; the Decisions view lists past entries.
+export interface DecisionInput {
+  title: string;
+  context?: string;
+  decision: string;
+  alternatives?: string[];
+  reasoning: string;
+  project?: string;
+}
+// A past decision surfaced in the Decisions view. filePath is absolute (open-able);
+// snippet is the first ~300 chars of the file for preview/search.
+export interface DecisionEntry {
+  fileName: string;
+  filePath: string;     // absolute
+  title: string;
+  date: string;         // YYYY-MM-DD ('' if unparseable)
+  project: string;
+  snippet: string;
+}
+// One row of the knowledge-evolution timeline (get-evolution): which notes changed
+// most recently (proxy for semantic drift). filePath absolute where resolvable.
+export interface EvolutionEntry {
+  documentId: string;
+  title: string;
+  filePath: string;     // absolute; '' if not resolvable
+  lastModified: string;
+  daysSinceModified: number;
+  tags: string[];
+}
+
+// ─── Auto-linker (T3-6) ──────────────────────────────────────────────────────
+// One suggested wikilink: a plain-text `phrase` in the note body that matches an
+// existing vault note `target`. The user confirms before any are applied.
+export interface LinkSuggestion {
+  phrase: string;       // the literal text found in the body
+  target: string;       // the vault note title it would link to ([[target|phrase]])
+}
+// Result of analysing a note body: the suggestions found + the fully-linked body
+// (apply-all preview). The renderer shows `suggestions` for review, then writes
+// `linkedBody` (recomposed with frontmatter) into the tab when accepted.
+export interface AutoLinkResult {
+  suggestions: LinkSuggestion[];
+  linkedBody: string;   // body with ALL suggestions applied
+}
+
+// ─── Agent Memory / MCP server (T3-3) ────────────────────────────────────────
+// Live state of the embedded MCP server ("Agent Memory" — local FSRS-pruned
+// memory that Claude reads/writes). running=false → never started or stopped.
+// toolCount is the number of tools the server exposes; port is the loopback HTTP
+// port. recent is a small in-process activity log (tool name + ts) when the
+// server has run any tool calls; empty if none yet. LOCAL ONLY — 127.0.0.1.
+export interface McpActivity {
+  tool: string;
+  detail: string;       // short, e.g. a query string or doc title — never full text
+  ts: number;           // epoch ms
+}
+export interface McpStatus {
+  running: boolean;
+  port: number;
+  toolCount: number;
+  recent: McpActivity[];
+  error?: string;       // last start failure message, if any
+}
+
 // App settings — persisted at ~/.stellavault/desktop-settings.json (W1-1).
 // Defaults live in main/settings-store.ts (getDefaults) and mirror this shape.
 export interface AppSettings {
@@ -116,6 +251,23 @@ export interface AppSettings {
   // T1-15: persisted graph force-sim slider values. Optional, same rationale.
   // Shape mirrors SimSettings (renderer/components/graph/force-sim.ts).
   graph?: { repel: number; link: number; center: number; linkDistance: number };
+  // T3-9: vault registry — the set of vaults the switcher offers. Optional so
+  // older settings files type-check; main getDefaults seeds it from the booted
+  // vault on first run. The `active` entry is the one core is currently loaded
+  // for; switching writes a new active flag and requires an app restart.
+  vaults?: VaultRegistryEntry[];
+  // T3-7: local Publish server port. Project port registry convention (3105 —
+  // never 3000). Optional; defaults in both main getDefaults + renderer DEFAULT.
+  publishPort?: number;
+  // T3-2: AI synthesis provider + API key. Optional — when `apiKey` is set, the
+  // Ask panel and Wiki Synthesis use the LLM synthesizer; otherwise extractive.
+  // The key lives ONLY in desktop-settings.json (never logged, never sent to the
+  // renderer except as the value the user typed). model defaults to the latest
+  // Claude model id for the anthropic provider (see settings-store getDefaults).
+  ai?: { provider: 'anthropic' | 'none'; apiKey: string; model: string };
+  // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
+  // Optional; defaults false in both main getDefaults + renderer DEFAULT.
+  mcpAutoStart?: boolean;
 }
 
 // ─── Channel map: channel name → { args, result } ───
@@ -170,6 +322,12 @@ export interface IpcChannelMap {
   'core:gaps':          { args: []; result: CoachGaps };
   'core:learning-path': { args: [limit?: number]; result: CoachLearningPath };
 
+  // T3-1: Wiki Synthesis — compile a cited article on a topic from the vault.
+  // T3-8: contradiction + duplicate nudges (detectContradictions/detectDuplicates).
+  'core:synthesize':    { args: [topic: string]; result: SynthesisResult };
+  'core:contradictions':{ args: [limit?: number]; result: ContradictionNudge[] };
+  'core:duplicates':    { args: [limit?: number]; result: DuplicateNudge[] };
+
   // Draft (Express)
   'core:draft':         { args: [topic: string, format?: string]; result: { title: string; content: string; sources: string[] } };
 
@@ -205,6 +363,56 @@ export interface IpcChannelMap {
   // [editor-upgrade additive] Local image import — copies bytes (base64) or a
   // source file into <vault>/assets/, returns the VAULT-RELATIVE path.
   'vault:import-asset': { args: [payload: { base64?: string; srcPath?: string; fileName: string }]; result: string };
+
+  // ─── Publish / read-only PWA (T3-7) + web clipper (T3-4) ───
+  // 'publish:start' boots the local read-only server (core dashboard + PWA +
+  // /clip endpoint) on settings.publishPort, returns the new status.
+  // 'publish:stop' shuts it down. 'publish:status' is a cheap poll for the UI.
+  'publish:start':  { args: []; result: PublishStatus };
+  'publish:stop':   { args: []; result: PublishStatus };
+  'publish:status': { args: []; result: PublishStatus };
+
+  // ─── Multi-vault (T3-9) ───
+  // 'vault:list-registry' returns the registry (seeded from the booted vault).
+  // 'vault:add-to-registry' opens a folder picker in main (returns null if
+  // cancelled) and appends a non-active entry. 'vault:switch' marks a registry
+  // entry active + rewrites ~/.stellavault.json, then returns whether a restart
+  // is needed (always true — core re-init is heavy). 'vault:remove-from-registry'
+  // drops a non-active entry. 'search:all-vaults' runs core searchAllVaults.
+  'vault:list-registry':      { args: []; result: VaultRegistryEntry[] };
+  'vault:add-to-registry':    { args: []; result: VaultRegistryEntry | null };
+  'vault:remove-from-registry': { args: [id: string]; result: VaultRegistryEntry[] };
+  'vault:switch':             { args: [id: string]; result: { restartRequired: boolean } };
+  'search:all-vaults':        { args: [query: string, limit?: number]; result: CrossVaultResult[] };
+
+  // ─── In-app auto-update (T3-12) ───
+  // 'app:get-version' = the running app version (About box / update UI).
+  // 'update:check' triggers a manual update check; the result is a human status
+  // string (e.g. "checking", "disabled: unsigned build", "not configured").
+  // Progress/result is also pushed asynchronously via the 'update:status' event.
+  'app:get-version':  { args: []; result: string };
+  'update:check':     { args: []; result: string };
+
+  // ─── Decision journal / ADR capture (T3-5) ───
+  // 'decision:log' writes a structured decision file under <vault>/decisions/ and
+  // returns the absolute path. 'decision:list' returns recent decisions (newest
+  // first); an empty query lists all (capped). 'decision:evolution' returns the
+  // knowledge-evolution timeline (most-changed notes) for the Decisions view.
+  'decision:log':       { args: [input: DecisionInput]; result: { filePath: string; fileName: string } };
+  'decision:list':      { args: [query?: string]; result: DecisionEntry[] };
+  'decision:evolution': { args: [limit?: number]; result: EvolutionEntry[] };
+
+  // ─── Auto-linker (T3-6) ───
+  // 'autolink:suggest' analyses a note body against existing vault titles and
+  // returns suggestions + an apply-all preview. selfTitle prevents self-linking.
+  'autolink:suggest':   { args: [body: string, selfTitle?: string]; result: AutoLinkResult };
+
+  // ─── Agent Memory / MCP server (T3-3) ───
+  // 'mcp:start' boots the embedded MCP HTTP server (Agent Memory) on settings'
+  // port; 'mcp:stop' shuts it down; 'mcp:status' is a cheap poll for the UI.
+  'mcp:start':  { args: []; result: McpStatus };
+  'mcp:stop':   { args: []; result: McpStatus };
+  'mcp:status': { args: []; result: McpStatus };
 }
 
 // ─── Events (main → renderer, one-way) ───
@@ -215,6 +423,12 @@ export interface IpcEventMap {
   'settings:changed': AppSettings;
   // T2-18: main asks the renderer to vet a pending window close (dirty tabs).
   'window:close-request': void;
+  // T3-12: auto-update lifecycle pushed from update-electron-app's autoUpdater.
+  // kind: checking | available | not-available | downloaded | error | disabled.
+  'update:status': { kind: string; message: string; version?: string };
+  // T3-3: MCP server status change (started/stopped) or a new tool-call activity
+  // entry — lets the Agent Memory section update its feed without polling.
+  'mcp:status-changed': McpStatus;
 }
 
 // Helper types for typed invoke/on

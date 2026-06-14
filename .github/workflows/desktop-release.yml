@@ -88,9 +88,38 @@ jobs:
           node -e "const f='packages/desktop/package.json',p=require('./'+f);p.version='${{ steps.ver.outputs.version }}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           node -p "'desktop package.json -> '+require('./packages/desktop/package.json').version"
 
+      # ─── T3-12 auto-update / code-signing notes (additive) ───────────────────
+      # In-app auto-update (update-electron-app + update.electronjs.org feed) is
+      # wired in src/main/index.ts but GATED OFF unless STELLAVAULT_AUTO_UPDATE=1
+      # AND the build is code-signed. Squirrel requires a SIGNED binary to apply
+      # updates safely:
+      #   • Windows: Authenticode certificate. Provide MakerSquirrel with
+      #     `certificateFile` + `certificatePassword` (from a secret, e.g.
+      #     ${{ secrets.WINDOWS_PFX_BASE64 }} decoded to a file +
+      #     ${{ secrets.WINDOWS_PFX_PASSWORD }}) in packages/desktop/forge.config.js.
+      #   • macOS: Apple Developer ID signing + notarization. Set
+      #     ${{ secrets.APPLE_ID }}, ${{ secrets.APPLE_ID_PASSWORD }},
+      #     ${{ secrets.APPLE_TEAM_ID }} and configure osxSign/osxNotarize in
+      #     packagerConfig, and switch the macOS target to a Squirrel.Mac ZIP.
+      # To SHIP auto-update once certs exist:
+      #   1. Add the cert secrets above and the signing config in forge.config.js.
+      #   2. Uncomment the `env: STELLAVAULT_AUTO_UPDATE: "1"` line on the make step.
+      #   3. Ensure releases publish the Squirrel feed assets (RELEASES + .nupkg on
+      #      win; *-mac.zip on mac) — the ZIP-only target below is for unsigned
+      #      verification builds and does NOT serve a Squirrel feed.
+      # Until then unsigned builds run fine; the app reports "auto-update disabled".
       - name: Make desktop app (ZIP target, x64)
         working-directory: packages/desktop
         shell: bash
+        # env:
+        #   STELLAVAULT_AUTO_UPDATE: "1"   # enable ONLY on signed release builds
+        #   # win signing (example): consumed by MakerSquirrel via forge.config.js
+        #   WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+        #   WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        #   # mac signing/notarize (example): consumed by packagerConfig osxSign/osxNotarize
+        #   APPLE_ID: ${{ secrets.APPLE_ID }}
+        #   APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run make -- --targets @electron-forge/maker-zip --arch x64
 
       # Gate: a green zip is NOT proof the app runs (forge silently omitted core +

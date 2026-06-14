@@ -438,6 +438,78 @@ export function registerWikilinkRule(md: MarkdownItLike): void {
   };
 }
 
+// ─── Embed / transclusion markdown rules (T3-10) ───────────────────────────
+// Obsidian embed syntax on disk (image-style):
+//   ![[Note]]            — transclude the whole note
+//   ![[Note#Heading]]    — transclude just that heading's section
+// These render inline + READ-ONLY inside the editor (EmbedNode.ts loads the
+// target via vault:read-file). Round-trip: the node's storage.markdown spec
+// writes `![[target]]` / `![[target#heading]]` back out verbatim (see
+// EmbedNode.ts → serializeEmbed below). Parse: an inline rule (registered
+// BEFORE the wikilink rule, since `![[` begins with `!` then `[[`) emits a
+// <span data-type="embed"> which EmbedNode.parseHTML turns into the node.
+//
+// Like wikilinks, attrs are kept VERBATIM (no trim) so byte-fidelity holds on
+// round-trip; trimming happens only when resolving the target for read.
+
+/** Split an embed inner (`target#heading`). target keeps everything before the
+ *  FIRST '#'; heading is everything after it (may itself contain '#'). No trim. */
+export function parseEmbedInner(inner: string): { target: string; heading: string | null } {
+  const hash = inner.indexOf('#');
+  if (hash === -1) return { target: inner, heading: null };
+  return { target: inner.slice(0, hash), heading: inner.slice(hash + 1) };
+}
+
+/** Serialize an embed node back to markdown. heading === null → no anchor. */
+export function serializeEmbed(target: string, heading: string | null): string {
+  return heading === null ? `![[${target}]]` : `![[${target}#${heading}]]`;
+}
+
+/**
+ * Register the `![[target#heading]]` inline rule on a markdown-it instance.
+ * Idempotent — tiptap-markdown calls parse.setup() on EVERY parse, so we tag
+ * the instance to avoid stacking duplicate rules. Registered before 'link' AND
+ * before the wikilink rule (`![[` would otherwise be a `!` text node followed
+ * by a parsed wikilink). Same code-safety properties as the wikilink rule:
+ * inline-only, so fenced/inline code is never scanned.
+ */
+export function registerEmbedRule(md: MarkdownItLike): void {
+  const tagged = md as MarkdownItLike & { __svEmbed?: boolean };
+  if (tagged.__svEmbed) return;
+  tagged.__svEmbed = true;
+
+  md.inline.ruler.before('link', 'sv_embed', (state, silent) => {
+    const src: string = state.src;
+    const pos: number = state.pos;
+    // Must start with `![[`.
+    if (src.charCodeAt(pos) !== 0x21 /* ! */) return false;
+    if (src.charCodeAt(pos + 1) !== 0x5b /* [ */ || src.charCodeAt(pos + 2) !== 0x5b) return false;
+    const end = src.indexOf(']]', pos + 3);
+    if (end === -1) return false;
+    const inner = src.slice(pos + 3, end);
+    if (inner.length === 0 || inner.includes('[[') || inner.includes('\n')) return false;
+    if (!silent) {
+      const { target, heading } = parseEmbedInner(inner);
+      const token = state.push('sv_embed', '', 0);
+      token.meta = { target, heading };
+    }
+    state.pos = end + 2;
+    return true;
+  });
+
+  md.renderer.rules.sv_embed = (tokens, idx) => {
+    const { target, heading } = tokens[idx].meta as { target: string; heading: string | null };
+    const esc = md.utils.escapeHtml;
+    const headingAttr = heading === null ? '' : ` data-heading="${esc(heading)}"`;
+    const label = heading === null ? target : `${target}#${heading}`;
+    // Emit a block-level <div data-embed> (EmbedNode is a block node). The
+    // browser's HTML parser hoists a block <div> out of the surrounding <p>
+    // markdown-it wraps inline content in, so TipTap's DOMParser sees it as a
+    // top-level block and instantiates the embed node correctly.
+    return `<div data-embed data-type="embed" data-target="${esc(target)}"${headingAttr} class="sv-embed">${esc(label)}</div>`;
+  };
+}
+
 // Characters prosemirror-markdown escapes inside plain text.
 const MD_ESCAPABLE = /\\([\\`*_~[\]])/g;
 
@@ -478,6 +550,9 @@ export function restoreEscapedSyntax(md: string): string {
 
 function restoreSegment(seg: string): string {
   return seg
+    // Embeds: !\[\[Target\]\] → ![[Target]] (inner unescaped). MUST run before
+    // the wikilink branch so the `![` isn't split off as a stray text node.
+    .replace(/!\\\[\\\[((?:\\.|[^[\]\n])+?)\\\]\\\]/g, (_m, inner: string) => `![[${unescapeAll(inner)}]]`)
     // Wikilinks: \[\[Target\|alias\]\] → [[Target|alias]] (inner unescaped)
     .replace(/\\\[\\\[((?:\\.|[^[\]\n])+?)\\\]\\\]/g, (_m, inner: string) => `[[${unescapeAll(inner)}]]`)
     // Display math: $$…$$ — unescape inner tex

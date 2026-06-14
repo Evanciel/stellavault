@@ -33,6 +33,9 @@ const ALLOWED_CHANNELS = new Set<string>([
   'core:related',
   'core:gaps',          // T2-6 Coach panel — knowledge gaps
   'core:learning-path', // T2-6 Coach panel — learning path
+  'core:synthesize',    // T3-1 Wiki Synthesis panel
+  'core:contradictions',// T3-8 contradiction nudges
+  'core:duplicates',    // T3-8 duplicate nudges
   'graph:build',
   'backlinks:find',
   'window:minimize',
@@ -46,6 +49,29 @@ const ALLOWED_CHANNELS = new Set<string>([
   'settings:get',
   'settings:set',
   'vault:import-asset', // [editor-upgrade additive] local image → vault assets/
+  // T3-7 Publish (read-only local server) + T3-4 web clipper endpoint
+  'publish:start',
+  'publish:stop',
+  'publish:status',
+  // T3-9 multi-vault switcher + cross-vault search
+  'vault:list-registry',
+  'vault:add-to-registry',
+  'vault:remove-from-registry',
+  'vault:switch',
+  'search:all-vaults',
+  // T3-12 in-app auto-update
+  'app:get-version',
+  'update:check',
+  // T3-5 decision journal / ADR capture
+  'decision:log',
+  'decision:list',
+  'decision:evolution',
+  // T3-6 auto-linker
+  'autolink:suggest',
+  // T3-3 Agent Memory / embedded MCP server
+  'mcp:start',
+  'mcp:stop',
+  'mcp:status',
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([
@@ -54,6 +80,8 @@ const ALLOWED_EVENTS = new Set<string>([
   'index:progress',
   'settings:changed',
   'window:close-request', // T2-18: main → renderer dirty-close vetting
+  'update:status',        // T3-12: auto-update lifecycle
+  'mcp:status-changed',   // T3-3: Agent Memory server status / activity feed
 ]);
 
 const api = {

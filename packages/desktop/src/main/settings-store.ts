@@ -27,6 +27,13 @@ export function getDefaults(): AppSettings {
     panels: { sidebarWidth: 260, rightPanelWidth: 380 },
     // T1-15: default graph slider values mirror force-sim.ts DEFAULT_SIM_SETTINGS.
     graph: { repel: 8, link: 1, center: 0.15, linkDistance: 60 },
+    // T3-9: vault registry — seeded lazily from the booted vault in main (the
+    // registry needs the runtime vaultPath, unknown here). Empty default is fine.
+    vaults: [],
+    // T3-7: local Publish server port — project port registry (3105, never 3000).
+    publishPort: 3105,
+    // T3-3: Agent Memory (embedded MCP server) does not auto-start by default.
+    mcpAutoStart: false,
   };
 }
 

@@ -6,7 +6,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc, searchQuery, type SearchQueryOpts } from '../../lib/ipc-client.js';
-import type { SearchResult } from '../../../shared/ipc-types.js';
+import type { SearchResult, CrossVaultResult } from '../../../shared/ipc-types.js';
 
 type SearchMode = 'hybrid' | 'keyword';
 
@@ -66,6 +66,12 @@ function Highlighted({ text, terms }: { text: string; terms: string[] }) {
 export function SearchPanel() {
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('hybrid');
+  // T3-9: "All vaults" cross-vault search. When on, queries go to core's
+  // searchAllVaults (title + similarity + snippet only, per-vault) instead of the
+  // single-vault hybrid search. Results aren't openable (they live in other
+  // vaults — switch to that vault first), so they render as read-only cards.
+  const [allVaults, setAllVaults] = useState(false);
+  const [crossResults, setCrossResults] = useState<CrossVaultResult[]>([]);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,10 +90,11 @@ export function SearchPanel() {
     [parsed.text],
   );
 
-  const runSearch = useCallback(async (raw: string, m: SearchMode) => {
+  const runSearch = useCallback(async (raw: string, m: SearchMode, cross: boolean) => {
     const { text, tags, pathPrefix } = parseSearchQuery(raw);
     if (!text && tags.length === 0 && !pathPrefix) {
       setResults([]);
+      setCrossResults([]);
       setSearched(false);
       setError(null);
       return;
@@ -96,6 +103,16 @@ export function SearchPanel() {
     setLoading(true);
     setError(null);
     try {
+      if (cross) {
+        // tag:/path: operators don't apply to cross-vault search (each vault has
+        // its own index); we pass the free text only.
+        const cr = await ipc('search:all-vaults', text || raw.trim(), 30);
+        if (seq !== requestSeq.current) return;
+        setCrossResults(cr);
+        setResults([]);
+        setSearched(true);
+        return;
+      }
       const opts: SearchQueryOpts = {
         mode: m,
         limit: 30,
@@ -105,11 +122,13 @@ export function SearchPanel() {
       const r = await searchQuery(text, opts);
       if (seq !== requestSeq.current) return; // stale response
       setResults(r);
+      setCrossResults([]);
       setSearched(true);
     } catch (err) {
       if (seq !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setResults([]);
+      setCrossResults([]);
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
@@ -125,16 +144,16 @@ export function SearchPanel() {
     if (pendingSearchQuery == null) return;
     setQuery(pendingSearchQuery);
     clearPendingSearchQuery();
-    void runSearch(pendingSearchQuery, mode);
+    void runSearch(pendingSearchQuery, mode, allVaults);
     inputRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSearchQuery]);
 
   // Debounced live search (300ms); Enter triggers immediately.
   useEffect(() => {
-    const t = setTimeout(() => void runSearch(query, mode), 300);
+    const t = setTimeout(() => void runSearch(query, mode, allVaults), 300);
     return () => clearTimeout(t);
-  }, [query, mode, runSearch]);
+  }, [query, mode, allVaults, runSearch]);
 
   // Group results by file (a file can yield multiple chunk hits).
   const groups = useMemo(() => {
@@ -165,7 +184,7 @@ export function SearchPanel() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(query, mode); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(query, mode, allVaults); }}
           placeholder="Search… (tag:x path:y operators)"
           aria-label="Search vault"
           style={{
@@ -186,12 +205,14 @@ export function SearchPanel() {
               key={m}
               onClick={() => setMode(m)}
               aria-pressed={mode === m}
+              disabled={allVaults}
               style={{
                 padding: '3px 12px',
                 fontSize: 11,
                 border: 'none',
                 borderRadius: 4,
-                cursor: 'pointer',
+                cursor: allVaults ? 'default' : 'pointer',
+                opacity: allVaults ? 0.4 : 1,
                 background: mode === m ? 'var(--selection)' : 'var(--hover)',
                 color: mode === m ? 'var(--accent-2)' : 'var(--ink-dim)',
                 fontWeight: mode === m ? 600 : 400,
@@ -200,7 +221,25 @@ export function SearchPanel() {
               {m === 'hybrid' ? 'Hybrid' : 'Keyword'}
             </button>
           ))}
-          {(parsed.tags.length > 0 || parsed.pathPrefix) && (
+          {/* T3-9: cross-vault search toggle. */}
+          <button
+            onClick={() => setAllVaults((v) => !v)}
+            aria-pressed={allVaults}
+            title="Search across all registered vaults"
+            style={{
+              padding: '3px 12px',
+              fontSize: 11,
+              border: 'none',
+              borderRadius: 4,
+              cursor: 'pointer',
+              background: allVaults ? 'var(--selection)' : 'var(--hover)',
+              color: allVaults ? 'var(--accent-2)' : 'var(--ink-dim)',
+              fontWeight: allVaults ? 600 : 400,
+            }}
+          >
+            All vaults
+          </button>
+          {!allVaults && (parsed.tags.length > 0 || parsed.pathPrefix) && (
             <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
               {parsed.tags.map((t) => `#${t}`).join(' ')}
               {parsed.pathPrefix ? ` path:${parsed.pathPrefix}` : ''}
@@ -231,7 +270,42 @@ export function SearchPanel() {
           </div>
         )}
 
-        {!loading && !error && groups.map((g) => (
+        {/* T3-9: cross-vault results — read-only cards grouped by source vault.
+            Not openable (the note lives in another vault); switch vaults first. */}
+        {allVaults && !loading && !error && crossResults.map((r, i) => (
+          <div
+            key={`${r.vaultId}-${i}`}
+            style={{
+              padding: '8px 10px',
+              marginBottom: 8,
+              borderRadius: 4,
+              background: 'var(--hover)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ink)', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'var(--selection)', color: 'var(--accent-2)', flexShrink: 0 }}>
+                {r.vaultName}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--accent-2)', flexShrink: 0 }}>{Math.round(r.score * 100)}%</span>
+            </div>
+            {r.snippet && (
+              <div style={{ fontSize: 11, color: 'var(--ink-dim)', lineHeight: 1.4, marginTop: 4 }}>{r.snippet}</div>
+            )}
+            {r.filePath && (
+              <div style={{ fontSize: 9, color: 'var(--ink-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.filePath}</div>
+            )}
+          </div>
+        ))}
+
+        {allVaults && !loading && !error && searched && crossResults.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
+            No results across your vaults. Add vaults from the vault switcher (titlebar).
+          </div>
+        )}
+
+        {!allVaults && !loading && !error && groups.map((g) => (
           <div key={g.filePath} style={{ marginBottom: 8 }}>
             <div
               onClick={() => void openResult(g.items[0])}
@@ -273,7 +347,7 @@ export function SearchPanel() {
           </div>
         ))}
 
-        {!loading && !error && searched && groups.length === 0 && (
+        {!allVaults && !loading && !error && searched && groups.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
             No results. Try different keywords, or remove tag:/path: filters.
           </div>

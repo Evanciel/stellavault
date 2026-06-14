@@ -41,6 +41,11 @@ export interface McpServerOptions {
    *  Default: ['http://localhost', 'http://127.0.0.1'] (any port).
    *  Pass [] to disable CORS entirely; pass ['*'] to opt-in to wildcard. */
   corsOrigins?: string[];
+  /** T3-3: invoked for every tool call (name + a short, non-sensitive detail) so
+   *  an embedding host (desktop "Agent Memory") can surface a live activity feed.
+   *  Detail is a brief query/topic string — never full document text. Best-effort;
+   *  failures here are swallowed and never affect the tool result. */
+  onToolCall?: (info: { tool: string; detail: string }) => void;
 }
 
 export function createMcpServer(options: McpServerOptions) {
@@ -90,6 +95,15 @@ export function createMcpServer(options: McpServerOptions) {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     await ready;
     const { name, arguments: args } = request.params;
+
+    // T3-3: surface a short, non-sensitive activity entry to the embedding host.
+    if (options.onToolCall) {
+      try {
+        const a = (args ?? {}) as Record<string, unknown>;
+        const detail = String(a.query ?? a.topic ?? a.title ?? a.documentId ?? a.id ?? '').slice(0, 80);
+        options.onToolCall({ tool: name, detail });
+      } catch { /* activity reporting is best-effort */ }
+    }
 
     try {
       let result: unknown;
@@ -184,6 +198,9 @@ export function createMcpServer(options: McpServerOptions) {
       const transport = new StdioServerTransport();
       await server.connect(transport);
     },
+    // T3-3: returns a closable handle ({ port, close }) so an embedding host (the
+    // desktop "Agent Memory" toggle) can stop the server. Backward compatible —
+    // callers that ignore the return value are unaffected.
     async startHttp(port: number = 3334) {
       const { createServer } = await import('node:http');
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => `sv-${Date.now()}` });
@@ -209,9 +226,21 @@ export function createMcpServer(options: McpServerOptions) {
         if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
         await transport.handleRequest(req, res);
       });
-      httpServer.listen(port, '127.0.0.1', () => {
-        console.error(`🔌 MCP HTTP server running at http://127.0.0.1:${port}/mcp`);
+      await new Promise<void>((resolveListen, rejectListen) => {
+        httpServer.once('error', rejectListen);
+        httpServer.listen(port, '127.0.0.1', () => {
+          httpServer.removeListener('error', rejectListen);
+          console.error(`🔌 MCP HTTP server running at http://127.0.0.1:${port}/mcp`);
+          resolveListen();
+        });
       });
+      return {
+        port,
+        close: () => new Promise<void>((resolveClose) => {
+          httpServer.close(() => resolveClose());
+          void server.close().catch(() => { /* transport may already be torn down */ });
+        }),
+      };
     },
     server,
   };

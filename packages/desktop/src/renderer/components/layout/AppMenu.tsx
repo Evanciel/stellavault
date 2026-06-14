@@ -69,6 +69,14 @@ const MENU: MenuSection[] = [
     label: 'Tools',
     items: [
       item('Re-index vault', 'vault.reindex'),
+      sep,
+      // T3-9: multi-vault — quick add (the switcher lives in the titlebar).
+      item('Add a vault…', 'vault.add'),
+      sep,
+      // T3-7: local read-only Publish server (opens in the OS browser).
+      item('Publish: start read-only server', 'publish.start'),
+      item('Publish: stop server', 'publish.stop'),
+      sep,
       item('Command palette', 'app.command-palette'),
       item('Keyboard shortcuts', 'app.keyboard-shortcuts'),
     ],
@@ -77,6 +85,7 @@ const MENU: MenuSection[] = [
     label: 'Help',
     items: [
       item('About Stellavault', 'help.about'),
+      item('Check for updates', 'help.check-updates'), // T3-12
       item('GitHub', 'help.github'),
     ],
   },

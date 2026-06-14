@@ -2,22 +2,29 @@
 // Reads/writes through the settings store; main persists + broadcasts.
 
 import { useState, useEffect, useCallback } from 'react';
-import type { AppSettings } from '../../../shared/ipc-types.js';
+import type { AppSettings, McpStatus } from '../../../shared/ipc-types.js';
+import { ipc, onIpc } from '../../lib/ipc-client.js'; // T3-3: Agent Memory tab
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
 
-type TabId = 'general' | 'editor' | 'appearance' | 'hotkeys' | 'about';
+type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'editor', label: 'Editor' },
   { id: 'appearance', label: 'Appearance' },
+  { id: 'ai', label: 'AI' }, // T3-2: provider + API key for LLM synthesis
+  { id: 'agent', label: 'Agent Memory' }, // T3-3: embedded MCP server toggle + activity
   { id: 'hotkeys', label: 'Hotkeys' },
   { id: 'about', label: 'About' },
 ];
+
+// T3-2: default Claude model id for the anthropic provider (claude-api skill —
+// latest widely-released model). Mirrors main/llm-synthesizer DEFAULT_ANTHROPIC_MODEL.
+const DEFAULT_AI_MODEL = 'claude-fable-5';
 
 const ACCENT_SWATCHES = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6'];
 
@@ -51,6 +58,8 @@ export function SettingsModal() {
         {tab === 'general' && <GeneralTab />}
         {tab === 'editor' && <EditorTab />}
         {tab === 'appearance' && <AppearanceTab />}
+        {tab === 'ai' && <AITab />}
+        {tab === 'agent' && <AgentMemoryTab />}
         {tab === 'hotkeys' && <HotkeysTab />}
         {tab === 'about' && <AboutTab />}
       </div>
@@ -209,6 +218,79 @@ function AppearanceTab() {
   );
 }
 
+// ─── AI (T3-2) ───
+// Provider + API key for LLM synthesis (Ask panel + Wiki Synthesis). The key is
+// stored in desktop-settings.json (main process) and only sent to the provider's
+// API — it is never logged. Provider 'none' (or empty key) → extractive fallback.
+
+function AITab() {
+  const settings = useSettingsStore((s) => s.settings);
+  const update = useSettingsStore((s) => s.update);
+  const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: DEFAULT_AI_MODEL };
+  const [showKey, setShowKey] = useState(false);
+
+  const patchAi = (patch: Partial<NonNullable<AppSettings['ai']>>) =>
+    void update({ ai: { provider: ai.provider, apiKey: ai.apiKey, model: ai.model || DEFAULT_AI_MODEL, ...patch } });
+
+  return (
+    <div>
+      <Field label="AI provider" hint="Used to synthesize answers in Ask and compile articles in Synthesis. Without a key, both fall back to an extractive (search-based) summary.">
+        <select
+          value={ai.provider}
+          aria-label="AI provider"
+          onChange={(e) => patchAi({ provider: e.target.value as NonNullable<AppSettings['ai']>['provider'] })}
+          style={{ ...textInputStyle, width: 220, cursor: 'pointer' }}
+        >
+          <option value="none">None (extractive only)</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+        </select>
+      </Field>
+
+      {ai.provider === 'anthropic' && (
+        <>
+          <Field label="API key" hint="Stored locally in ~/.stellavault/desktop-settings.json and sent only to api.anthropic.com. Never logged.">
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={ai.apiKey}
+                aria-label="Anthropic API key"
+                placeholder="sk-ant-..."
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => patchAi({ apiKey: e.target.value })}
+                style={{ ...textInputStyle, flex: 1 }}
+              />
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                style={{
+                  padding: '7px 10px', fontSize: 11, cursor: 'pointer',
+                  background: 'var(--hover)', border: '1px solid var(--border)',
+                  borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
+                }}
+              >
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </Field>
+
+          <Field label="Model" hint={`Claude model id. Defaults to ${DEFAULT_AI_MODEL}.`}>
+            <input
+              type="text"
+              value={ai.model || ''}
+              aria-label="Claude model id"
+              placeholder={DEFAULT_AI_MODEL}
+              spellCheck={false}
+              onChange={(e) => patchAi({ model: e.target.value })}
+              style={{ ...textInputStyle, width: 280 }}
+            />
+          </Field>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Hotkeys ───
 
 function HotkeysTab() {
@@ -333,3 +415,109 @@ function AboutTab() {
     </div>
   );
 }
+
+// ─── [capture/automation agent owned block — T3-3 Agent Memory] ──────────────
+// Toggle the embedded MCP server ("Agent Memory") on/off, set auto-start, and
+// watch a live activity feed of what an agent (Claude) searched/wrote. The MCP
+// server exposes 21 tools over a loopback HTTP endpoint; it is OFF by default.
+// Status + activity come from 'mcp:status' (poll on open) + the
+// 'mcp:status-changed' push event. Disjoint from the AI provider tab (T3-2).
+function AgentMemoryTab() {
+  const settings = useSettingsStore((s) => s.settings);
+  const update = useSettingsStore((s) => s.update);
+
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void ipc('mcp:status').then((s) => { if (alive) setStatus(s); }).catch(() => { /* server not ready */ });
+    const off = onIpc('mcp:status-changed', (s) => setStatus(s as McpStatus));
+    return () => { alive = false; off(); };
+  }, []);
+
+  const running = !!status?.running;
+
+  const toggle = useCallback(async () => {
+    setBusy(true);
+    try {
+      setStatus(running ? await ipc('mcp:stop') : await ipc('mcp:start'));
+    } catch (err) {
+      console.error('[settings] MCP toggle failed:', err);
+    } finally {
+      setBusy(false);
+    }
+  }, [running]);
+
+  return (
+    <div>
+      <Field
+        label="Agent Memory (MCP server)"
+        hint="Local, loopback-only. Lets an agent (Claude) read & write your FSRS-pruned vault over MCP. Off by default."
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={() => void toggle()}
+            disabled={busy}
+            style={{
+              padding: '7px 16px', fontSize: 12, borderRadius: 5, cursor: busy ? 'default' : 'pointer',
+              border: 'none', color: '#fff',
+              background: running ? '#ef4444' : 'var(--accent)', opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? '…' : running ? 'Stop server' : 'Start server'}
+          </button>
+          <span style={{ fontSize: 12, color: running ? '#10b981' : 'var(--ink-faint)' }}>
+            {running ? `Running · 127.0.0.1:${status?.port}` : 'Stopped'}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
+            {status?.toolCount ?? 21} tools
+          </span>
+        </div>
+        {status?.error && (
+          <div style={{ fontSize: 10, color: '#ef4444', marginTop: 6 }}>{status.error}</div>
+        )}
+      </Field>
+
+      <Field label="Auto-start on launch">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!!settings.mcpAutoStart}
+            onChange={(e) => void update({ mcpAutoStart: e.target.checked })}
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          Start Agent Memory automatically when the app opens
+        </label>
+      </Field>
+
+      <Field label="Activity" hint="What the agent recently searched or fetched. Titles/queries only — never full note text.">
+        {(!status || status.recent.length === 0) ? (
+          <div style={{ fontSize: 11, color: 'var(--ink-faint)', padding: '8px 0' }}>
+            {running ? 'No activity yet — waiting for the agent.' : 'Start the server to see activity.'}
+          </div>
+        ) : (
+          <div style={{ maxHeight: 180, overflow: 'auto' }}>
+            {status.recent.map((a, i) => (
+              <div
+                key={`${a.ts}-${i}`}
+                style={{
+                  display: 'flex', alignItems: 'baseline', gap: 8,
+                  padding: '5px 8px', marginBottom: 3, borderRadius: 4,
+                  background: 'var(--hover)', border: '1px solid var(--border)',
+                }}
+              >
+                <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--accent-2)', flexShrink: 0 }}>{a.tool}</span>
+                <span style={{ fontSize: 11, color: 'var(--ink-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.detail}</span>
+                <span style={{ fontSize: 9, color: 'var(--ink-faint)', marginLeft: 'auto', flexShrink: 0 }}>
+                  {new Date(a.ts).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Field>
+    </div>
+  );
+}
+// ─── [end capture/automation agent block] ────────────────────────────────────

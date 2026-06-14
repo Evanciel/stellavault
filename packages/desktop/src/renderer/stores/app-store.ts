@@ -39,7 +39,7 @@ interface AppState {
   activeTabId: string | null;
 
   // Panel (Stage C adds 'search' | 'outline' | 'tags' — W1-4/5/6)
-  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach'; // T2-6: 'coach'
+  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis'; // T2-6: 'coach'; T3-1: 'synthesis'
   rightPanelWidth: number;
 
   // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any

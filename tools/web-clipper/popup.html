@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { width: 280px; font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 14px; background: #0a0a0f; color: #c0c0f0; }
+    h1 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+    label { display: block; font-size: 10px; color: #778; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px; background: rgba(100,120,255,0.06); border: 1px solid rgba(100,120,255,0.2); border-radius: 5px; color: #c0c0f0; outline: none; }
+    button { width: 100%; margin-top: 12px; padding: 8px; font-size: 13px; font-weight: 600; border: none; border-radius: 6px; background: #6366f1; color: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .status { margin-top: 10px; font-size: 11px; line-height: 1.4; min-height: 14px; }
+    .ok { color: #4ade80; }
+    .err { color: #f87171; }
+    .hint { font-size: 10px; color: #556; margin-top: 10px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h1>Clip to Stellavault</h1>
+  <label for="port">Local Publish port</label>
+  <input id="port" type="number" value="3105" min="1024" max="65535" />
+  <button id="clip">Clip selection / page</button>
+  <div id="status" class="status"></div>
+  <div class="hint">Start the Publish server in the Stellavault desktop app (Tools → Publish) first. Selected text is clipped; with nothing selected the whole page is clipped.</div>
+  <script src="popup.js"></script>
+</body>
+</html>

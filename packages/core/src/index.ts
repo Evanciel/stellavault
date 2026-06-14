@@ -64,7 +64,14 @@ export type { PredictedGap } from './intelligence/predictive-gaps.js';
 export type { DuplicatePair } from './intelligence/duplicate-detector.js';
 export { generateLearningPath } from './intelligence/learning-path.js';
 export { askVault } from './intelligence/ask-engine.js';
+export type { Synthesizer, SynthesisSource } from './intelligence/ask-engine.js';
 export { compileWiki, scanRawDirectory, extractConcepts } from './intelligence/wiki-compiler.js';
+// T3-6: auto-linker — desktop "Suggest links for this note" command wires these.
+export { collectVaultTitles, insertWikilinks, autoLink } from './intelligence/auto-linker.js';
+// T3-5: decision journal (ADR capture) — desktop log/find IPC wires these
+// MCP-only handlers directly (previously only reachable via the MCP server).
+export { handleLogDecision, handleFindDecisions } from './mcp/tools/decision-journal.js';
+export { createGetEvolutionTool } from './mcp/tools/get-evolution.js';
 export { lintKnowledge } from './intelligence/knowledge-lint.js';
 export {
   scanFrontmatter, generateNextIndexCode, assignIndexCodes,

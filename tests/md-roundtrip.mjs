@@ -177,6 +177,51 @@ if (process.env.MD_RT_CHILD === '1') {
   eq('callout marker survives restore guard',
     restoreEscapedSyntax('> [!info]\n> body'), '> [!info]\n> body');
 
+  // ── T3-10: embed / transclusion (![[Note]] / ![[Note#heading]]) ──
+  const { parseEmbedInner, serializeEmbed, registerEmbedRule } = mod;
+  const embedRoundtrip = (md) => {
+    const inner = md.slice(3, -2); // strip ![[ and ]]
+    const { target, heading } = parseEmbedInner(inner);
+    return serializeEmbed(target, heading);
+  };
+  eq('embed node: ![[Note]] byte-identical', embedRoundtrip('![[Note]]'), '![[Note]]');
+  eq('embed node: ![[Note#Heading]] byte-identical', embedRoundtrip('![[Note#Heading]]'), '![[Note#Heading]]');
+  eq('embed node: spaces preserved verbatim', embedRoundtrip('![[ A B # C D ]]'), '![[ A B # C D ]]');
+  eq('embed node: heading with inner # preserved',
+    embedRoundtrip('![[Note#a#b]]'), '![[Note#a#b]]');
+  eq('embed parseEmbedInner: no heading → null',
+    parseEmbedInner('Note').heading, null);
+  eq('embed parseEmbedInner: heading split at first #',
+    JSON.stringify(parseEmbedInner('Note#H')), JSON.stringify({ target: 'Note', heading: 'H' }));
+
+  // markdown-it parse rule — emits a data-type="embed" span (EmbedNode picks up)
+  const mdEmbed = markdownit({ html: false });
+  registerEmbedRule(mdEmbed);
+  registerWikilinkRule(mdEmbed); // embed rule must win over wikilink for ![[…]]
+  registerEmbedRule(mdEmbed);    // idempotence — setup() runs on EVERY parse
+  const embRendered = mdEmbed.renderInline('See ![[Note#H]] here');
+  eq('embed parse: emits data-target span',
+    embRendered.includes('data-type="embed"') && embRendered.includes('data-target="Note"') && embRendered.includes('data-heading="H"'),
+    true);
+  eq('embed parse: plain ![[Note]] has no data-heading',
+    mdEmbed.renderInline('![[Note]]').includes('data-heading'), false);
+  eq('embed parse: bare [[Note]] is still a wikilink (not an embed)',
+    mdEmbed.renderInline('[[Note]]').includes('data-type="wikilink"'), true);
+  eq('embed parse: ![[Note]] is an embed, NOT a wikilink',
+    mdEmbed.renderInline('![[Note]]').includes('data-type="wikilink"'), false);
+  eq('embed parse: inline code not converted',
+    mdEmbed.renderInline('use `![[x]]` raw').includes('data-type="embed"'), false);
+  eq('embed parse: unclosed ![[ left alone',
+    mdEmbed.renderInline('just ![[ text').includes('data-type="embed"'), false);
+
+  // restore guard: serialized ![[…]] must survive untouched; escaped form restored
+  eq('embed survives restore guard (clean)',
+    restoreEscapedSyntax('a ![[Note#H]] b'), 'a ![[Note#H]] b');
+  eq('embed restored from escaped form',
+    restoreEscapedSyntax('!\\[\\[Note\\]\\]'), '![[Note]]');
+  eq('embed does not eat a following bare wikilink',
+    restoreEscapedSyntax('![[A]] and [[B]]'), '![[A]] and [[B]]');
+
   process.stdout.write(JSON.stringify(results));
   process.exit(0);
 }
@@ -313,6 +358,47 @@ await test('BubbleMenuBar: uses @tiptap/react BubbleMenu and hides in code block
 await test('vault:import-asset: main handler + preload allowlist entry exist', () => {
   assert(readFileSync(MAIN, 'utf8').includes("ipcMain.handle('vault:import-asset'"), 'main handler missing');
   assert(readFileSync(PRELOAD, 'utf8').includes("'vault:import-asset'"), 'preload allowlist entry missing');
+});
+
+console.log('--- static: T3-10/T3-11/T3-12 (embed / drag handle / auto-update) wiring ---');
+
+const EMBED_NODE = join(ROOT, 'packages/desktop/src/renderer/components/editor/EmbedNode.ts');
+const DRAG_HANDLE = join(ROOT, 'packages/desktop/src/renderer/components/editor/DragHandle.ts');
+const COMMANDS = join(ROOT, 'packages/desktop/src/renderer/lib/commands.ts');
+const APP_MENU = join(ROOT, 'packages/desktop/src/renderer/components/layout/AppMenu.tsx');
+const DESKTOP_PKG = join(ROOT, 'packages/desktop/package.json');
+
+await test('EmbedNode: delegates to shared serializeEmbed + registerEmbedRule (T3-10)', () => {
+  const src = readFileSync(EMBED_NODE, 'utf8');
+  assert(src.includes('serializeEmbed'), 'EmbedNode must delegate serialization to lib/markdown.ts');
+  assert(src.includes('registerEmbedRule'), 'EmbedNode must register the shared parse rule');
+  assert(src.includes("ipc('vault:read-file'"), 'EmbedNode must load the target via vault:read-file');
+  assert(src.includes("contentEditable = 'false'") || src.includes('contentEditable="false"'),
+    'EmbedNode transclusion must be read-only (contentEditable=false)');
+});
+
+await test('MarkdownEditor: registers EmbedNode + DragHandleExtension (T3-10/T3-11)', () => {
+  assert(editorSrc.includes('EmbedNode'), 'EmbedNode not registered in editor extensions');
+  assert(editorSrc.includes('DragHandleExtension'), 'DragHandleExtension not registered');
+});
+
+await test('DragHandle: uses a ProseMirror plugin + move via single transaction (T3-11)', () => {
+  const src = readFileSync(DRAG_HANDLE, 'utf8');
+  assert(src.includes('new Plugin'), 'DragHandle must be a ProseMirror plugin');
+  assert(src.includes('tr.delete') && src.includes('tr.insert') || src.includes('.delete(') && src.includes('.insert('),
+    'DragHandle must move whole nodes (delete + insert) to keep markdown intact');
+});
+
+await test('auto-update: main wiring + IPC + menu + dep (T3-12)', () => {
+  const mainSrc = readFileSync(MAIN, 'utf8');
+  assert(mainSrc.includes('setupAutoUpdate'), 'main: setupAutoUpdate missing');
+  assert(mainSrc.includes("ipcMain.handle('update:check'"), 'main: update:check handler missing');
+  assert(mainSrc.includes("ipcMain.handle('app:get-version'"), 'main: app:get-version handler missing');
+  assert(mainSrc.includes('STELLAVAULT_AUTO_UPDATE'), 'main: signing gate flag missing');
+  assert(readFileSync(PRELOAD, 'utf8').includes("'update:check'"), 'preload: update:check allowlist missing');
+  assert(readFileSync(COMMANDS, 'utf8').includes('help.check-updates'), 'commands: check-updates command missing');
+  assert(readFileSync(APP_MENU, 'utf8').includes('help.check-updates'), 'AppMenu: check-updates item missing');
+  assert(readFileSync(DESKTOP_PKG, 'utf8').includes('update-electron-app'), 'package.json: update-electron-app dep missing');
 });
 
 // ---------------------------------------------------------------------------

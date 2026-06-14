@@ -28,6 +28,8 @@ import { common, createLowlight } from 'lowlight';
 import { CodeBlockView } from './CodeBlockView.js';
 import { WikilinkExtension } from './WikilinkSuggestion.js';
 import { WikilinkNode } from './WikilinkNode.js';
+import { EmbedNode } from './EmbedNode.js';
+import { DragHandleExtension } from './DragHandle.js';
 import { SlashCommandExtension } from './SlashCommands.js';
 import { MathExtension } from './MathExtension.js';
 import { MarkdownSerializerExtension, MarkdownHighlight, MarkdownTextColor, editorToMarkdown, markdownToEditor } from '../../lib/markdown.js';
@@ -111,8 +113,12 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
       VaultImage.configure({ inline: false, allowBase64: true }), // T2-1: app:// src rewrite for vault-relative images
       WikilinkNode,      // W1-9: real [[wikilink]] node (parse/serialize + click-nav)
       WikilinkExtension, // [[ autocomplete — inserts WikilinkNode
+      EmbedNode,         // T3-10: ![[Note]] / ![[Note#heading]] read-only transclusion
       SlashCommandExtension,
       MathExtension,
+      // T3-11: Notion-style block drag handle (gutter ⠿). Editing chrome only —
+      // skipped in Reading mode so transclusions/read-only docs have no handle.
+      ...(readOnly ? [] : [DragHandleExtension]),
     ],
     content: markdownToEditor(content),  // Markdown extension parses this as markdown
     editable: !readOnly,  // T2-3: Reading mode = read-only, no caret/typing
@@ -654,6 +660,70 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         }
         .sv-editor .sv-callout[data-callout="tip"]::before { content: '💡 Tip'; color: #4ade80; }
         .sv-editor .sv-callout p:last-child { margin-bottom: 0; }
+
+        /* Embeds / transclusion (T3-10: ![[Note]] / ![[Note#heading]]) */
+        .sv-editor .sv-embed-block {
+          border: 1px solid var(--border);
+          border-left: 3px solid var(--accent-2);
+          background: var(--bg-3);
+          border-radius: 6px;
+          margin: 12px 0;
+          overflow: hidden;
+          user-select: none;
+        }
+        .sv-editor .sv-embed-head {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+          color: var(--accent-2);
+          background: var(--hover);
+          border-bottom: 1px solid var(--border);
+          cursor: pointer;
+        }
+        .sv-editor .sv-embed-head:hover { text-decoration: underline; }
+        .sv-editor .sv-embed-body {
+          padding: 10px 14px;
+          font-size: 14px;
+          line-height: 1.6;
+          color: var(--ink-dim);
+          white-space: pre-wrap;
+          word-break: break-word;
+          max-height: 320px;
+          overflow-y: auto;
+        }
+        .sv-editor .sv-embed-body.sv-embed-missing {
+          color: var(--ink-faint);
+          font-style: italic;
+        }
+        /* Inline embed chip fallback (static renderHTML / copy) */
+        .sv-editor .sv-embed { color: var(--accent-2); }
+
+        /* T3-11: Notion-style block drag handle (left gutter) */
+        .sv-drag-handle {
+          position: absolute;
+          display: none;
+          align-items: center;
+          justify-content: center;
+          width: 18px;
+          height: 24px;
+          color: var(--ink-faint);
+          cursor: grab;
+          border-radius: 4px;
+          font-size: 14px;
+          line-height: 1;
+          user-select: none;
+          z-index: 20;
+        }
+        .sv-drag-handle:hover {
+          color: var(--ink);
+          background: var(--hover);
+        }
+        .sv-drag-handle:active { cursor: grabbing; }
+        .sv-editor.sv-dragging-block { cursor: grabbing; }
 
         /* Bubble menu */
         .sv-bubble {

@@ -14,7 +14,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { registerCommand } from '../../lib/commands.js';
-import type { CoachGaps, CoachLearningPath } from '../../../shared/ipc-types.js';
+import type { CoachGaps, CoachLearningPath, ContradictionNudge, DuplicateNudge } from '../../../shared/ipc-types.js';
 
 // Palette command + default hotkey via the registry (mirrors AIPanel's pattern).
 let coachCommandsRegistered = false;
@@ -51,6 +51,10 @@ export function CoachPanel() {
 
   const [gaps, setGaps] = useState<CoachGaps | null>(null);
   const [path, setPath] = useState<CoachLearningPath | null>(null);
+  // T3-8: duplicate + contradiction nudges (additive — own fetch, never blocks the
+  // gaps/path render if these fail or the core lacks the engines).
+  const [dupes, setDupes] = useState<DuplicateNudge[]>([]);
+  const [contradictions, setContradictions] = useState<ContradictionNudge[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +72,19 @@ export function CoachPanel() {
       setError(err instanceof Error ? err.message : 'Coach analysis failed. Is the vault indexed?');
     } finally {
       setLoading(false);
+    }
+    // T3-8: fetch nudges independently — a failure here must not surface as a
+    // Coach error or block the gaps/path above. Empty arrays on failure.
+    try {
+      const [d, c] = await Promise.all([
+        ipc('core:duplicates', 8),
+        ipc('core:contradictions', 8),
+      ]);
+      setDupes(d);
+      setContradictions(c);
+    } catch {
+      setDupes([]);
+      setContradictions([]);
     }
   }, []);
 
@@ -98,7 +115,9 @@ export function CoachPanel() {
     gaps.gaps.length === 0 &&
     gaps.isolated.length === 0 &&
     gaps.predicted.length === 0 &&
-    path.items.length === 0;
+    path.items.length === 0 &&
+    dupes.length === 0 &&
+    contradictions.length === 0;
 
   return (
     <div style={{ padding: 12 }}>
@@ -294,7 +313,92 @@ export function CoachPanel() {
           )}
         </section>
       )}
+
+      {/* ─── T3-8: Review — possible duplicates / contradictions ─── */}
+      {(dupes.length > 0 || contradictions.length > 0) && (
+        <section style={{ marginTop: 18 }}>
+          <SectionHeader
+            title="Review: duplicates & contradictions"
+            hint="Pairs your vault may need to merge or reconcile. Click to open either note."
+          />
+
+          {dupes.length > 0 && (
+            <>
+              <SubLabel>Possible duplicates</SubLabel>
+              {dupes.map((d, i) => (
+                <div
+                  key={`dup-${i}`}
+                  style={{
+                    padding: '6px 10px', marginBottom: 4, borderRadius: 4,
+                    background: 'var(--hover)', border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <PairLink title={d.docA.title} filePath={d.docA.filePath} open={open} />
+                    <span style={{ color: 'var(--ink-faint)', fontSize: 10 }}>&harr;</span>
+                    <PairLink title={d.docB.title} filePath={d.docB.filePath} open={open} />
+                    <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
+                      {Math.round(d.similarity * 100)}% similar
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {contradictions.length > 0 && (
+            <>
+              <SubLabel>Possible contradictions</SubLabel>
+              {contradictions.map((c, i) => (
+                <div
+                  key={`con-${i}`}
+                  style={{
+                    padding: '6px 10px', marginBottom: 4, borderRadius: 4,
+                    background: 'var(--hover)', border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <PairLink title={c.docA.title} filePath={c.docA.filePath} open={open} />
+                    <span style={{ color: '#e5484d', fontSize: 10 }}>&ne;</span>
+                    <PairLink title={c.docB.title} filePath={c.docB.filePath} open={open} />
+                    <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
+                      {Math.round(c.confidence * 100)}% · {c.type}
+                    </span>
+                  </div>
+                  {(c.docA.statement || c.docB.statement) && (
+                    <div style={{ fontSize: 10, color: 'var(--ink-dim)', marginTop: 3, lineHeight: 1.4 }}>
+                      &ldquo;{(c.docA.statement || '').slice(0, 90)}&rdquo; vs &ldquo;{(c.docB.statement || '').slice(0, 90)}&rdquo;
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </section>
+      )}
     </div>
+  );
+}
+
+// One side of a duplicate/contradiction pair — clickable when a note backs it.
+function PairLink({ title, filePath, open }: { title: string; filePath: string; open: (fp: string, t: string) => void }) {
+  const clickable = !!filePath;
+  return (
+    <span
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? () => open(filePath, title) : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter') open(filePath, title); } : undefined}
+      title={clickable ? `Open ${title}` : title}
+      style={{
+        fontSize: 11, color: clickable ? 'var(--accent-2)' : 'var(--ink)',
+        cursor: clickable ? 'pointer' : 'default',
+        textDecoration: clickable ? 'underline' : 'none',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130,
+      }}
+    >
+      {title}
+    </span>
   );
 }
 

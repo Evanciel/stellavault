@@ -3,6 +3,7 @@
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { AppMenu } from './AppMenu.js';
+import { VaultSwitcher } from './VaultSwitcher.js';
 
 // Electron-only CSS property for frameless-window drag regions.
 declare module 'react' {
@@ -37,6 +38,9 @@ export function TitleBar() {
       {/* App menu (W2) — hamburger now opens the application menu; sidebar
           toggle lives in View menu (+ its hotkey). */}
       <AppMenu />
+
+      {/* T3-9: vault switcher — pick / add registered vaults (restart to load). */}
+      <VaultSwitcher />
 
       <span style={{
         flex: 1,
@@ -101,6 +105,14 @@ export function TitleBar() {
         title="Coach — knowledge gaps + learning path" aria-label="Toggle Coach panel"
       >
         &#x2316;
+      </button>
+      {/* T3-1: Synthesize — compile a cited article from your vault. */}
+      <button
+        onClick={() => setRightPanel(rightPanel === 'synthesis' ? 'none' : 'synthesis')}
+        style={{ ...btnStyle(isDark), color: rightPanel === 'synthesis' ? 'var(--accent-2)' : undefined }}
+        title="Synthesize — compile a cited article from your vault" aria-label="Toggle Synthesis panel"
+      >
+        &#x2726;
       </button>
       <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme" aria-label="Toggle dark/light theme">
         {isDark ? '\u263C' : '\u263E'}

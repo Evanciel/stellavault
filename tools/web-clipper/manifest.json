@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Stellavault Web Clipper",
+  "version": "0.1.0",
+  "description": "Clip the current page (or your selection) into your local Stellavault vault. Sends to the local Publish server only — nothing leaves your machine.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "action": {
+    "default_title": "Clip to Stellavault",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

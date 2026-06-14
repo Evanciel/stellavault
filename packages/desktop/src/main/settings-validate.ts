@@ -74,5 +74,11 @@ export function validateSettingsPatch(patch: Partial<AppSettings>): Partial<AppS
     }
   }
 
+  // T3-3: mcpAutoStart must be a boolean — drop garbage (string/number) so a
+  // poisoned patch can't flip the Agent Memory server on at next launch.
+  if ('mcpAutoStart' in out && typeof out.mcpAutoStart !== 'boolean') {
+    delete out.mcpAutoStart;
+  }
+
   return out as Partial<AppSettings>;
 }

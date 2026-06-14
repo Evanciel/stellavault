@@ -265,6 +265,12 @@ export function registerBuiltinCommands(): void {
       run: () => app().setRightPanel('ai'),
     },
     {
+      // T3-1: Wiki Synthesis panel. SynthesisPanel also self-registers this id
+      // (idempotent) with a default hotkey; this builtin keeps it discoverable.
+      id: 'panel.synthesis', title: 'Open Synthesis panel', category: 'Panels',
+      run: () => app().setRightPanel('synthesis'),
+    },
+    {
       id: 'panel.graph', title: 'Open 3D graph', category: 'Panels',
       run: () => app().setRightPanel('graph'),
     },
@@ -332,6 +338,15 @@ export function registerBuiltinCommands(): void {
       id: 'help.about', title: 'About Stellavault', category: 'Help',
       run: () => ui().setSettingsOpen(true, 'about'),
     },
+    // T3-12: in-app auto-update. Returns a status string (disabled on unsigned
+    // builds); the main process also broadcasts progress via 'update:status'.
+    {
+      id: 'help.check-updates', title: 'Check for updates', category: 'Help',
+      run: async () => {
+        const status = await ipc('update:check');
+        ui().setStatsText(`Updates: ${status}`);
+      },
+    },
     {
       id: 'help.github', title: 'Open GitHub repository', category: 'Help',
       run: () => { void ipc('shell:open-external', 'https://github.com/Evanciel/stellavault'); },
@@ -339,6 +354,49 @@ export function registerBuiltinCommands(): void {
     {
       id: 'vault.reindex', title: 'Re-index vault', category: 'Vault',
       run: () => { void ipc('core:index'); },
+    },
+    // ─── T3-7: Publish (local read-only PWA + dashboard) ───
+    {
+      id: 'publish.start', title: 'Publish: start local read-only server', category: 'Vault',
+      run: async () => {
+        try {
+          const status = await ipc('publish:start');
+          // Open the loopback dashboard in the OS browser (T3-7).
+          if (status.running && status.url) {
+            await ipc('shell:open-external', status.url);
+          }
+          ui().setStatsText(
+            status.running
+              ? `Publish (read-only) is live — local only.\n\n${status.url}\n\nOpened in your browser. Anyone on this machine can read your vault at that address. Run "Publish: stop" to shut it down.`
+              : 'Publish server did not start.',
+          );
+        } catch (err) {
+          ui().setStatsText(`Publish failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    {
+      id: 'publish.stop', title: 'Publish: stop local server', category: 'Vault',
+      run: async () => {
+        try {
+          await ipc('publish:stop');
+          ui().setStatsText('Publish server stopped.');
+        } catch (err) {
+          ui().setStatsText(`Could not stop Publish: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    // ─── T3-9: multi-vault ───
+    {
+      id: 'vault.add', title: 'Add a vault…', category: 'Vault',
+      run: async () => {
+        try {
+          const added = await ipc('vault:add-to-registry');
+          if (added) ui().setStatsText(`Added vault "${added.name}". Pick it from the vault switcher (titlebar) to load it.`);
+        } catch (err) {
+          ui().setStatsText(`Add vault failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
     },
     {
       id: 'vault.diagnostics', title: 'Run diagnostics', category: 'Vault',

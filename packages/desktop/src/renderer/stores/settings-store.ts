@@ -23,6 +23,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   panels: { sidebarWidth: 260, rightPanelWidth: 380 },
   // T1-15: default graph slider values mirror force-sim.ts DEFAULT_SIM_SETTINGS.
   graph: { repel: 8, link: 1, center: 0.15, linkDistance: 60 },
+  // T3-9 / T3-7: vault registry + Publish port mirror main getDefaults.
+  vaults: [],
+  publishPort: 3105,
+  // T3-3: Agent Memory (embedded MCP server) does not auto-start by default.
+  mcpAutoStart: false,
 };
 
 interface SettingsState {
