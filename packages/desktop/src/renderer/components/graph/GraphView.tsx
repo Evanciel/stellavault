@@ -16,6 +16,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
 import { useAppStore } from '../../stores/app-store.js';
+import { useSettingsStore } from '../../stores/settings-store.js';
 import {
   type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
   MAX_GLOBAL_NODES, DEEP_SPACE_BG,
@@ -350,13 +351,15 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
 
 // ─── Forces overlay (Obsidian-style collapsible sliders) ───
 
-function ForceSlider({ label, min, max, step, value, onChange }: {
+function ForceSlider({ label, min, max, step, value, onChange, onCommit }: {
   label: string;
   min: number;
   max: number;
   step: number;
   value: number;
   onChange: (v: number) => void;
+  // T1-15: fired on pointer-up / change end → persist (avoids settings:set spam).
+  onCommit?: () => void;
 }) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-dim)' }}>
@@ -368,6 +371,8 @@ function ForceSlider({ label, min, max, step, value, onChange }: {
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        onPointerUp={() => onCommit?.()}
+        onKeyUp={() => onCommit?.()}
         style={{ flex: 1, minWidth: 90 }}
         aria-label={label}
       />
@@ -385,7 +390,12 @@ export function GraphView() {
   const [fitSignal, setFitSignal] = useState(0);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
   const [forcesOpen, setForcesOpen] = useState(false);
-  const [settings, setSettings] = useState<SimSettings>({ ...DEFAULT_SIM_SETTINGS });
+  // T1-15: seed slider values from the persisted `graph` settings slice so they
+  // survive graph reopen; fall back to DEFAULT_SIM_SETTINGS. Read lazily once.
+  const [settings, setSettings] = useState<SimSettings>(() => {
+    const g = useSettingsStore.getState().settings.graph;
+    return g ? { ...DEFAULT_SIM_SETTINGS, ...g } : { ...DEFAULT_SIM_SETTINGS };
+  });
   const [reheatSignal, setReheatSignal] = useState(0);
   const settingsRef = useRef<SimSettings>(settings);
   const labelEls = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -445,6 +455,15 @@ export function GraphView() {
       return next;
     });
     setReheatSignal((s) => s + 1); // slider change reheats the sim
+  }, []);
+
+  // T1-15: persist the current slider values into the `graph` settings slice.
+  // Called on slider pointer-up (not per-tick) to avoid settings:set spam.
+  const persistSettings = useCallback(() => {
+    const s = settingsRef.current;
+    void useSettingsStore.getState().update({
+      graph: { repel: s.repel, link: s.link, center: s.center, linkDistance: s.linkDistance },
+    });
   }, []);
 
   const handleNodeClick = useCallback(async (node: GraphNode) => {
@@ -592,21 +611,25 @@ export function GraphView() {
               label="Repel force" min={0} max={20} step={1}
               value={settings.repel}
               onChange={(v) => updateSetting({ repel: v })}
+              onCommit={persistSettings}
             />
             <ForceSlider
               label="Link force" min={0} max={1} step={0.05}
               value={settings.link}
               onChange={(v) => updateSetting({ link: v })}
+              onCommit={persistSettings}
             />
             <ForceSlider
               label="Center force" min={0} max={1} step={0.05}
               value={settings.center}
               onChange={(v) => updateSetting({ center: v })}
+              onCommit={persistSettings}
             />
             <ForceSlider
               label="Link distance" min={20} max={200} step={5}
               value={settings.linkDistance}
               onChange={(v) => updateSetting({ linkDistance: v })}
+              onCommit={persistSettings}
             />
           </div>
         )}

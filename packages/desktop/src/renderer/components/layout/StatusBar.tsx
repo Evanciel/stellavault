@@ -1,6 +1,8 @@
 // Bottom status bar — vault stats, word count, theme indicator.
 
+import { useMemo } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
+import { countText } from '../../lib/text-count.js';
 
 export function StatusBar() {
   const tabs = useAppStore((s) => s.tabs);
@@ -9,7 +11,12 @@ export function StatusBar() {
   const vaultPath = useAppStore((s) => s.vaultPath);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const wordCount = activeTab ? activeTab.content.split(/\s+/).filter(Boolean).length : 0;
+  // T1-6: CJK-correct count — strips frontmatter + markdown syntax, counts
+  // CJK by segment and latin by whitespace. Memoized on the note content.
+  const counts = useMemo(
+    () => (activeTab && activeTab.kind !== 'graph' ? countText(activeTab.content) : null),
+    [activeTab?.content, activeTab?.kind],
+  );
 
   return (
     <div style={{
@@ -24,7 +31,11 @@ export function StatusBar() {
       color: 'var(--ink-faint)',
     }}>
       <span>{vaultPath.split(/[/\\]/).pop() || 'No vault'}</span>
-      {activeTab && <span>{wordCount} words</span>}
+      {counts && (
+        <span>
+          {counts.words.toLocaleString()} words &middot; {counts.chars.toLocaleString()} chars
+        </span>
+      )}
       {activeTab?.isDirty && <span style={{ color: 'var(--accent)' }}>Modified</span>}
       <span style={{ marginLeft: 'auto' }}>
         {coreReady ? 'AI ready' : 'Loading AI...'}

@@ -188,24 +188,29 @@ export class DecayEngine {
    * Get documents below decay threshold.
    */
   async getDecaying(threshold = 0.5, limit = 20): Promise<Array<DecayState & { title: string }>> {
-    await this.computeAll(); // refresh R values
-
+    // T1-11: read-only display path. The old impl ran computeAll() — a full
+    // rewrite of the decay table — on every read. Instead recompute R fresh
+    // from persisted stability + last_access (no writes, no contention with
+    // recordAccess), then filter/sort in memory. The decay_state.retrievability
+    // snapshot is only a coarse pre-filter for the candidate set.
     const rows = this.db.prepare(`
       SELECT ds.*, d.title FROM decay_state ds
       JOIN documents d ON d.id = ds.document_id
-      WHERE ds.retrievability < ?
-      ORDER BY ds.retrievability ASC
-      LIMIT ?
-    `).all(threshold, limit) as DecayJoinRow[];
+    `).all() as DecayJoinRow[];
 
-    return rows.map(r => ({
-      documentId: r.document_id,
-      stability: r.stability,
-      difficulty: r.difficulty,
-      lastAccess: r.last_access,
-      retrievability: r.retrievability,
-      title: r.title,
-    }));
+    const now = new Date().toISOString();
+    return rows
+      .map(r => ({
+        documentId: r.document_id,
+        stability: r.stability,
+        difficulty: r.difficulty,
+        lastAccess: r.last_access,
+        retrievability: computeRetrievability(r.stability, elapsedDays(r.last_access, now)),
+        title: r.title,
+      }))
+      .filter(r => r.retrievability < threshold)
+      .sort((a, b) => a.retrievability - b.retrievability)
+      .slice(0, limit);
   }
 
   /**

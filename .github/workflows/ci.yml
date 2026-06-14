@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22]
+        node-version: [22]
 
     steps:
       - uses: actions/checkout@v4
@@ -45,12 +45,15 @@ jobs:
       - name: Run smoke tests
         run: node tests/smoke.mjs
 
-      - name: Run core tests (unit tests — some may skip without native sqlite-vec)
-        run: npx vitest run 2>&1 || echo "⚠️ Some core tests require native sqlite-vec — partial pass expected in CI"
+      - name: Run core tests
+        run: npx vitest run
         working-directory: packages/core
 
-      - name: Run desktop IPC security tests
-        run: npx vitest run 2>&1 || echo "⚠️ Desktop tests require Vite/Rollup native — skipped in CI"
+      - name: Run desktop unit + IPC security tests
+        # T1-2/T1-3: now gating — a security regression (e.g. the import-asset
+        # srcPath hole, a broken assertInsideVault, an unclamped settings patch)
+        # FAILS the build. Tests are pure logic (no Electron runtime required).
+        run: npx vitest run
         working-directory: packages/desktop
 
   security:
@@ -62,8 +65,39 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --legacy-peer-deps
-      - name: Check for known vulnerabilities
-        run: npm audit --production --audit-level=high || true
+      - name: Check for known vulnerabilities (gating, baseline-allowlisted)
+        # T1-2: production audit is now GATING. A plain `npm audit
+        # --audit-level=high` cannot be used directly: the repo currently carries
+        # a documented baseline of high/critical advisories that are either
+        # unfixable upstream (`xlsx`) or only "fixable" via a semver-MAJOR
+        # downgrade of the local embedder (`@xenova/transformers` → 2.0.1, which
+        # would gut the multilingual-embedding moat) — both out of scope here.
+        # A naive gate would be permanently red and block every PR.
+        #
+        # Approach: parse `npm audit --json` and FAIL only on a high/critical
+        # advisory for a module OUTSIDE the documented baseline allowlist. Any
+        # NEW vulnerable dependency fails the build (the regression the gate
+        # exists to catch); the existing baseline does not. SHRINK this list as
+        # fixes land — never grow it without an explicit decision.
+        shell: bash
+        env:
+          # Baseline as of 2026-06-14 (see desktop-upgrade-proposal-v2 T1-2).
+          AUDIT_ALLOWLIST: 'xlsx @xenova/transformers onnx-proto onnxruntime-web protobufjs @xmldom/xmldom fast-uri'
+        run: |
+          npm audit --production --json > audit.json || true
+          node -e '
+            const a = JSON.parse(require("fs").readFileSync("audit.json","utf8"));
+            const allow = new Set((process.env.AUDIT_ALLOWLIST || "").split(/\s+/).filter(Boolean));
+            const vulns = a.vulnerabilities || {};
+            const hi = Object.values(vulns).filter(v => v.severity === "high" || v.severity === "critical");
+            const offenders = hi.filter(v => !allow.has(v.name));
+            if (offenders.length) {
+              console.error("NEW high/critical advisories (not in baseline allowlist) — failing:");
+              for (const o of offenders) console.error(`  - ${o.name} (${o.severity})`);
+              process.exit(1);
+            }
+            console.log(`OK — ${hi.length} high/critical advisory(ies), all in documented baseline; 0 new.`);
+          '
       - name: Check for secrets in code
         run: |
           ! grep -rn "sk-ant-\|ANTHROPIC_API_KEY=\|password.*=.*['\"]" packages/*/src/ --include="*.ts" --include="*.tsx" || echo "No secrets found"

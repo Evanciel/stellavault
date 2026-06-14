@@ -19,6 +19,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bookmarks: [],
   session: { openTabs: [], activeTab: null },
   window: { width: 1400, height: 900 },
+  // T1-9: default pane widths mirror app-store (sidebarWidth 260, rightPanelWidth 380).
+  panels: { sidebarWidth: 260, rightPanelWidth: 380 },
+  // T1-15: default graph slider values mirror force-sim.ts DEFAULT_SIM_SETTINGS.
+  graph: { repel: 8, link: 1, center: 0.15, linkDistance: 60 },
 };
 
 interface SettingsState {

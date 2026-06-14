@@ -2,12 +2,14 @@
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
-import { join, relative, resolve, sep, dirname, basename, extname } from 'node:path';
+import { join, relative, resolve, dirname, basename, extname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem } from '../shared/ipc-types.js';
 import { SettingsStore } from './settings-store.js';
+import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
+import { validateSettingsPatch } from './settings-validate.js';
 
 // ─── Config ──────────────────────────────────────────
 
@@ -23,8 +25,19 @@ function loadAppConfig(): AppConfig {
   ];
   for (const p of paths) {
     if (existsSync(p)) {
-      const cfg = JSON.parse(readFileSync(p, 'utf-8'));
-      return { vaultPath: cfg.vaultPath || '', dbPath: cfg.dbPath || '' };
+      // T1-13: a malformed ~/.stellavault.json must not block startup. On a parse
+      // error, fall through (→ empty config → vault picker) instead of crashing.
+      try {
+        const cfg = JSON.parse(readFileSync(p, 'utf-8'));
+        if (cfg && typeof cfg === 'object') {
+          return {
+            vaultPath: typeof cfg.vaultPath === 'string' ? cfg.vaultPath : '',
+            dbPath: typeof cfg.dbPath === 'string' ? cfg.dbPath : '',
+          };
+        }
+      } catch (err) {
+        console.error(`[main] failed to parse ${p} — falling back to vault picker:`, err);
+      }
     }
   }
   return { vaultPath: '', dbPath: '' };
@@ -70,7 +83,10 @@ async function initCore(config: AppConfig): Promise<void> {
     if (!hubConfig) {
       hubConfig = {
         folders: core.DEFAULT_FOLDERS,
-        embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
+        // T1-10: multilingual MiniLM (384d, drop-in for the old English-only
+        // all-MiniLM-L6-v2) — Korean-first vaults search far better. Existing
+        // indexes built with the old model: a reindex is recommended.
+        embedding: { model: 'local', localModel: 'paraphrase-multilingual-MiniLM-L12-v2' },
         chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
         search: { defaultLimit: 10, rrfK: 60 },
         mcp: { mode: 'stdio', port: 3333 },
@@ -158,18 +174,9 @@ function collectAllNotes(dirPath: string): string[] {
 }
 
 // ─── Path safety ─────────────────────────────────────
-// CRIT-01: Every IPC handler that touches the filesystem MUST validate
-// that the resolved path is inside the vault root. Without this, a
-// compromised renderer can read/write/delete ANY file on disk.
-
-function assertInsideVault(vaultPath: string, filePath: string): string {
-  const resolved = resolve(filePath);
-  const vaultRoot = resolve(vaultPath);
-  if (resolved !== vaultRoot && !resolved.startsWith(vaultRoot + sep)) {
-    throw new Error(`Access denied: path outside vault — ${resolved}`);
-  }
-  return resolved;
-}
+// CRIT-01: Every IPC handler that touches the filesystem MUST validate that the
+// resolved path is inside the vault root. The implementation lives in the pure,
+// unit-tested ./path-safety module (T1-3) — imported above as assertInsideVault.
 
 // ─── Core result/path helpers ────────────────────────
 
@@ -671,7 +678,9 @@ function registerIpcHandlers(config: AppConfig) {
   });
   ipcMain.handle('settings:set', (_e, patch: Partial<AppSettings>) => {
     if (!settingsStore) settingsStore = new SettingsStore();
-    const merged = settingsStore.set(patch ?? {});
+    // T1-13: drop invalid fields (negative window size, bad theme/accent) before
+    // they persist + re-apply. Pure, unit-tested in tests/settings-validate.test.ts.
+    const merged = settingsStore.set(validateSettingsPatch(patch ?? {}));
     broadcastSettingsChanged(merged);
     return merged;
   });
@@ -714,17 +723,19 @@ function registerIpcHandlers(config: AppConfig) {
   // ─── [editor-upgrade agent owned block — vault:import-asset ONLY] ───
   // Copies an image into <vault>/assets/ and returns the VAULT-RELATIVE path
   // (forward slashes) for Obsidian-compatible ![](assets/name.png) markdown.
-  // Accepts base64 bytes (renderer file picker) or an absolute source path.
-  ipcMain.handle('vault:import-asset', (_e, payload: { base64?: string; srcPath?: string; fileName: string }): string => {
-    if (!payload || (!payload.base64 && !payload.srcPath)) {
-      throw new Error('vault:import-asset: base64 or srcPath required');
+  // Accepts base64 bytes from the renderer file picker.
+  //
+  // T1-1 (security): the legacy `srcPath` branch — copyFileSync(resolve(srcPath))
+  // — was an ARBITRARY local-file read into the vault (then readable via
+  // vault:read-file), bypassing the entire path-safety model. The renderer only
+  // ever sends base64 (MarkdownEditor.tsx:194), so the branch was dead but live.
+  // It is removed; only the bytes path remains.
+  ipcMain.handle('vault:import-asset', (_e, payload: { base64?: string; fileName: string }): string => {
+    if (!payload || !payload.base64) {
+      throw new Error('vault:import-asset: base64 required');
     }
-    // Strip any directory components, then whitelist-sanitize the filename.
-    const rawName = basename(String(payload.fileName || 'image.png'));
-    const ext = extname(rawName).toLowerCase();
-    const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif']);
-    if (!ALLOWED_EXT.has(ext)) throw new Error(`vault:import-asset: unsupported image type "${ext}"`);
-    const base = basename(rawName, extname(rawName)).replace(/[^\w.\- ()À-￿]/g, '_') || 'image';
+    // Strip directory components + whitelist-sanitize the filename (pure helper).
+    const { ext, base } = sanitizeAssetName(payload.fileName);
 
     const assetsDir = join(vp, 'assets');
     mkdirSync(assetsDir, { recursive: true });
@@ -734,14 +745,9 @@ function registerIpcHandlers(config: AppConfig) {
     assertInsideVault(vp, target); // CRIT-01 invariant, defense-in-depth
 
     noteSelfWrite(target); // W1-15 watcher echo guard
-    if (payload.base64) {
-      const buf = Buffer.from(payload.base64, 'base64');
-      if (buf.byteLength === 0) throw new Error('vault:import-asset: empty payload');
-      if (buf.byteLength > 50 * 1024 * 1024) throw new Error('vault:import-asset: asset too large (max 50MB)');
-      writeFileSync(target, buf);
-    } else {
-      copyFileSync(resolve(String(payload.srcPath)), target);
-    }
+    const buf = Buffer.from(payload.base64, 'base64');
+    assertAssetSize(buf.byteLength); // empty / 50MB cap (pure helper)
+    writeFileSync(target, buf);
     return toVaultRel(vp, target);
   });
   // ─── [end editor-upgrade agent block] ───
@@ -868,6 +874,25 @@ function createWindow() {
     show: false,
   });
 
+  // T1-5: defense-in-depth navigation lockdown (sandbox already mitigates, this
+  // closes the gap explicitly). Deny window.open / target=_blank entirely — any
+  // external link goes through the vetted shell:open-external https allowlist.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Block navigation away from our own app origin (file:// renderer or the Vite
+  // dev server). A renderer compromise can't redirect the window to a remote URL.
+  win.webContents.on('will-navigate', (event, url) => {
+    let allowed = false;
+    try {
+      const target = new URL(url);
+      if (target.protocol === 'file:') allowed = true;
+      else if (MAIN_WINDOW_VITE_DEV_SERVER_URL && url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)) allowed = true;
+    } catch { /* unparseable URL → blocked */ }
+    if (!allowed) {
+      event.preventDefault();
+      console.warn('[main] blocked navigation to non-app origin:', url);
+    }
+  });
+
   // Show when ready to avoid blank flash
   win.once('ready-to-show', () => win.show());
 
@@ -924,7 +949,8 @@ async function runSmokeCore(): Promise<void> {
       vaultPath,
       dbPath,
       folders: core.DEFAULT_FOLDERS,
-      embedding: { model: 'local', localModel: 'all-MiniLM-L6-v2' },
+      // T1-10: multilingual MiniLM (384d, drop-in) — see fallback config above.
+      embedding: { model: 'local', localModel: 'paraphrase-multilingual-MiniLM-L12-v2' },
       chunking: { maxTokens: 300, overlap: 50, minTokens: 50 },
       search: { defaultLimit: 10, rrfK: 60 },
       mcp: { mode: 'stdio', port: 3333 },
@@ -943,6 +969,30 @@ async function runSmokeCore(): Promise<void> {
     app.exit(1);
   }
 }
+
+// ─── Process-level error guards (T1-4) ───────────────
+// An unguarded async IPC rejection or thrown error in main would otherwise
+// terminate the whole app silently (the renderer ErrorBoundary covers only the
+// renderer) → loss of unsaved work. Log instead of crashing; for a truly
+// uncaught synchronous exception also surface a dialog so the failure is visible
+// rather than a frozen/dead window. We deliberately do NOT exit — keeping the
+// window alive lets the user save in-flight edits.
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandledRejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaughtException:', err);
+  try {
+    if (app.isReady() && BrowserWindow.getAllWindows().length > 0) {
+      dialog.showErrorBox(
+        'Stellavault — unexpected error',
+        `An internal error occurred but the app is still running.\n\n${err?.stack || err?.message || String(err)}`,
+      );
+    }
+  } catch { /* dialog best-effort — never let the handler itself throw */ }
+});
 
 // ─── App lifecycle ───────────────────────────────────
 

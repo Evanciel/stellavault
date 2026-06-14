@@ -9,6 +9,7 @@
 
 import { useAppStore } from '../stores/app-store.js';
 import { ipc, onIpc } from './ipc-client.js';
+import { showToast } from './toast.js';
 
 // ─── Raw bridge invoke ───
 // Stage C IPC contract channels ('core:record-access', 'core:ask',
@@ -74,11 +75,20 @@ export function initRuntimeSync(): void {
     if (!tab) return;
 
     if (tab.isDirty) {
+      // T1-8: dirty tab → don't clobber local edits. Flag it; EditorArea shows
+      // a reload bar and TabBar shows a ⟳ badge so the divergence is visible.
       s.markTabExternallyChanged(tab.id);
       return;
     }
+    // Clean tab → safe to auto-reload, but tell the user it happened (T1-8) so
+    // an out-of-band edit (sync daemon, Obsidian) isn't silently swapped in.
     ipc('vault:read-file', filePath)
-      .then((content) => useAppStore.getState().reloadTab(tab.id, content))
+      .then((content) => {
+        useAppStore.getState().reloadTab(tab.id, content);
+        if (useAppStore.getState().activeTabId === tab.id) {
+          showToast(`Reloaded "${tab.title}" — changed on disk`, 'info');
+        }
+      })
       .catch(() => useAppStore.getState().markTabExternallyChanged(tab.id));
   });
 }

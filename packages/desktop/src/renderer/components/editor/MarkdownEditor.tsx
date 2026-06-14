@@ -7,7 +7,7 @@
 // editorToMarkdown — see ../../lib/markdown.ts (plan §4-A).
 
 import { useEffect, useRef, useState } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Link from '@tiptap/extension-link';
@@ -25,6 +25,7 @@ import Typography from '@tiptap/extension-typography';
 import Image from '@tiptap/extension-image';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
+import { CodeBlockView } from './CodeBlockView.js';
 import { WikilinkExtension } from './WikilinkSuggestion.js';
 import { WikilinkNode } from './WikilinkNode.js';
 import { SlashCommandExtension } from './SlashCommands.js';
@@ -58,7 +59,11 @@ export function MarkdownEditor({ content, onChange }: Props) {
         heading: { levels: [1, 2, 3, 4, 5, 6] },
         codeBlock: false, // Replaced by CodeBlockLowlight
       }),
-      CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'sv-code-block' } }),
+      // T1-14: React NodeView adds a language picker + copy button. The
+      // `language` attr round-trips to ```<lang> fences via tiptap-markdown.
+      CodeBlockLowlight
+        .extend({ addNodeView() { return ReactNodeViewRenderer(CodeBlockView); } })
+        .configure({ lowlight, HTMLAttributes: { class: 'sv-code-block' } }),
       Placeholder.configure({ placeholder: 'Start writing... (type / for commands)' }),
       Link.configure({ openOnClick: false, autolink: true }),
       Table.configure({ resizable: true }),
@@ -435,6 +440,45 @@ export function MarkdownEditor({ content, onChange }: Props) {
           overflow-x: auto;
         }
         .sv-code-block code { background: transparent; padding: 0; color: var(--ink); }
+        /* T1-14: code block NodeView chrome (language picker + copy) */
+        .sv-code-block-wrap {
+          position: relative;
+          margin: 8px 0;
+        }
+        .sv-code-block-wrap pre.sv-code-block { margin: 0; }
+        .sv-code-block-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 4px 8px;
+          background: var(--bg-3);
+          border: 1px solid var(--border);
+          border-bottom: none;
+          border-radius: 6px 6px 0 0;
+        }
+        .sv-code-block-bar + pre.sv-code-block { border-radius: 0 0 6px 6px; }
+        .sv-code-lang {
+          background: transparent;
+          border: 1px solid var(--border);
+          border-radius: 4px;
+          color: var(--ink-dim);
+          font-size: 11px;
+          font-family: 'JetBrains Mono', monospace;
+          padding: 2px 6px;
+          cursor: pointer;
+          outline: none;
+        }
+        .sv-code-copy {
+          background: transparent;
+          border: 1px solid var(--border);
+          border-radius: 4px;
+          color: var(--ink-dim);
+          font-size: 11px;
+          padding: 2px 8px;
+          cursor: pointer;
+        }
+        .sv-code-copy:hover { background: var(--hover); color: var(--ink); }
         /* Syntax highlighting (lowlight) */
         .sv-code-block .hljs-keyword { color: #c678dd; }
         .sv-code-block .hljs-string { color: #98c379; }

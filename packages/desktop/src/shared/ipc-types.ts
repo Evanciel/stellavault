@@ -62,6 +62,14 @@ export interface AppSettings {
   bookmarks: { type: 'note' | 'search'; target: string; label: string }[];
   session: { openTabs: string[]; activeTab: string | null };
   window: { width: number; height: number; x?: number; y?: number };
+  // T1-9: persisted resizable pane widths (px). Optional so older settings
+  // files / main getDefaults that predate this slice still type-check; the
+  // renderer reads with a fallback. Security agent: add matching keys to
+  // main/settings-store.ts getDefaults().
+  panels?: { sidebarWidth: number; rightPanelWidth: number };
+  // T1-15: persisted graph force-sim slider values. Optional, same rationale.
+  // Shape mirrors SimSettings (renderer/components/graph/force-sim.ts).
+  graph?: { repel: number; link: number; center: number; linkDistance: number };
 }
 
 // ─── Channel map: channel name → { args, result } ───

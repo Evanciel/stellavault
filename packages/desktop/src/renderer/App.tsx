@@ -9,6 +9,7 @@ import { TitleBar } from './components/layout/TitleBar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
 import { StatusBar } from './components/layout/StatusBar.js';
+import { ResizeHandle } from './components/layout/ResizeHandle.js';
 import { QuickSwitcher } from './components/shared/QuickSwitcher.js';
 import { CommandPalette } from './components/shared/CommandPalette.js';
 import { SettingsModal } from './components/settings/SettingsModal.js';
@@ -61,6 +62,8 @@ export function App() {
   const rightPanel = useAppStore((s) => s.rightPanel);
   const setRightPanel = useAppStore((s) => s.setRightPanel);
   const rightPanelWidth = useAppStore((s) => s.rightPanelWidth);
+  const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
+  const setRightPanelWidth = useAppStore((s) => s.setRightPanelWidth);
   const setFileTree = useAppStore((s) => s.setFileTree);
   const setVaultPath = useAppStore((s) => s.setVaultPath);
   const setCoreReady = useAppStore((s) => s.setCoreReady);
@@ -87,6 +90,18 @@ export function App() {
     const offHotkeys = initHotkeys(() => useSettingsStore.getState().settings.hotkeys);
     return () => { offSettings(); offHotkeys(); };
   }, []);
+
+  // T1-9: once settings hydrate, seed the app-store pane widths from the
+  // persisted `panels` slice (one-way: store is the live source during drag,
+  // settings is the durable store). Runs only on hydration flip.
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    const panels = useSettingsStore.getState().settings.panels;
+    if (!panels) return;
+    const st = useAppStore.getState();
+    if (typeof panels.sidebarWidth === 'number') st.setSidebarWidth(panels.sidebarWidth);
+    if (typeof panels.rightPanelWidth === 'number') st.setRightPanelWidth(panels.rightPanelWidth);
+  }, [settingsHydrated]);
 
   // Load vault tree on mount
   useEffect(() => {
@@ -170,11 +185,41 @@ export function App() {
             <Sidebar />
           </div>
         )}
+        {!sidebarCollapsed && (
+          <ResizeHandle
+            side="right"
+            width={sidebarWidth}
+            min={180}
+            max={500}
+            onResize={setSidebarWidth}
+            onCommit={(w) => void useSettingsStore.getState().update({
+              panels: {
+                sidebarWidth: w,
+                rightPanelWidth: useAppStore.getState().rightPanelWidth,
+              },
+            })}
+          />
+        )}
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <EditorArea />
         </div>
 
+        {rightPanel !== 'none' && (
+          <ResizeHandle
+            side="left"
+            width={rightPanelWidth}
+            min={280}
+            max={500}
+            onResize={setRightPanelWidth}
+            onCommit={(w) => void useSettingsStore.getState().update({
+              panels: {
+                sidebarWidth: useAppStore.getState().sidebarWidth,
+                rightPanelWidth: w,
+              },
+            })}
+          />
+        )}
         {rightPanel !== 'none' && (
           <div style={{
             width: rightPanelWidth,

@@ -70,6 +70,9 @@ interface AppState {
   markTabClean: (id: string) => void;
   // Stage C additive (W1-15) — used only by lib/runtime-sync.ts.
   markTabExternallyChanged: (id: string) => void;
+  // T1-8 additive: dismiss the external-change flag without reloading content
+  // ("Keep mine" in EditorArea's reload bar).
+  clearExternallyChanged: (id: string) => void;
   reloadTab: (id: string, content: string) => void;
   // Stage D additive (W1-3) — used only by components/sidebar/file-ops.ts.
   // Rename support: tab id === filePath, so both are rewritten together.
@@ -153,6 +156,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Stage C additive (W1-15): external change handling — see lib/runtime-sync.ts.
   markTabExternallyChanged: (id) => set((s) => ({
     tabs: s.tabs.map((t) => t.id === id ? { ...t, externallyChanged: true } : t),
+  })),
+  // T1-8 additive: "Keep mine" — clear the flag, leave content/dirty untouched.
+  clearExternallyChanged: (id) => set((s) => ({
+    tabs: s.tabs.map((t) => t.id === id ? { ...t, externallyChanged: false } : t),
   })),
   reloadTab: (id, content) => set((s) => ({
     tabs: s.tabs.map((t) => t.id === id

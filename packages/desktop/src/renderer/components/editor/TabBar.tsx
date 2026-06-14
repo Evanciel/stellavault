@@ -106,6 +106,15 @@ export function TabBar() {
               {tab.isDirty && (
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
               )}
+              {/* T1-8: changed-on-disk badge — file diverged from the open tab. */}
+              {tab.externallyChanged && (
+                <span
+                  title="Changed on disk — open this tab to reload or keep yours"
+                  style={{ fontSize: 11, lineHeight: 1, color: 'var(--accent-2, #f59e0b)', flexShrink: 0 }}
+                >
+                  &#x21bb;
+                </span>
+              )}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
                 {/* Wave 2: graph tab gets the ◉ glyph */}
                 {tab.kind === 'graph' ? `◉ ${tab.title}` : tab.title}
