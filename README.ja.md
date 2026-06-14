@@ -9,7 +9,7 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh.md)
 
-[**⬇ デスクトップアプリをダウンロード**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.0) · [**⚡ クイックスタート**](#インストール) · [**🤖 MCP セットアップ**](#mcp-連携-21ツール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
+[**⬇ デスクトップアプリをダウンロード**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.1) · [**⚡ クイックスタート**](#インストール) · [**🤖 MCP セットアップ**](#mcp-連携-21ツール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -62,8 +62,8 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.0/Stellavault-win32-x64-0.2.0.zip"><br/><b>⬇ Windows 版をダウンロード</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.0/Stellavault-linux-x64-0.2.0.zip"><br/><b>⬇ Linux 版をダウンロード</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.1/Stellavault-win32-x64-0.2.1.zip"><br/><b>⬇ Windows 版をダウンロード</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.2.1/Stellavault-linux-x64-0.2.1.zip"><br/><b>⬇ Linux 版をダウンロード</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>近日公開</sub></td>
   </tr>
 </table>
@@ -428,7 +428,7 @@ MIT — 全ソースコードを監査(audit)できます。
 
 ## リンク
 
-- **[⬇ デスクトップアプリをダウンロード](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.0)**
+- **[⬇ デスクトップアプリをダウンロード](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.2.1)**
 - [ランディングページ](https://evanciel.github.io/stellavault/)
 - [Obsidian プラグイン](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
