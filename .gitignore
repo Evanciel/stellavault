@@ -70,3 +70,10 @@ unnamed*.png
 Autonomous_Knowledge_Foundry.pdf
 tmp-pw/
 packages/desktop/out/
+
+# npm audit / dependency scratch dumps (ephemeral — never commit)
+audit.json
+audit_full.json
+audit_temp.json
+audit-tmp.json
+lstree.json
