@@ -72,6 +72,15 @@ const ALLOWED_CHANNELS = new Set<string>([
   'mcp:start',
   'mcp:stop',
   'mcp:status',
+  // Second-brain auto-capture (Design §6.4)
+  'vault:capture',
+  'capture:list',
+  'capture:set-paused',
+  'capture:counts',
+  'review:list',
+  'review:confirm',
+  'review:skip',
+  'categories:list',
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([
@@ -82,6 +91,9 @@ const ALLOWED_EVENTS = new Set<string>([
   'window:close-request', // T2-18: main → renderer dirty-close vetting
   'update:status',        // T3-12: auto-update lifecycle
   'mcp:status-changed',   // T3-3: Agent Memory server status / activity feed
+  'capture:progress',     // second-brain capture lifecycle
+  'capture:done',
+  'review:changed',
 ]);
 
 const api = {

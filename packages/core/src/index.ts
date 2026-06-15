@@ -80,6 +80,20 @@ export {
 export type { FrontmatterEntry } from './intelligence/zettelkasten.js';
 export { ingest, ingestBatch, promoteNote } from './intelligence/ingest-pipeline.js';
 export type { IngestInput, IngestResult, NoteStage } from './intelligence/ingest-pipeline.js';
+// Classification engine (second-brain auto-capture, Design §6.2/§6.3)
+export { classifyLocal, jaccard, DEFAULT_CLASSIFY_CONFIG } from './intelligence/classify/index.js';
+export { createClassifyDao, ensureClassifyTables, safeMove } from './intelligence/classify/index.js';
+export { cosineKMeans, meanVector, discoverCategories, topEntities } from './intelligence/classify/index.js';
+export type { SafeMoveResult, DiscoverDoc, DiscoverOptions, DiscoverResult } from './intelligence/classify/index.js';
+export type {
+  Category, CategoryOrigin, CategoryRule, ClassifyConfig,
+  NoteCtx, ClassifyMethod, ClassifyBand, ClassifyResult,
+  JournalEntry, JournalStatus,
+} from './intelligence/classify/index.js';
+export type { ClassifyDao } from './intelligence/classify/index.js';
+// File extraction (second-brain capture — pdf/docx/pptx/xlsx/csv/html/json/xml/yaml/rtf)
+export { extractFileContent, isBinaryFormat } from './intelligence/file-extractors.js';
+export type { ExtractedContent } from './intelligence/file-extractors.js';
 export type { LintResult, LintIssue } from './intelligence/knowledge-lint.js';
 export type { AskResult } from './intelligence/ask-engine.js';
 export type { LearningPath, LearningItem, LearningPathInput } from './intelligence/learning-path.js';

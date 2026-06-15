@@ -270,6 +270,71 @@ export interface AppSettings {
   mcpAutoStart?: boolean;
 }
 
+// ─── Second-brain auto-capture (Design §6) ──────────────────────────────────
+// One pipeline behind every door (drag-drop / MCP / clip). CaptureRequest is the IPC
+// arg to 'vault:capture'; the DTOs below back the Capture/Review/Category panels
+// (centroids/embeddings are NEVER sent to the renderer).
+export type CaptureKind = 'file' | 'url' | 'text';
+export type CaptureSource = 'drop' | 'mcp' | 'clip';
+export type CaptureStage = 'fleeting' | 'literature' | 'permanent';
+
+export interface CaptureRequest {
+  kind: CaptureKind;
+  payload: string;            // file: tmp abs path | url: URL | text: raw markdown
+  title?: string;
+  tags?: string[];
+  source: CaptureSource;
+  sourceMeta?: { fileName?: string; mime?: string; client?: string; html?: string; selection?: string };
+  stageHint?: CaptureStage;
+}
+export interface CaptureOutcome {
+  status: 'created' | 'duplicate' | 'queued' | 'rejected';
+  savedTo?: string;
+  documentId?: string;
+  title?: string;
+  stage?: CaptureStage;
+  categories?: string[];
+  confidence?: number;
+  decision?: 'auto' | 'review';
+  duplicateOf?: string;
+  reason?: 'engine-loading' | 'size' | 'unsupported' | 'ssrf' | 'no-vault' | 'queue-full' | 'io';
+  indexed?: boolean;
+}
+export interface CaptureItem {
+  id: string;
+  kind: CaptureKind;
+  title: string;
+  source: CaptureSource;
+  status: 'queued' | 'processing' | 'done' | 'rejected' | 'duplicate';
+  savedTo?: string;
+  category?: string;
+  confidence?: number;
+  decision?: 'auto' | 'review';
+  reason?: string;
+  enqueuedAt: string;
+}
+export interface ReviewItem {
+  id: string;
+  notePath: string;
+  title: string;
+  confidence: number;
+  suggestions: { id: string; label: string; sim: number }[];
+  stage?: string;
+}
+export interface CategoryInfo {
+  id: string;
+  label: string;
+  origin: 'emergent' | 'user' | 'seed';
+  memberCount: number;
+  keywords: string[];
+}
+export interface CaptureCounts {
+  capturedToday: number;
+  pendingReviewCount: number;
+  queueDepth: number;
+  watching: boolean;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -414,6 +479,16 @@ export interface IpcChannelMap {
   'mcp:start':  { args: []; result: McpStatus };
   'mcp:stop':   { args: []; result: McpStatus };
   'mcp:status': { args: []; result: McpStatus };
+
+  // ─── Second-brain auto-capture (Design §6.4) ───
+  'vault:capture':      { args: [req: CaptureRequest]; result: { id: string } };
+  'capture:list':       { args: [limit?: number]; result: CaptureItem[] };
+  'capture:set-paused': { args: [paused: boolean]; result: void };
+  'capture:counts':     { args: []; result: CaptureCounts };
+  'review:list':        { args: []; result: ReviewItem[] };
+  'review:confirm':     { args: [id: string, categoryId: string | null, stage?: string]; result: void };
+  'review:skip':        { args: [id: string]; result: void };
+  'categories:list':    { args: []; result: CategoryInfo[] };
 }
 
 // ─── Events (main → renderer, one-way) ───
@@ -430,6 +505,10 @@ export interface IpcEventMap {
   // T3-3: MCP server status change (started/stopped) or a new tool-call activity
   // entry — lets the Agent Memory section update its feed without polling.
   'mcp:status-changed': McpStatus;
+  // Second-brain capture lifecycle (Design §6.4).
+  'capture:progress': { id: string; phase: string };
+  'capture:done':     CaptureOutcome & { id: string };
+  'review:changed':   { queueLength: number };
 }
 
 // Helper types for typed invoke/on

@@ -11,6 +11,9 @@ import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskRespo
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
+import { OrchestrationEngine } from './orchestration/engine.js';
+import { createQueueDao } from './orchestration/queue-dao.js';
+import type { CaptureRequest } from '../shared/ipc-types.js';
 import { validateSettingsPatch } from './settings-validate.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
@@ -104,6 +107,8 @@ let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } 
 // T3-3: the active vault path, captured at initCore — passed to the embedded MCP
 // server (vaultPath-dependent tools like decision-journal need it).
 let currentVaultPath = '';
+// Second-brain auto-capture engine (Design §6.1) — created at the end of initCore.
+let engine: OrchestrationEngine | null = null;
 
 // ─── Agent Memory / MCP server (T3-3) ────────────────
 // The embedded MCP server ("Agent Memory") lets a local agent (Claude) read/write
@@ -263,6 +268,53 @@ async function initCore(config: AppConfig): Promise<void> {
     }
 
     coreReady = true;
+
+    // ─── Second-brain auto-capture engine (Design §6.1) ───
+    // Wires the persisted capture queue + classify DAO (same index DB) to the reused
+    // core funnel (ingest → classify → index → decay). Frontmatter mode: classification
+    // is recorded in the DAO; existing vault files are never moved.
+    try {
+      const captureDb = store.getDb();
+      if (captureDb) {
+        const captureVaultPath = config.vaultPath;
+        engine = new OrchestrationEngine({
+          vaultPath: captureVaultPath,
+          queue: createQueueDao(captureDb),
+          classifyDao: core.createClassifyDao(captureDb),
+          cfg: core.DEFAULT_CLASSIFY_CONFIG,
+          ingest: (vaultPath, input) => core.ingest(vaultPath, input),
+          extractFile: async (p) => {
+            const ex = await core.extractFileContent(p);
+            return { text: ex.text, title: ex.metadata?.title, sourceFormat: ex.sourceFormat };
+          },
+          classify: (ctx, cats, cfg) => core.classifyLocal(ctx, cats, cfg),
+          embed: (text: string) => embedder.embed(text),
+          indexFile: async (abs: string) => {
+            noteSelfWrite(abs); // W1-15 echo guard — our own write
+            if (typeof (core as any).indexFiles === 'function') {
+              await (core as any).indexFiles(captureVaultPath, [abs], { store, embedder, chunkOptions: coreChunkOptions });
+            } else {
+              await core.indexVault(captureVaultPath, { store, embedder, chunkOptions: coreChunkOptions });
+            }
+            bumpVaultFsVersion();
+            bumpGraphCacheVersion();
+          },
+          recordCapture: (abs: string) => {
+            if (decayEngine) {
+              const documentId = docIdForFile(captureVaultPath, abs);
+              void decayEngine.recordAccess({ documentId, type: 'view', timestamp: new Date().toISOString() }).catch(() => {});
+            }
+          },
+          emit: (channel: string, payload: unknown) => {
+            for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
+          },
+          isReady: () => coreReady,
+        });
+        engine.start();
+      }
+    } catch (err) {
+      console.error('[main] capture engine init skipped:', err);
+    }
   } catch (err) {
     console.error('[main] Core init failed:', err);
   }
@@ -1187,6 +1239,7 @@ function registerIpcHandlers(config: AppConfig) {
   // `vp`/`config`/`store`/`embedder`/`settingsStore` closures above; nothing in
   // the blocks above is modified. See registerPublishVaultClip for the impl.
   registerPublishVaultClip(config);
+  registerCaptureHandlers();
   // ─── [end publish/multi-vault agent block] ─────────────────────────────
 
   // ─── [AI-synthesis agent owned block — T3-1 / T3-8 appended] ───────────
@@ -1477,6 +1530,24 @@ function ensureActiveVaultRegistered(config: AppConfig): VaultRegistryEntry[] {
   }
   settingsStore.set({ vaults: list });
   return list;
+}
+
+// ─── Second-brain auto-capture IPC (Design §6.4) ───
+// All handlers reference the module-level `engine` (created at the end of initCore;
+// null until core is ready → safe degraded responses). The renderer never receives
+// note bodies or centroids — only the wire-safe DTOs the engine produces.
+function registerCaptureHandlers(): void {
+  ipcMain.handle('vault:capture', (_e, req: CaptureRequest) => {
+    if (!engine) return { id: '' };
+    return engine.enqueue(req);
+  });
+  ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));
+  ipcMain.handle('capture:set-paused', (_e, paused: boolean) => { engine?.setPaused(paused); });
+  ipcMain.handle('capture:counts', () => (engine ? engine.counts() : { capturedToday: 0, pendingReviewCount: 0, queueDepth: 0, watching: false }));
+  ipcMain.handle('review:list', () => (engine ? engine.listReview() : []));
+  ipcMain.handle('review:confirm', (_e, id: string, categoryId: string | null, stage?: string) => { engine?.confirmReview(id, categoryId, stage); });
+  ipcMain.handle('review:skip', (_e, id: string) => { engine?.skipReview(id); });
+  ipcMain.handle('categories:list', () => (engine ? engine.listCategories() : []));
 }
 
 function registerPublishVaultClip(config: AppConfig): void {
