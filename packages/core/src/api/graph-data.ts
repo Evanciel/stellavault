@@ -19,6 +19,7 @@ export interface BuildGraphOptions {
   edgeThreshold?: number;      // default: 0.15
   maxEdgesPerNode?: number;    // default: 5
   clusterCount?: number;       // 0 = auto (Elbow)
+  nodeCap?: number;            // max notes fed into the O(n²) edge/cluster pass (default 2000)
 }
 
 export async function buildGraphData(
@@ -51,7 +52,19 @@ export async function buildGraphData(
   const edges: GraphEdge[] = [];
   const edgeCounts = new Map<string, number>();
 
-  const docsWithVecs = docs.filter(d => embeddings.has(d.id));
+  // Bound the set fed into the O(n²) edge loop + k-means below. Without this, a
+  // multi-thousand-note vault (up to EMB_CAP) runs ~n²·384 dot products *synchronously
+  // in the Electron MAIN process* → the whole app freezes for seconds. Rank by recency
+  // (importance proxy) and cap to nodeCap (~2k keeps the pairwise loop < ~4M ops →
+  // sub-second). Notes beyond the cap still appear as nodes but get no edges/cluster.
+  const NODE_CAP = Math.max(200, Math.floor(options.nodeCap ?? (Number(process.env.GRAPH_NODE_CAP) || 2000)));
+  const allWithVecs = docs.filter(d => embeddings.has(d.id));
+  if (allWithVecs.length > NODE_CAP) {
+    console.warn(`[graph] edge/cluster computation capped to ${NODE_CAP} most-recent notes (of ${allWithVecs.length} with embeddings) — raise GRAPH_NODE_CAP to include more.`);
+  }
+  const docsWithVecs = allWithVecs
+    .sort((a, b) => String(b.lastModified ?? '').localeCompare(String(a.lastModified ?? '')))
+    .slice(0, NODE_CAP);
   const normalizedVecs = new Map<string, number[]>();
   for (const doc of docsWithVecs) {
     normalizedVecs.set(doc.id, normalizeVector([...embeddings.get(doc.id)!]));
@@ -120,18 +133,20 @@ export async function buildGraphData(
       nodeCount: folderCounts.get(i) ?? 0,
     }));
   } else {
-    // 시맨틱 기반: K-means
-    const docIds = docs.filter(d => embeddings.has(d.id)).map(d => d.id);
-    const vectors = docIds.map(id => embeddings.get(id)!);
-    const k = Math.min(Math.max(5, Math.round(Math.sqrt(docIds.length / 5))), 10);
-    const assignments = kMeans(vectors, k);
+    // 시맨틱 기반: K-means over the SAME capped, recency-ranked set as the edge loop
+    // (docsWithVecs) so clustering is bounded too. maxIter 50→15 (converges well before).
+    const clusterIds = docsWithVecs.map(d => d.id);
+    const vectors = clusterIds.map(id => embeddings.get(id)!);
+    const k = Math.min(Math.max(5, Math.round(Math.sqrt(clusterIds.length / 5))), 10);
+    const assignments = kMeans(vectors, Math.min(k, clusterIds.length || 1), 15);
 
-    // 클러스터별 문서 수집 (id + title)
+    // 클러스터별 문서 수집 (id + title) — Map lookup, not O(docs²) docs.find
+    const docById = new Map(docsWithVecs.map(d => [d.id, d] as const));
     const clusterDocInfos = new Map<number, Array<{ id: string; title: string }>>();
-    for (let i = 0; i < docIds.length; i++) {
+    for (let i = 0; i < clusterIds.length; i++) {
       const cId = assignments[i];
       if (!clusterDocInfos.has(cId)) clusterDocInfos.set(cId, []);
-      const doc = docs.find(d => d.id === docIds[i]);
+      const doc = docById.get(clusterIds[i]);
       if (doc) clusterDocInfos.get(cId)!.push({ id: doc.id, title: doc.title });
     }
 
@@ -158,8 +173,8 @@ export async function buildGraphData(
     }
 
     assignmentMap = new Map<string, number>();
-    for (let i = 0; i < docIds.length; i++) {
-      assignmentMap.set(docIds[i], assignments[i]);
+    for (let i = 0; i < clusterIds.length; i++) {
+      assignmentMap.set(clusterIds[i], assignments[i]);
     }
   }
 
