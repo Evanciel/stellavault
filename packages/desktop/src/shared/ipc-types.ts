@@ -284,7 +284,7 @@ export interface CaptureRequest {
   title?: string;
   tags?: string[];
   source: CaptureSource;
-  sourceMeta?: { fileName?: string; mime?: string; client?: string; html?: string; selection?: string };
+  sourceMeta?: { fileName?: string; mime?: string; client?: string; html?: string; selection?: string; base64?: string };
   stageHint?: CaptureStage;
 }
 export interface CaptureOutcome {

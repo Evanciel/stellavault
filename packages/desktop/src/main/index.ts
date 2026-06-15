@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
@@ -1539,6 +1539,22 @@ function ensureActiveVaultRegistered(config: AppConfig): VaultRegistryEntry[] {
 function registerCaptureHandlers(): void {
   ipcMain.handle('vault:capture', (_e, req: CaptureRequest) => {
     if (!engine) return { id: '' };
+    // A file dropped in the renderer arrives as base64 (the renderer has no path).
+    // Stage it to a tmp file so the engine's extractFileContent(path) reuse works,
+    // then enqueue the path. The tmp file is the engine's input; the vault copy is
+    // created by ingest(). (50MB cap is enforced renderer-side + in the engine.)
+    if (req.kind === 'file' && req.sourceMeta?.base64) {
+      try {
+        const named = sanitizeAssetName(req.sourceMeta.fileName ?? 'dropped');
+        const tmpPath = join(tmpdir(), `sv-cap-${Date.now()}-${Math.round(Math.random() * 1e9).toString(36)}-${named.base}${named.ext}`);
+        writeFileSync(tmpPath, Buffer.from(req.sourceMeta.base64, 'base64'));
+        const { base64: _omit, ...meta } = req.sourceMeta;
+        return engine.enqueue({ ...req, payload: tmpPath, sourceMeta: meta });
+      } catch (err) {
+        console.error('[capture] file staging failed:', err);
+        return { id: '' };
+      }
+    }
     return engine.enqueue(req);
   });
   ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));

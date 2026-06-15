@@ -23,8 +23,12 @@ import { OutlinePanel } from './components/panels/OutlinePanel.js';
 import { TagsPanel } from './components/panels/TagsPanel.js';
 import { CoachPanel } from './components/panels/CoachPanel.js'; // T2-6
 import { SynthesisPanel } from './components/panels/SynthesisPanel.js'; // T3-1
+import { CapturePanel } from './components/panels/CapturePanel.js'; // second-brain auto-capture (Design §7)
+import { ReviewQueuePanel } from './components/panels/ReviewQueuePanel.js';
+import { CategoryPanel } from './components/panels/CategoryPanel.js';
 import { FindReplace } from './components/editor/FindReplace.js'; // T2-4
 import { CaptureHost } from './components/decisions/CaptureHost.js'; // T3-5/T3-6 capture & automation modals
+import { DropOverlay } from './components/layout/DropOverlay.js'; // second-brain global drop-to-capture
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
 
@@ -37,6 +41,9 @@ const PANEL_TITLES: Record<string, string> = {
   tags: 'Tags',
   coach: 'Coach', // T2-6
   synthesis: 'Synthesize', // T3-1
+  capture: 'Capture',
+  review: 'Review',
+  categories: 'Categories',
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -273,6 +280,9 @@ export function App() {
               {rightPanel === 'tags' && <TagsPanel />}
               {rightPanel === 'coach' && <CoachPanel />}
               {rightPanel === 'synthesis' && <SynthesisPanel />}
+              {rightPanel === 'capture' && <CapturePanel />}
+              {rightPanel === 'review' && <ReviewQueuePanel />}
+              {rightPanel === 'categories' && <CategoryPanel />}
             </div>
           </div>
         )}
@@ -283,6 +293,7 @@ export function App() {
       <CommandPalette />
       <SettingsModal />
       <CaptureHost />
+      <DropOverlay />
     </div>
   );
 }

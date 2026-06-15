@@ -1,8 +1,51 @@
 // Bottom status bar — vault stats, word count, theme indicator.
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, type CSSProperties } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { countText } from '../../lib/text-count.js';
+import { ipc, onIpc } from '../../lib/ipc-client.js';
+
+const pillBtn: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent',
+  border: 'none', color: 'var(--ink-faint)', cursor: 'pointer', fontSize: 10, padding: 0,
+};
+
+// Always-on capture indicator (Design §7) — watching dot + pending-review badge.
+function CapturePill() {
+  const setRightPanel = useAppStore((s) => s.setRightPanel);
+  const coreReady = useAppStore((s) => s.coreReady);
+  const [counts, setCounts] = useState({ pendingReviewCount: 0, queueDepth: 0, watching: false });
+
+  useEffect(() => {
+    if (!coreReady) return;
+    let alive = true;
+    const refresh = () => void ipc('capture:counts')
+      .then((c) => { if (alive) setCounts({ pendingReviewCount: c.pendingReviewCount, queueDepth: c.queueDepth, watching: c.watching }); })
+      .catch(() => {});
+    refresh();
+    const offDone = onIpc('capture:done', refresh);
+    const offProg = onIpc('capture:progress', refresh);
+    const offReview = onIpc('review:changed', refresh);
+    const t = window.setInterval(refresh, 5000);
+    return () => { alive = false; offDone(); offProg(); offReview(); window.clearInterval(t); };
+  }, [coreReady]);
+
+  if (!coreReady) return null;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <button onClick={() => setRightPanel('capture')} title="Capture inbox" style={pillBtn}>
+        <span style={{ color: counts.watching ? 'var(--accent)' : 'var(--ink-faint)' }}>◉</span>
+        {counts.queueDepth > 0 && <span style={{ color: 'var(--accent-2)' }}>{counts.queueDepth}</span>}
+        <span>capture</span>
+      </button>
+      {counts.pendingReviewCount > 0 && (
+        <button onClick={() => setRightPanel('review')} title="Review queue" style={{ ...pillBtn, color: 'var(--accent)' }}>
+          ⚑ {counts.pendingReviewCount}
+        </button>
+      )}
+    </span>
+  );
+}
 
 export function StatusBar() {
   const tabs = useAppStore((s) => s.tabs);
@@ -37,8 +80,9 @@ export function StatusBar() {
         </span>
       )}
       {activeTab?.isDirty && <span style={{ color: 'var(--accent)' }}>Modified</span>}
-      <span style={{ marginLeft: 'auto' }}>
-        {coreReady ? 'AI ready' : 'Loading AI...'}
+      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 14 }}>
+        <CapturePill />
+        <span>{coreReady ? 'AI ready' : 'Loading AI...'}</span>
       </span>
     </div>
   );
