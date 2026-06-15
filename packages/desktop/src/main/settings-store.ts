@@ -15,6 +15,7 @@ export function getDefaults(): AppSettings {
   return {
     version: 1,
     theme: 'dark',
+    language: 'en', // i18n default; user switches in Settings → General
     accent: '#6366f1', // matches theme.css --accent (renderer default mirror)
     editor: { fontSize: 15, lineWidth: 720, spellcheck: false },
     hotkeys: {},

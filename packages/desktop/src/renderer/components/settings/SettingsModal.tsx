@@ -10,6 +10,7 @@ import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
 import { DEFAULT_MODELS, OLLAMA_BASE_URL, PROVIDER_META } from '../../../shared/ai-providers.js';
+import { useT } from '../../lib/i18n.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
 
@@ -88,9 +89,21 @@ function GeneralTab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const vaultPath = useAppStore((s) => s.vaultPath);
+  const t = useT();
 
   return (
     <div>
+      <Field label={t('settings.language')} hint={t('settings.language.hint')}>
+        <select
+          value={settings.language ?? 'en'}
+          aria-label={t('settings.language')}
+          onChange={(e) => void update({ language: e.target.value as 'en' | 'ko' })}
+          style={{ ...textInputStyle, width: 180, cursor: 'pointer' }}
+        >
+          <option value="en">English</option>
+          <option value="ko">한국어</option>
+        </select>
+      </Field>
       <Field label="Vault path" hint='Managed by ~/.stellavault.json — change via "stellavault setup" and restart.'>
         <input type="text" value={vaultPath} readOnly aria-label="Vault path" style={{ ...textInputStyle, color: 'var(--ink-dim)' }} />
       </Field>

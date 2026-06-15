@@ -1,9 +1,10 @@
-// Bottom status bar — vault stats, word count, theme indicator.
+// Bottom status bar — vault stats, word count, capture pill, AI status.
 
 import { useMemo, useState, useEffect, type CSSProperties } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { countText } from '../../lib/text-count.js';
 import { ipc, onIpc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 
 const pillBtn: CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent',
@@ -12,6 +13,7 @@ const pillBtn: CSSProperties = {
 
 // Always-on capture indicator (Design §7) — watching dot + pending-review badge.
 function CapturePill() {
+  const tr = useT();
   const setRightPanel = useAppStore((s) => s.setRightPanel);
   const coreReady = useAppStore((s) => s.coreReady);
   const [counts, setCounts] = useState({ pendingReviewCount: 0, queueDepth: 0, watching: false });
@@ -26,20 +28,20 @@ function CapturePill() {
     const offDone = onIpc('capture:done', refresh);
     const offProg = onIpc('capture:progress', refresh);
     const offReview = onIpc('review:changed', refresh);
-    const t = window.setInterval(refresh, 5000);
-    return () => { alive = false; offDone(); offProg(); offReview(); window.clearInterval(t); };
+    const timer = window.setInterval(refresh, 5000);
+    return () => { alive = false; offDone(); offProg(); offReview(); window.clearInterval(timer); };
   }, [coreReady]);
 
   if (!coreReady) return null;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <button onClick={() => setRightPanel('capture')} title="Capture inbox" style={pillBtn}>
+      <button onClick={() => setRightPanel('capture')} title={tr('status.captureInbox')} style={pillBtn}>
         <span style={{ color: counts.watching ? 'var(--accent)' : 'var(--ink-faint)' }}>◉</span>
         {counts.queueDepth > 0 && <span style={{ color: 'var(--accent-2)' }}>{counts.queueDepth}</span>}
-        <span>capture</span>
+        <span>{tr('status.capture')}</span>
       </button>
       {counts.pendingReviewCount > 0 && (
-        <button onClick={() => setRightPanel('review')} title="Review queue" style={{ ...pillBtn, color: 'var(--accent)' }}>
+        <button onClick={() => setRightPanel('review')} title={tr('status.reviewQueue')} style={{ ...pillBtn, color: 'var(--accent)' }}>
           ⚑ {counts.pendingReviewCount}
         </button>
       )}
@@ -48,14 +50,15 @@ function CapturePill() {
 }
 
 export function StatusBar() {
+  const tr = useT();
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const coreReady = useAppStore((s) => s.coreReady);
   const vaultPath = useAppStore((s) => s.vaultPath);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-  // T1-6: CJK-correct count — strips frontmatter + markdown syntax, counts
-  // CJK by segment and latin by whitespace. Memoized on the note content.
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
+  // T1-6: CJK-correct count — strips frontmatter + markdown syntax, counts CJK by
+  // segment and latin by whitespace. Memoized on the note content.
   const counts = useMemo(
     () => (activeTab && activeTab.kind !== 'graph' ? countText(activeTab.content) : null),
     [activeTab?.content, activeTab?.kind],
@@ -73,16 +76,14 @@ export function StatusBar() {
       fontSize: '10px',
       color: 'var(--ink-faint)',
     }}>
-      <span>{vaultPath.split(/[/\\]/).pop() || 'No vault'}</span>
+      <span>{vaultPath.split(/[/\\]/).pop() || tr('status.noVault')}</span>
       {counts && (
-        <span>
-          {counts.words.toLocaleString()} words &middot; {counts.chars.toLocaleString()} chars
-        </span>
+        <span>{tr('status.wordsChars', { words: counts.words.toLocaleString(), chars: counts.chars.toLocaleString() })}</span>
       )}
-      {activeTab?.isDirty && <span style={{ color: 'var(--accent)' }}>Modified</span>}
+      {activeTab?.isDirty && <span style={{ color: 'var(--accent)' }}>{tr('status.modified')}</span>}
       <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 14 }}>
         <CapturePill />
-        <span>{coreReady ? 'AI ready' : 'Loading AI...'}</span>
+        <span>{coreReady ? tr('status.aiReady') : tr('status.aiLoading')}</span>
       </span>
     </div>
   );

@@ -1,11 +1,10 @@
 // Capture inbox panel (Design §7) — live capture progress + manual add + pause.
-// Drops/links flow through the main 'vault:capture' funnel; this panel reflects the
-// queue (capture:list) and updates on capture:progress / capture:done events.
 
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { registerCommand } from '../../lib/commands.js';
 import { ipc, onIpc } from '../../lib/ipc-client.js';
+import { useT, type MsgKey } from '../../lib/i18n.js';
 import type { CaptureItem } from '../../../shared/ipc-types.js';
 
 let captureCommandsRegistered = false;
@@ -20,9 +19,6 @@ function registerCaptureCommands(): void {
 }
 registerCaptureCommands();
 
-const STATUS_LABEL: Record<CaptureItem['status'], string> = {
-  queued: 'queued', processing: 'working', done: 'filed', rejected: 'failed', duplicate: 'dup',
-};
 const STATUS_COLOR: Record<CaptureItem['status'], string> = {
   queued: 'var(--ink-faint)', processing: 'var(--accent-2)', done: 'var(--accent)',
   rejected: '#c0556a', duplicate: 'var(--ink-faint)',
@@ -34,6 +30,7 @@ const btn: CSSProperties = {
 };
 
 export function CapturePanel() {
+  const t = useT();
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [paused, setPaused] = useState(false);
 
@@ -67,33 +64,33 @@ export function CapturePanel() {
   return (
     <div style={{ padding: 12 }}>
       <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-        Drop files or links anywhere &mdash; they&rsquo;re extracted, classified, and filed automatically.
+        {t('capture.hint')}
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <button onClick={() => void pasteLink()} style={btn}>Paste link</button>
+        <button onClick={() => void pasteLink()} style={btn}>{t('capture.pasteLink')}</button>
         <button
           onClick={() => void togglePause()}
           style={{ ...btn, marginLeft: 'auto', color: paused ? 'var(--accent)' : 'var(--ink-dim)' }}
         >
-          {paused ? '▶ Resume' : '⏸ Pause'}
+          {paused ? t('capture.resume') : t('capture.pause')}
         </button>
       </div>
 
       {items.length === 0 && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          Nothing captured yet.
+          {t('capture.empty')}
         </div>
       )}
 
       {items.map((it) => (
         <div key={it.id} style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 9, color: STATUS_COLOR[it.status], minWidth: 44 }}>{STATUS_LABEL[it.status]}</span>
+          <span style={{ fontSize: 9, color: STATUS_COLOR[it.status], minWidth: 44 }}>{t(`capture.status.${it.status}` as MsgKey)}</span>
           <span style={{ flex: 1, fontSize: 11, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {it.title}
           </span>
           {it.category && <span style={{ fontSize: 9, color: 'var(--accent-2)' }}>{it.category}</span>}
-          {it.decision === 'review' && <span style={{ fontSize: 9, color: 'var(--accent)' }}>review</span>}
+          {it.decision === 'review' && <span style={{ fontSize: 9, color: 'var(--accent)' }}>{t('capture.review')}</span>}
         </div>
       ))}
     </div>

@@ -11,6 +11,7 @@ import { settingsGet, settingsSet, onSettingsChanged } from '../lib/ipc-client.j
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
   theme: 'dark',
+  language: 'en',
   accent: '#6366f1',
   editor: { fontSize: 15, lineWidth: 720, spellcheck: false },
   hotkeys: {},

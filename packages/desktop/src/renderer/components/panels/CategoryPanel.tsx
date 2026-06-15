@@ -1,10 +1,10 @@
-// Category browser panel (Design §7) — the "촤라락" view of emergent + user categories.
-// MVP: a flat list with origin + member count, refreshing as captures land.
+// Category browser panel (Design §7) — emergent + user categories with member counts.
 
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { registerCommand } from '../../lib/commands.js';
 import { ipc, onIpc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import type { CategoryInfo } from '../../../shared/ipc-types.js';
 
 let categoryCommandsRegistered = false;
@@ -22,6 +22,7 @@ registerCategoryCommands();
 const row: CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid var(--border)' };
 
 export function CategoryPanel() {
+  const t = useT();
   const [cats, setCats] = useState<CategoryInfo[]>([]);
 
   useEffect(() => {
@@ -35,7 +36,7 @@ export function CategoryPanel() {
   if (cats.length === 0) {
     return (
       <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12, padding: 28 }}>
-        No categories yet &mdash; they emerge as you capture.
+        {t('category.empty')}
       </div>
     );
   }

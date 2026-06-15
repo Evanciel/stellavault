@@ -235,6 +235,8 @@ export interface McpStatus {
 export interface AppSettings {
   version: 1;
   theme: 'dark' | 'light' | 'system';
+  // i18n: interface language (KO/EN). Optional so older settings files type-check.
+  language?: 'en' | 'ko';
   accent: string;              // hex
   editor: { fontSize: number; lineWidth: number; spellcheck: boolean };
   hotkeys: Record<string, string>;   // commandId -> 'mod+shift+f' style
