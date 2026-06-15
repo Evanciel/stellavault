@@ -360,9 +360,10 @@ export interface IpcChannelMap {
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
 
-  // [editor-upgrade additive] Local image import — copies bytes (base64) or a
-  // source file into <vault>/assets/, returns the VAULT-RELATIVE path.
-  'vault:import-asset': { args: [payload: { base64?: string; srcPath?: string; fileName: string }]; result: string };
+  // [editor-upgrade additive] Local image import — copies image bytes (base64)
+  // into <vault>/assets/, returns the VAULT-RELATIVE path. (The legacy srcPath
+  // arbitrary-file-read branch was removed in T1-1; the renderer only sends bytes.)
+  'vault:import-asset': { args: [payload: { base64?: string; fileName: string }]; result: string };
 
   // ─── Publish / read-only PWA (T3-7) + web clipper (T3-4) ───
   // 'publish:start' boots the local read-only server (core dashboard + PWA +
