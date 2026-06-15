@@ -9,6 +9,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
+import { DEFAULT_MODELS, OLLAMA_BASE_URL, PROVIDER_META } from '../../../shared/ai-providers.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
 
@@ -21,10 +22,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'hotkeys', label: 'Hotkeys' },
   { id: 'about', label: 'About' },
 ];
-
-// T3-2: default Claude model id for the anthropic provider (claude-api skill —
-// latest widely-released model). Mirrors main/llm-synthesizer DEFAULT_ANTHROPIC_MODEL.
-const DEFAULT_AI_MODEL = 'claude-fable-5';
 
 const ACCENT_SWATCHES = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6'];
 
@@ -226,35 +223,61 @@ function AppearanceTab() {
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
-  const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: DEFAULT_AI_MODEL };
+  const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: '', baseURL: '' };
   const [showKey, setShowKey] = useState(false);
+  const meta = PROVIDER_META[ai.provider];
 
+  // Always send a full ai object (matches the existing optimistic-merge pattern).
   const patchAi = (patch: Partial<NonNullable<AppSettings['ai']>>) =>
-    void update({ ai: { provider: ai.provider, apiKey: ai.apiKey, model: ai.model || DEFAULT_AI_MODEL, ...patch } });
+    void update({ ai: { provider: ai.provider, apiKey: ai.apiKey, model: ai.model, baseURL: ai.baseURL ?? '', ...patch } });
+
+  // Switching provider resets the model to that provider's default and prefills the
+  // local base URL when picking openai-compatible.
+  const onProvider = (provider: NonNullable<AppSettings['ai']>['provider']) =>
+    patchAi({
+      provider,
+      model: DEFAULT_MODELS[provider],
+      baseURL: provider === 'openai-compatible' ? (ai.baseURL || OLLAMA_BASE_URL) : (ai.baseURL ?? ''),
+    });
 
   return (
     <div>
-      <Field label="AI provider" hint="Used to synthesize answers in Ask and compile articles in Synthesis. Without a key, both fall back to an extractive (search-based) summary.">
+      <Field label="AI provider" hint="Synthesizes answers in Ask and compiles articles in Synthesis. Without a configured provider, both fall back to an extractive (search-based) summary.">
         <select
           value={ai.provider}
           aria-label="AI provider"
-          onChange={(e) => patchAi({ provider: e.target.value as NonNullable<AppSettings['ai']>['provider'] })}
-          style={{ ...textInputStyle, width: 220, cursor: 'pointer' }}
+          onChange={(e) => onProvider(e.target.value as NonNullable<AppSettings['ai']>['provider'])}
+          style={{ ...textInputStyle, width: 260, cursor: 'pointer' }}
         >
-          <option value="none">None (extractive only)</option>
-          <option value="anthropic">Anthropic (Claude)</option>
+          {(['none', 'anthropic', 'openai', 'google', 'openai-compatible'] as const).map((p) => (
+            <option key={p} value={p}>{PROVIDER_META[p].label}</option>
+          ))}
         </select>
       </Field>
 
-      {ai.provider === 'anthropic' && (
+      {ai.provider !== 'none' && (
         <>
-          <Field label="API key" hint="Stored locally in ~/.stellavault/desktop-settings.json and sent only to api.anthropic.com. Never logged.">
+          {meta.needsBaseURL && (
+            <Field label="Base URL" hint="OpenAI-compatible endpoint. Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1 · Groq: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1">
+              <input
+                type="text"
+                value={ai.baseURL ?? ''}
+                aria-label="Base URL"
+                placeholder={OLLAMA_BASE_URL}
+                spellCheck={false}
+                onChange={(e) => patchAi({ baseURL: e.target.value })}
+                style={{ ...textInputStyle, width: 360 }}
+              />
+            </Field>
+          )}
+
+          <Field label={meta.needsKey ? 'API key' : 'API key (optional)'} hint={`Stored locally in ~/.stellavault/desktop-settings.json. ${meta.keyHint} Never logged.`}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
                 type={showKey ? 'text' : 'password'}
                 value={ai.apiKey}
-                aria-label="Anthropic API key"
-                placeholder="sk-ant-..."
+                aria-label="AI API key"
+                placeholder={meta.keyPlaceholder}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => patchAi({ apiKey: e.target.value })}
@@ -274,15 +297,15 @@ function AITab() {
             </div>
           </Field>
 
-          <Field label="Model" hint={`Claude model id. Defaults to ${DEFAULT_AI_MODEL}.`}>
+          <Field label="Model" hint={meta.modelHint}>
             <input
               type="text"
               value={ai.model || ''}
-              aria-label="Claude model id"
-              placeholder={DEFAULT_AI_MODEL}
+              aria-label="Model id"
+              placeholder={DEFAULT_MODELS[ai.provider]}
               spellCheck={false}
               onChange={(e) => patchAi({ model: e.target.value })}
-              style={{ ...textInputStyle, width: 280 }}
+              style={{ ...textInputStyle, width: 320 }}
             />
           </Field>
         </>

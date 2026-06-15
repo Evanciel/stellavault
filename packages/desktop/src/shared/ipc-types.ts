@@ -264,7 +264,12 @@ export interface AppSettings {
   // The key lives ONLY in desktop-settings.json (never logged, never sent to the
   // renderer except as the value the user typed). model defaults to the latest
   // Claude model id for the anthropic provider (see settings-store getDefaults).
-  ai?: { provider: 'anthropic' | 'none'; apiKey: string; model: string };
+  ai?: {
+    provider: 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google';
+    apiKey: string;
+    model: string;
+    baseURL?: string; // only for provider 'openai-compatible' (e.g. http://localhost:11434/v1)
+  };
   // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
   // Optional; defaults false in both main getDefaults + renderer DEFAULT.
   mcpAutoStart?: boolean;

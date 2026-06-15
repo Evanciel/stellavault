@@ -17,7 +17,7 @@ import type { CaptureRequest } from '../shared/ipc-types.js';
 import { validateSettingsPatch } from './settings-validate.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
-import { makeSynthesizer } from './llm-synthesizer.js';
+import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -83,13 +83,13 @@ function broadcastSettingsChanged(settings: AppSettings): void {
   }
 }
 
-// T3-2: read the persisted AI provider/key from desktop-settings. Returns the
-// raw {provider, apiKey, model} or undefined. NEVER log the result — the key is
-// only ever handed to makeSynthesizer (which sends it to api.anthropic.com).
-function getAiConfig(): { provider: 'anthropic' | 'none'; apiKey: string; model: string } | undefined {
+// T3-2 / multi-provider: read the persisted AI provider/key from desktop-settings.
+// NEVER log the result — the key is only ever handed to makeSynthesizer (which sends
+// it to the selected provider's endpoint).
+function getAiConfig(): LlmConfig | undefined {
   try {
     if (!settingsStore) settingsStore = new SettingsStore();
-    return settingsStore.get().ai;
+    return settingsStore.get().ai as LlmConfig | undefined;
   } catch {
     return undefined;
   }
