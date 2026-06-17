@@ -40,3 +40,22 @@
   --hover: rgba(0, 0, 0, 0.04);
   --selection: rgba(99, 102, 241, 0.15);
 }
+
+/* ── Themed scrollbars — replace the default chunky OS scrollbar (theme-adaptive) ── */
+* {
+  scrollbar-width: thin;                              /* Gecko fallback */
+  scrollbar-color: var(--ink-faint) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  border-radius: 8px;
+  border: 2px solid transparent;                      /* inset → slimmer thumb */
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-dim);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }

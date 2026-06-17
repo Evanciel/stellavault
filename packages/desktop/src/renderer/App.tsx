@@ -2,7 +2,7 @@
 
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { useAppStore } from './stores/app-store.js';
-import { useSettingsStore, initSettings, resolveTheme } from './stores/settings-store.js';
+import { useSettingsStore, initSettings } from './stores/settings-store.js';
 import { registerBuiltinCommands, registerCommand } from './lib/commands.js';
 import { initHotkeys } from './lib/hotkeys.js';
 import { TitleBar } from './components/layout/TitleBar.js';
@@ -26,6 +26,7 @@ import { SynthesisPanel } from './components/panels/SynthesisPanel.js'; // T3-1
 import { CapturePanel } from './components/panels/CapturePanel.js'; // second-brain auto-capture (Design §7)
 import { ReviewQueuePanel } from './components/panels/ReviewQueuePanel.js';
 import { CategoryPanel } from './components/panels/CategoryPanel.js';
+import { NotePreviewPanel } from './components/panels/NotePreviewPanel.js'; // web-style read-only preview (graph node click)
 import { FindReplace } from './components/editor/FindReplace.js'; // T2-4
 import { CaptureHost } from './components/decisions/CaptureHost.js'; // T3-5/T3-6 capture & automation modals
 import { DropOverlay } from './components/layout/DropOverlay.js'; // second-brain global drop-to-capture
@@ -44,6 +45,7 @@ const PANEL_TITLES: Record<string, string> = {
   capture: 'Capture',
   review: 'Review',
   categories: 'Categories',
+  'note-preview': 'Preview',
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -71,7 +73,6 @@ function registerStageCPanelCommands(): void {
 }
 
 export function App() {
-  const appTheme = useAppStore((s) => s.theme);
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const rightPanel = useAppStore((s) => s.rightPanel);
@@ -127,15 +128,19 @@ export function App() {
       setFileTree(tree);
     })();
 
-    // Listen for core ready
-    const off = onIpc('core:ready', () => {
+    // Mark the core ready (idempotent). First-run UX: an empty index means
+    // search/graph/tags are dead until the user reindexes → auto-index once.
+    const markReady = () => {
       setCoreReady(true);
-      // First-run UX: an empty index means search/graph/tags are all dead until
-      // the user finds the Reindex button. Index automatically once.
       void ipc('core:get-stats').then((stats) => {
         if (stats && stats.documentCount === 0) void ipc('core:index');
       }).catch(() => { /* stats unavailable — user can still reindex manually */ });
-    });
+    };
+    // Listen for the event AND query current state on mount — initCore now resolves
+    // fast enough to fire 'core:ready' BEFORE this listener exists (startup race), so
+    // the one-shot event alone could be missed → permanent "Waiting for AI engine…".
+    const off = onIpc('core:ready', markReady);
+    void ipc('core:get-ready').then((ready) => { if (ready) markReady(); }).catch(() => {});
 
     // Listen for file changes (from watcher)
     const offFile = onIpc('file:changed', () => {
@@ -150,20 +155,19 @@ export function App() {
     ? (osLight ? 'light' : 'dark')
     : settings.theme;
 
-  // Keep app-store theme in sync both ways (TitleBar's toggle still writes
-  // app-store; equality guards prevent loops).
+  // W1-2: settings.theme is the SINGLE source of truth; mirror it ONE-WAY to the
+  // app-store theme (TitleBar reads it for its icon). Never write back — a second
+  // app→settings effect ping-pongs with this one: when the app-store default
+  // ('dark') differs from a persisted theme ('light'), each effect's stale-closure
+  // setState flips the other's dependency every render, and because Zustand
+  // notifies useSyncExternalStore subscribers synchronously they never converge →
+  // React #185 ("Maximum update depth exceeded"). The toggle, command palette, and
+  // SettingsModal all write settings.theme directly, so one-way mirroring suffices.
   useEffect(() => {
     if (useAppStore.getState().theme !== resolvedTheme) {
       useAppStore.setState({ theme: resolvedTheme });
     }
   }, [resolvedTheme]);
-  useEffect(() => {
-    if (!settingsHydrated) return;
-    const current = resolveTheme(useSettingsStore.getState().settings.theme);
-    if (appTheme !== current) {
-      void useSettingsStore.getState().update({ theme: appTheme });
-    }
-  }, [appTheme, settingsHydrated]);
 
   return (
     <div
@@ -283,6 +287,7 @@ export function App() {
               {rightPanel === 'capture' && <CapturePanel />}
               {rightPanel === 'review' && <ReviewQueuePanel />}
               {rightPanel === 'categories' && <CategoryPanel />}
+              {rightPanel === 'note-preview' && <NotePreviewPanel />}
             </div>
           </div>
         )}

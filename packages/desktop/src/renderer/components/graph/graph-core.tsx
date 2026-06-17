@@ -138,7 +138,11 @@ export function makePointsMaterial(opacity: number, additive: boolean): THREE.Sh
       void main() {
         vColor = color;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (220.0 / -mvPosition.z);
+        // Clamp the perspective size: an aggressive zoom-in drives -mvPosition.z toward
+        // zero, which without a cap explodes each point into a screen-filling additive
+        // blob (the "white clump" zoom bug). A ceiling also keeps dense / 2D views from
+        // saturating to white. min keeps far-away nodes from vanishing entirely.
+        gl_PointSize = clamp(size * (220.0 / -mvPosition.z), 1.5, 44.0);
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
@@ -297,8 +301,11 @@ export function applyHoverToBuffers(
         r = Math.min(r * 1.6, 1); g = Math.min(g * 1.6, 1); b = Math.min(b * 1.6, 1);
         s *= 1.5; gs *= 1.8;
       } else {
-        r *= 0.06; g *= 0.06; b *= 0.06;
-        s *= 0.4; gs *= 0.25;
+        // Gentle de-emphasis only — keep non-neighbours clearly VISIBLE (same position,
+        // near-same size). The old ×0.06 colour / ×0.4 size made them vanish, so hovering
+        // a central hub made the whole graph look like it "collapsed" into that hub.
+        r *= 0.45; g *= 0.45; b *= 0.45;
+        s *= 0.9; gs *= 0.65;
       }
     }
     cCol.setXYZ(i, r, g, b);

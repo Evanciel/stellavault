@@ -39,8 +39,12 @@ interface AppState {
   activeTabId: string | null;
 
   // Panel (Stage C adds 'search' | 'outline' | 'tags' — W1-4/5/6)
-  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis' | 'capture' | 'review' | 'categories'; // T2-6 coach; T3-1 synthesis; second-brain capture/review/categories
+  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis' | 'capture' | 'review' | 'categories' | 'note-preview'; // T2-6 coach; T3-1 synthesis; second-brain capture/review/categories; note-preview = web-style read-only preview
   rightPanelWidth: number;
+
+  // Note preview — clicking a graph node (or a link) streams a READ-ONLY note
+  // into the right panel instead of stealing the main pane (web/Obsidian style).
+  previewNote: { filePath: string; title: string; content: string } | null;
 
   // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any
   // caller) sets a query via openSearchWithQuery(); SearchPanel consumes it,
@@ -84,6 +88,9 @@ interface AppState {
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
+  // Show a read-only note in the right panel (graph node click) + flip the
+  // panel to 'note-preview'. Does NOT touch tabs/activeTabId → graph stays put.
+  setPreviewNote: (note: { filePath: string; title: string; content: string }) => void;
   // Stage C additive (W1-6).
   openSearchWithQuery: (query: string) => void;
   clearPendingSearchQuery: () => void;
@@ -103,6 +110,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   rightPanel: 'none',
   rightPanelWidth: 380,
+  previewNote: null,
   pendingSearchQuery: null,
 
   theme: 'dark',
@@ -199,6 +207,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
+  setPreviewNote: (note) => set({ previewNote: note, rightPanel: 'note-preview' }),
   // Stage C additive (W1-6).
   openSearchWithQuery: (query) => set({ rightPanel: 'search', pendingSearchQuery: query }),
   clearPendingSearchQuery: () => set({ pendingSearchQuery: null }),

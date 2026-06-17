@@ -59,6 +59,10 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   const hoveredRef = useRef<number | null>(null);
   const draggingRef = useRef<number | null>(null);
   const frameRef = useRef(0);
+  const userMovedRef = useRef(false);   // user grabbed the camera → pause auto-fit
+  const lastMovedRef = useRef(true);    // edge-detect sim settle for a final auto-fit
+  const syncedRef = useRef(false);      // force ONE node+edge buffer sync after the sim
+                                        // (re)creates — else a frozen galaxy leaves edges at origin
   const { camera, gl, raycaster, size } = useThree();
 
   // Points raycast precision — without this hover triggers meters away.
@@ -69,6 +73,24 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   }, [raycaster]);
 
   const base = useMemo(() => buildBaseBuffers(nodes), [nodes]);
+  // Stable typed-array copies backing the point-cloud bufferAttributes. CRITICAL:
+  // passing an inline `new Float32Array(base.pos)` into <bufferAttribute args>
+  // makes R3F RECONSTRUCT the attribute on EVERY React re-render (args is shallow-
+  // compared and a fresh array is a new reference each render). That silently
+  // resets node positions to the seeded layout; the frame loop only repairs it
+  // while the sim is still moving. Once the sim rests — or the galaxy is frozen —
+  // a re-render (hover fires setHover per pointermove) leaves the points stuck at
+  // the seed positions: the "nodes suddenly clump to the center on hover" bug.
+  // Memoizing on `base` keeps the reference stable across hover re-renders so the
+  // buffers we mutate in place (frame loop + applyHover) survive.
+  const coreAttrs = useMemo(
+    () => ({ pos: new Float32Array(base.pos), col: new Float32Array(base.col), sz: new Float32Array(base.sz) }),
+    [base],
+  );
+  const glowAttrs = useMemo(
+    () => ({ pos: new Float32Array(base.pos), col: new Float32Array(base.col), sz: new Float32Array(base.gsz) }),
+    [base],
+  );
   const neighborSets = useMemo(() => buildNeighborSets(nodes, edges), [nodes, edges]);
 
   // Index pairs for the sim + edge buffer (shared layout: link k → floats k*6..k*6+5).
@@ -85,12 +107,24 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   }, [nodes, edges]);
 
   // The simulation — starts from the current hash-seeded positions.
+  // The galaxy (cluster super-nodes) uses a precomputed even (Fibonacci) layout that the
+  // live sim must NOT collapse into a hub-and-spoke — freeze it. Expanded clusters' members
+  // run the sim normally so they spread out.
+  const isGalaxy = useMemo(() => nodes.length > 0 && nodes.every((n) => n.id.startsWith('__cluster__')), [nodes]);
   const sim = useMemo(() => {
     const s = new ForceSim(base.pos, linkPairs);
-    s.reheat(0.3);
-    s.cool(); // start hot (alpha=1) but cooling toward rest
+    if (isGalaxy) {
+      s.freeze();
+    } else {
+      s.reheat(0.3);
+      s.cool(); // start hot (alpha=1) but cooling toward rest
+    }
     return s;
-  }, [base, linkPairs]);
+  }, [base, linkPairs, isGalaxy]);
+
+  // Re-sync the GPU buffers once whenever the sim is rebuilt (data / expand / 2D change) —
+  // critical when the galaxy sim is frozen (moved stays false → buffers never update).
+  useEffect(() => { syncedRef.current = false; }, [sim]);
 
   // Slider change → reheat (Obsidian: settings change restarts the sim).
   useEffect(() => {
@@ -118,7 +152,9 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   const litLinksRef = useRef<number[]>([]);
 
   const coreMat = useMemo(() => makePointsMaterial(0.95, false), []);
-  const glowMat = useMemo(() => makePointsMaterial(0.28, true), []);
+  // Glow opacity kept modest: with up to 3000 additive glow points a higher value
+  // saturates large vaults to white (esp. in packed 2D / zoomed views).
+  const glowMat = useMemo(() => makePointsMaterial(0.18, true), []);
 
   const applyHover = useCallback((hovered: number | null) => {
     applyHoverToBuffers(coreRef.current, glowRef.current, base, neighborSets, hovered, nodes.length);
@@ -183,7 +219,7 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   }, [sim, camera, gl, raycaster, dragPlane, dragVec]);
 
   // ── Zoom to fit (uses LIVE sim positions) ──
-  useEffect(() => {
+  const fitToView = useCallback(() => {
     if (sim.n === 0) return;
     const box = new THREE.Box3();
     const v = new THREE.Vector3();
@@ -210,7 +246,13 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
       controlsRef.current.target.copy(center);
       controlsRef.current.update();
     }
-    // Re-fit on explicit signal AND on mode switch (camera type changed).
+  }, [sim, camera, size]);
+
+  // Explicit fit (button) or camera-type switch → re-enable auto-fit + frame now.
+  useEffect(() => {
+    userMovedRef.current = false;
+    lastMovedRef.current = true;
+    fitToView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitSignal, mode2d]);
 
@@ -220,7 +262,16 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     const dtScale = Math.min(Math.max(delta * 60, 0.25), 2); // clamp dt
     const moved = sim.tick(settingsRef.current, dtScale);
 
-    if (moved) {
+    // Auto-fit the camera while the layout settles so the graph never blooms out of
+    // view ("박살"). Stops the moment the user grabs the camera (OrbitControls onStart);
+    // a final fit lands when the sim first reaches rest.
+    if (!userMovedRef.current) {
+      if (moved && frameRef.current % 8 === 0) fitToView();
+      else if (!moved && lastMovedRef.current) fitToView();
+    }
+    lastMovedRef.current = moved;
+
+    if (moved || !syncedRef.current) {
       const core = coreRef.current;
       const glow = glowRef.current;
       if (core && glow) {
@@ -246,6 +297,7 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         }
         attr.needsUpdate = true;
       }
+      syncedRef.current = true;
     }
 
     // Lit edges track the hovered node every frame (cheap — few links).
@@ -269,7 +321,10 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     // uses distance to the controls target). When zoomed in → reveal the whole
     // pool; zoomed out → only the biggest LABEL_MIN_VISIBLE. The per-node `rank`
     // (0 = largest) is compared against this budget.
-    if (frameRef.current % 3 === 0 && labelEls.current.size > 0) {
+    // Project labels EVERY frame (pool is capped at LABEL_POOL ≤60 → cheap) so they
+    // track the dots exactly while the layout settles, instead of lagging 3 frames
+    // behind the moving points ("labels don't line up with nodes").
+    if (labelEls.current.size > 0) {
       const ortho = (camera as THREE.OrthographicCamera).isOrthographicCamera;
       // 0 (zoomed out) → 1 (zoomed in)
       let zoomT: number;
@@ -329,9 +384,9 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
       {nodes.length > 0 && (
         <points key={`glow-${nodes.length}`} ref={glowRef} material={glowMat} raycast={() => null} frustumCulled={false}>
           <bufferGeometry>
-            <bufferAttribute attach="attributes-position" args={[new Float32Array(base.pos), 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.gsz), 1]} />
+            <bufferAttribute attach="attributes-position" args={[glowAttrs.pos, 3]} />
+            <bufferAttribute attach="attributes-color" args={[glowAttrs.col, 3]} />
+            <bufferAttribute attach="attributes-size" args={[glowAttrs.sz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -372,9 +427,9 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
           }}
         >
           <bufferGeometry>
-            <bufferAttribute attach="attributes-position" args={[new Float32Array(base.pos), 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.sz), 1]} />
+            <bufferAttribute attach="attributes-position" args={[coreAttrs.pos, 3]} />
+            <bufferAttribute attach="attributes-color" args={[coreAttrs.col, 3]} />
+            <bufferAttribute attach="attributes-size" args={[coreAttrs.sz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -390,6 +445,7 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
 
       <OrbitControls
         ref={controlsRef}
+        onStart={() => { userMovedRef.current = true; }}
         enableDamping
         dampingFactor={0.08}
         minDistance={10}
@@ -440,6 +496,11 @@ function ForceSlider({ label, min, max, step, value, onChange, onCommit }: {
 export function GraphView() {
   const [allNodes, setAllNodes] = useState<GraphNode[]>([]);
   const [allEdges, setAllEdges] = useState<GraphEdge[]>([]);
+  // Wave 1 cluster-first LOD: clusters the user has expanded into their members.
+  const expandedRef = useRef<Set<number>>(new Set());
+  const [galaxyInfo, setGalaxyInfo] = useState<{ totalNodes: number; clusters: number } | null>(null);
+  // Drill-down: the cluster currently opened to its members (null = galaxy view).
+  const [drillCluster, setDrillCluster] = useState<{ id: number; label: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [fitSignal, setFitSignal] = useState(0);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
@@ -461,43 +522,72 @@ export function GraphView() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const coreReady = useAppStore((s) => s.coreReady);
-  const openFile = useAppStore((s) => s.openFile);
+  const setPreviewNote = useAppStore((s) => s.setPreviewNote);
   const vaultPath = useAppStore((s) => s.vaultPath);
 
   const accent = useMemo(() => readAccentColor(), []);
 
-  useEffect(() => {
+  // Wave 1 cluster-first LOD: open at the galaxy (cluster super-nodes), NOT all 12k
+  // notes. Clicking a super-node streams that cluster's members into the scene.
+  const loadGalaxy = useCallback(async () => {
     if (!coreReady) return;
-    void (async () => {
-      setLoading(true);
-      try {
-        const data = await ipc('graph:build', 'semantic') as unknown as {
-          nodes: CoreGraphNode[];
-          edges: GraphEdge[];
-        };
-        setAllNodes(mapCoreNodes(data.nodes ?? []));
-        setAllEdges((data.edges ?? []) as GraphEdge[]);
-      } catch (err) {
-        console.error('[graph] build failed:', err);
-        setAllNodes([]);
-        setAllEdges([]);
-      }
-      setLoading(false);
-    })();
+    setLoading(true);
+    setDrillCluster(null);
+    expandedRef.current.clear();
+    try {
+      const galaxy = await ipc('graph:clusters', { mode: 'semantic' });
+      // Super-nodes carry their precomputed semantic position — use it directly
+      // (NOT mapCoreNodes/seededPosition) so the frozen galaxy renders as laid out.
+      const superNodes: GraphNode[] = galaxy.superNodes.map((sn) => ({
+        id: `__cluster__${sn.clusterId}`,
+        title: `${sn.label} · ${sn.memberCount}`,
+        filePath: '',
+        cluster: sn.clusterId,
+        size: Math.min(8, Math.max(1, sn.size)),
+        position: sn.position,
+      }));
+      setAllNodes(superNodes);
+      setAllEdges(galaxy.metaEdges.map((me) => ({
+        source: `__cluster__${me.sourceCluster}`,
+        target: `__cluster__${me.targetCluster}`,
+        weight: Math.max(0.1, Math.min(1, me.weight)),
+      })));
+      setGalaxyInfo({ totalNodes: galaxy.totalNodes, clusters: galaxy.superNodes.length });
+      setFitSignal((s) => s + 1);
+    } catch (err) {
+      console.error('[graph] clusters build failed:', err);
+      setAllNodes([]); setAllEdges([]); setGalaxyInfo(null);
+    }
+    setLoading(false);
   }, [coreReady]);
+
+  // Wave 1 cluster-first LOD: open at the galaxy (cluster super-nodes), NOT all 12k
+  // notes. Clicking a super-node drills into that cluster's members.
+  useEffect(() => { void loadGalaxy(); }, [loadGalaxy]);
 
   // Global safety cap — same policy as GraphPanel.
   const { visibleNodes, visibleEdges } = useMemo(() => {
+    // Galaxy view (drillCluster === null): render clusters as a clean constellation
+    // with NO edges. The super-node positions already encode relatedness (semantic
+    // layout), and the meta-edge web — especially lit-on-hover from a high-degree
+    // hub — just swamps the overview. Edges return on drill-down (intra-cluster
+    // links between a single cluster's member notes).
+    const ids = new Set(allNodes.map((n) => n.id));
+    const edges = drillCluster === null
+      ? []
+      // Always drop edges whose endpoints aren't in the node set — expand/collapse
+      // mutates nodes + edges separately, so guard against a transient dangling edge.
+      : allEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
     if (allNodes.length > MAX_GLOBAL_NODES) {
       const kept = [...allNodes].sort((a, b) => b.size - a.size).slice(0, MAX_GLOBAL_NODES);
       const keptIds = new Set(kept.map((n) => n.id));
       return {
         visibleNodes: kept,
-        visibleEdges: allEdges.filter((e) => keptIds.has(e.source) && keptIds.has(e.target)),
+        visibleEdges: edges.filter((e) => keptIds.has(e.source) && keptIds.has(e.target)),
       };
     }
-    return { visibleNodes: allNodes, visibleEdges: allEdges };
-  }, [allNodes, allEdges]);
+    return { visibleNodes: allNodes, visibleEdges: edges };
+  }, [allNodes, allEdges, drillCluster]);
 
   // Top-N largest nodes get a (possibly hidden) HTML label, positioned
   // imperatively by the scene. T2-9: pool is LABEL_POOL; the frame loop reveals
@@ -533,14 +623,37 @@ export function GraphView() {
   }, []);
 
   const handleNodeClick = useCallback(async (node: GraphNode) => {
+    // Wave 1 drill-down: clicking a cluster super-node opens JUST that cluster —
+    // its member notes + their internal edges. The sibling super-nodes and their
+    // meta-edges (a dense linkDistance-110 web that swamps the whole view) are
+    // dropped; "← All clusters" in the caption returns to the galaxy.
+    const cm = /^__cluster__(\d+)$/.exec(node.id);
+    if (cm) {
+      const clusterId = Number(cm[1]);
+      setLoading(true);
+      try {
+        const data = await ipc('graph:expand-cluster', { mode: 'semantic', clusterId });
+        const memberNodes = mapCoreNodes(data.members as unknown as CoreGraphNode[]);
+        setAllNodes(memberNodes);
+        setAllEdges(data.intraEdges);
+        setDrillCluster({ id: clusterId, label: node.title.replace(/\s·\s\d+$/, '') });
+        setFitSignal((s) => s + 1);    // refit the camera to the opened cluster
+        setReheatSignal((s) => s + 1); // settle the member layout
+      } catch { /* leave the galaxy as-is on failure */ }
+      setLoading(false);
+      return;
+    }
     if (!node.filePath) return;
     try {
       const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(node.filePath);
       const fullPath = isAbsolute ? node.filePath : `${vaultPath}/${node.filePath}`;
       const content = await ipc('vault:read-file', fullPath);
-      openFile(fullPath, node.title, content);
+      // Web/Obsidian-style: stream into the right-panel READ-ONLY preview instead
+      // of stealing the main pane (which is showing the graph). The preview's
+      // "Open ↗" button opens a real editor tab when the user wants to edit.
+      setPreviewNote({ filePath: fullPath, title: node.title, content });
     } catch { /* skip unreadable */ }
-  }, [openFile, vaultPath]);
+  }, [setPreviewNote, vaultPath]);
 
   const handleHover = useCallback((info: HoverInfo | null) => {
     if (!info) { setHover(null); return; }
@@ -743,10 +856,38 @@ export function GraphView() {
         left: 10,
         fontSize: 10,
         color: 'rgba(200,200,255,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
       }}>
-        {visibleNodes.length} nodes · {visibleEdges.length} edges
-        {allNodes.length > MAX_GLOBAL_NODES && ` (top ${MAX_GLOBAL_NODES} of ${allNodes.length})`}
-        {' '}· drag nodes · scroll to zoom
+        {drillCluster ? (
+          <>
+            <button
+              onClick={() => { void loadGalaxy(); }}
+              style={{
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+                background: 'rgba(120,120,200,0.15)',
+                border: '1px solid rgba(120,120,200,0.4)',
+                borderRadius: 4,
+                color: 'rgba(220,220,255,0.85)',
+                fontSize: 10,
+                padding: '2px 8px',
+              }}
+            >
+              ← All clusters
+            </button>
+            <span>{drillCluster.label} · {visibleNodes.length} notes · drag · scroll to zoom</span>
+          </>
+        ) : (
+          <span>
+            {galaxyInfo
+              ? `${galaxyInfo.totalNodes.toLocaleString()} notes · ${galaxyInfo.clusters} clusters · click a cluster to open`
+              : `${visibleNodes.length} nodes · ${visibleEdges.length} edges`}
+            {allNodes.length > MAX_GLOBAL_NODES && ` (top ${MAX_GLOBAL_NODES} of ${allNodes.length})`}
+            {' '}· drag · scroll to zoom
+          </span>
+        )}
       </div>
     </div>
   );

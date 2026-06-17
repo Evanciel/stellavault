@@ -61,6 +61,12 @@ export function CapturePanel() {
     } catch { /* clipboard denied / empty / not a url */ }
   }, [refresh]);
 
+  // Guaranteed capture path — native file picker (works even if drag-drop doesn't).
+  const pickFiles = useCallback(async () => {
+    await ipc('capture:pick-files').catch(() => { /* engine not ready */ });
+    refresh();
+  }, [refresh]);
+
   return (
     <div style={{ padding: 12 }}>
       <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 10, lineHeight: 1.5 }}>
@@ -68,9 +74,11 @@ export function CapturePanel() {
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <button onClick={() => void pasteLink()} style={btn}>{t('capture.pasteLink')}</button>
+        <button onClick={() => void pickFiles()} style={btn} title={t('capture.chooseFiles.tip')}>{t('capture.chooseFiles')}</button>
+        <button onClick={() => void pasteLink()} style={btn} title={t('capture.pasteLink.tip')}>{t('capture.pasteLink')}</button>
         <button
           onClick={() => void togglePause()}
+          title={t('capture.pause.tip')}
           style={{ ...btn, marginLeft: 'auto', color: paused ? 'var(--accent)' : 'var(--ink-dim)' }}
         >
           {paused ? t('capture.resume') : t('capture.pause')}

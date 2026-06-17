@@ -7,14 +7,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { showToast } from '../../lib/toast.js';
 
 const MAX_FILE = 50 * 1024 * 1024;
+// window + document both listen (some Electron builds deliver an OS file drop to
+// only one) — this guards onDrop against double-processing the same event.
+const handledDrops = new WeakSet<DragEvent>();
 
-function isExternalDrag(dt: DataTransfer | null): boolean {
+// Internal DnD (FileTree/TabBar carry these markers) must pass through untouched.
+// For everything else we preventDefault generously on dragenter/over so Chromium
+// actually FIRES the `drop` event — it silently drops the drop otherwise. (The old
+// allow-list check returned false mid-drag for some file types → no preventDefault →
+// no drop → "nothing happens".)
+function isInternalDrag(dt: DataTransfer | null): boolean {
   if (!dt) return false;
   const types = Array.from(dt.types);
-  if (types.includes('application/x-sv-path') || types.includes('application/x-stellavault-internal')) return false;
-  return types.includes('Files') || types.includes('text/uri-list') || types.includes('text/plain');
+  return types.includes('application/x-sv-path') || types.includes('application/x-stellavault-internal');
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -37,52 +45,69 @@ export function DropOverlay() {
     for (const file of Array.from(files)) {
       if (file.size > MAX_FILE) { console.warn(`[capture] skipping ${file.name} (>50MB)`); continue; }
       try {
-        const base64 = await fileToBase64(file);
-        if (!base64) continue;
-        const res = await ipc('vault:capture', {
-          kind: 'file', payload: file.name, source: 'drop',
-          sourceMeta: { fileName: file.name, mime: file.type, base64 },
-        });
-        if (!res || !res.id) console.warn('[capture] engine not ready yet — wait for "AI ready" in the status bar, then re-drop.');
+        // Prefer the real path (Electron webUtils) — the same reliable route the file
+        // picker uses, which works. base64-over-IPC is a fallback for files with no
+        // backing path (and was the path that silently failed on large drops).
+        const realPath = window.stellavault.getPathForFile(file);
+        let res: { id: string } | null;
+        if (realPath) {
+          res = await ipc('vault:capture', { kind: 'file', payload: realPath, source: 'drop', sourceMeta: { fileName: file.name, mime: file.type } });
+        } else {
+          const base64 = await fileToBase64(file);
+          res = base64 ? await ipc('vault:capture', { kind: 'file', payload: file.name, source: 'drop', sourceMeta: { fileName: file.name, mime: file.type, base64 } }) : null;
+        }
+        console.log('[capture] vault:capture →', { usedPath: !!realPath, res });
+        if (res && !res.id) console.warn('[capture] engine not ready yet — wait for "AI ready" in the status bar, then re-drop.');
       } catch (err) {
-        console.error('[capture] file read failed:', err);
+        console.error('[capture] file capture failed:', err);
       }
     }
   }, []);
 
   useEffect(() => {
     const onDragEnter = (e: DragEvent) => {
-      if (!isExternalDrag(e.dataTransfer)) return;
-      e.preventDefault();
+      if (isInternalDrag(e.dataTransfer)) return;
+      e.preventDefault();              // required so the later `drop` can fire
       depth.current += 1;
       setActive(true);
     };
     const onDragOver = (e: DragEvent) => {
-      if (!isExternalDrag(e.dataTransfer)) return;
-      e.preventDefault();
+      if (isInternalDrag(e.dataTransfer)) return;
+      e.preventDefault();              // Chromium discards the `drop` without this
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
     const onDragLeave = (e: DragEvent) => {
-      if (!isExternalDrag(e.dataTransfer)) return;
+      if (isInternalDrag(e.dataTransfer)) return;
       depth.current -= 1;
       if (depth.current <= 0) { depth.current = 0; setActive(false); }
     };
     const onDrop = (e: DragEvent) => {
-      if (!isExternalDrag(e.dataTransfer)) return;
+      if (isInternalDrag(e.dataTransfer)) return;
+      if (handledDrops.has(e)) return;   // window + document both fire — process once
+      handledDrops.add(e);
       depth.current = 0;
       setActive(false);
       const dt = e.dataTransfer;
+      const files = dt?.files;
+      const uri = files && files.length > 0
+        ? ''
+        : (dt?.getData('text/uri-list') || dt?.getData('text/plain') || '').trim();
+      // Visible-without-DevTools confirmation that the drop reached us at all.
+      const n = files?.length ?? 0;
+      showToast(n > 0 ? `📥 Drop received — ${n} file(s)` : uri ? '📥 Drop received — link' : '📥 Drop received (empty)', 'info');
+      console.log('[capture] drop', { types: dt ? Array.from(dt.types) : [], files: n, uri: uri.slice(0, 80) });
       if (!dt) return;
 
-      const files = dt.files;
       const target = e.target as HTMLElement | null;
       const inEditor = !!(target && target.closest('.ProseMirror'));
-      const imageOnly = files && files.length > 0 && Array.from(files).every((f) => f.type.startsWith('image/'));
+      const imageOnly = !!files && files.length > 0 && Array.from(files).every((f) => f.type.startsWith('image/'));
 
       // Image dropped into a note → let the editor embed it (don't claim the event).
       if (inEditor && imageOnly) return;
+      // Nothing capturable (e.g. an in-app text selection, no files/uri) → pass through.
+      if ((!files || files.length === 0) && !uri) return;
 
-      // Otherwise this is a capture: claim the drop so the editor doesn't also act.
+      // Otherwise this is a capture: claim the drop so the editor/file-tree don't also act.
       e.preventDefault();
       e.stopPropagation();
 
@@ -91,26 +116,29 @@ export function DropOverlay() {
         setRightPanel('capture'); // surface progress immediately
         return;
       }
-      const uri = (dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim();
-      if (/^https?:\/\//i.test(uri)) {
-        void ipc('vault:capture', { kind: 'url', payload: uri, source: 'drop' });
-        setRightPanel('capture');
-      } else if (uri) {
-        void ipc('vault:capture', { kind: 'text', payload: uri, source: 'drop' });
-        setRightPanel('capture');
-      }
+      const kind = /^https?:\/\//i.test(uri) ? 'url' : 'text';
+      void ipc('vault:capture', { kind, payload: uri, source: 'drop' });
+      setRightPanel('capture');
     };
 
-    // Capture phase (true) → fire before the editor's own drop handler.
-    window.addEventListener('dragenter', onDragEnter, true);
-    window.addEventListener('dragover', onDragOver, true);
-    window.addEventListener('dragleave', onDragLeave, true);
-    window.addEventListener('drop', onDrop, true);
+    // Capture phase (true) → fire before the editor's own drop handler. Attach to
+    // BOTH window and document: certain Electron/Chromium builds route OS file drops
+    // to only one of them. onDrop dedupes via handledDrops; the symmetric double
+    // dragenter/leave on the depth counter nets out.
+    const targets: Array<Window | Document> = [window, document];
+    for (const tg of targets) {
+      tg.addEventListener('dragenter', onDragEnter as EventListener, true);
+      tg.addEventListener('dragover', onDragOver as EventListener, true);
+      tg.addEventListener('dragleave', onDragLeave as EventListener, true);
+      tg.addEventListener('drop', onDrop as EventListener, true);
+    }
     return () => {
-      window.removeEventListener('dragenter', onDragEnter, true);
-      window.removeEventListener('dragover', onDragOver, true);
-      window.removeEventListener('dragleave', onDragLeave, true);
-      window.removeEventListener('drop', onDrop, true);
+      for (const tg of targets) {
+        tg.removeEventListener('dragenter', onDragEnter as EventListener, true);
+        tg.removeEventListener('dragover', onDragOver as EventListener, true);
+        tg.removeEventListener('dragleave', onDragLeave as EventListener, true);
+        tg.removeEventListener('drop', onDrop as EventListener, true);
+      }
     };
   }, [handleFiles, setRightPanel]);
 

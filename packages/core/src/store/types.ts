@@ -34,6 +34,12 @@ export interface VectorStore {
   getStats(): Promise<StoreStats>;
   /** 각 문서의 첫 청크 임베딩 반환 (graph용) */
   getDocumentEmbeddings(maxDocs?: number): Promise<Map<string, number[]>>;
+  /**
+   * 지정한 문서들의 첫 청크 임베딩만 반환 (graph용 — 노드 상한만큼만 로드).
+   * 전체 12k 임베딩을 vec0 가상테이블에서 읽으면 ~11s; 필요한 1.5k만 chunk_id PK로
+   * 읽으면 ~0.3s (38×). buildGraphData 는 최근성 상위 N개만 쓰므로 이걸 사용.
+   */
+  getDocumentEmbeddingsByIds(documentIds: string[]): Promise<Map<string, number[]>>;
   /** sqlite-vec KNN으로 유사 문서 검색 (graph edge용, O(K log n)) */
   findDocumentNeighbors(embedding: number[], limit: number): Promise<Array<{ documentId: string; similarity: number }>>;
   close(): Promise<void>;

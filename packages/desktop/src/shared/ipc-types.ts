@@ -1,6 +1,8 @@
 // Typed IPC channel definitions shared between main and preload.
 // Every channel has a name, argument tuple, and return type.
 
+import type { ClusterLevelGraph, ClusterMembersGraph } from '@stellavault/core';
+
 export interface FileTreeNode {
   name: string;
   path: string;
@@ -405,6 +407,11 @@ export interface IpcChannelMap {
 
   // Graph
   'graph:build':        { args: [mode: string]; result: { nodes: unknown[]; edges: unknown[] } };
+  // Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md).
+  'graph:clusters':       { args: [opts?: { mode?: string }]; result: ClusterLevelGraph };
+  'graph:expand-cluster': { args: [opts: { mode?: string; clusterId: number }]; result: ClusterMembersGraph };
+  // Startup race guard — renderer queries this on mount (see App.tsx).
+  'core:get-ready':       { args: []; result: boolean };
 
   // Backlinks
   'backlinks:find':     { args: [title: string]; result: Array<{ filePath: string; name: string; line: string }> };
@@ -492,6 +499,7 @@ export interface IpcChannelMap {
   'capture:list':       { args: [limit?: number]; result: CaptureItem[] };
   'capture:set-paused': { args: [paused: boolean]; result: void };
   'capture:counts':     { args: []; result: CaptureCounts };
+  'capture:pick-files': { args: []; result: { count: number } };
   'review:list':        { args: []; result: ReviewItem[] };
   'review:confirm':     { args: [id: string, categoryId: string | null, stage?: string]; result: void };
   'review:skip':        { args: [id: string]; result: void };

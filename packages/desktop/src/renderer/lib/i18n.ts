@@ -20,6 +20,10 @@ export const messages = {
   // ── capture inbox ──
   'capture.hint':          { en: 'Drop files or links anywhere — they’re extracted, classified, and filed automatically.', ko: '파일이나 링크를 아무 데나 끌어다 놓으면 자동으로 추출·분류·정리됩니다.' },
   'capture.pasteLink':     { en: 'Paste link', ko: '링크 붙여넣기' },
+  'capture.chooseFiles':   { en: '📂 Choose files…', ko: '📂 파일 선택…' },
+  'capture.chooseFiles.tip': { en: 'Pick files from your computer — copied into your vault, then auto-classified.', ko: '내 컴퓨터에서 파일 선택 — 볼트에 복사 후 자동 분류됩니다.' },
+  'capture.pasteLink.tip':   { en: 'Capture the link currently in your clipboard.', ko: '클립보드에 있는 링크를 캡처합니다.' },
+  'capture.pause.tip':       { en: 'Pause / resume automatic capture (drag-drop & agent).', ko: '자동 캡처(드래그&드롭·에이전트) 일시정지/재개.' },
   'capture.pause':         { en: '⏸ Pause',  ko: '⏸ 일시정지' },
   'capture.resume':        { en: '▶ Resume', ko: '▶ 재개' },
   'capture.empty':         { en: 'Nothing captured yet.', ko: '아직 캡처된 항목이 없습니다.' },

@@ -43,6 +43,7 @@ export function createLocalEmbedder(modelName: string = 'nomic-embed-text-v1.5')
     },
 
     async embed(text: string): Promise<number[]> {
+      if (!pipeline) pipeline = await getPipeline(modelName); // lazy-init (memoized) — safe before initialize()
       let output: any = await pipeline(text, { pooling: 'mean', normalize: true });
       const result = Array.from(output.data as Float32Array).slice(0, dims);
       try { output.dispose?.(); } catch { /* noop */ }
@@ -51,6 +52,7 @@ export function createLocalEmbedder(modelName: string = 'nomic-embed-text-v1.5')
     },
 
     async embedBatch(texts: string[], batchSize = 16): Promise<number[][]> {
+      if (!pipeline) pipeline = await getPipeline(modelName); // lazy-init (memoized)
       const results: number[][] = [];
       let processed = 0;
       for (let i = 0; i < texts.length; i += batchSize) {

@@ -14,6 +14,7 @@ import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-sa
 import { OrchestrationEngine } from './orchestration/engine.js';
 import { createQueueDao } from './orchestration/queue-dao.js';
 import type { CaptureRequest } from '../shared/ipc-types.js';
+import type { ClusteredGraph } from '@stellavault/core';
 import { validateSettingsPatch } from './settings-validate.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
@@ -203,9 +204,13 @@ async function stopMcpServer(): Promise<void> {
 let graphCacheVersion = 0;
 const graphBuildCache = new Map<string, { nodes: unknown[]; edges: unknown[] }>();
 const graphBuildInflight = new Map<string, Promise<{ nodes: unknown[]; edges: unknown[] }>>();
+// Wave 1 cluster-first LOD: cache the tiered ClusteredGraph per (mode, version).
+const clusteredCache = new Map<string, ClusteredGraph>();
+const clusteredInflight = new Map<string, Promise<ClusteredGraph | null>>();
 function bumpGraphCacheVersion(): void {
   graphCacheVersion++;
   graphBuildCache.clear();
+  clusteredCache.clear();
   // In-flight builds for the old version still resolve their own callers; they
   // just won't be cached under the new key (their finally only deletes the old
   // inflight entry). Next call rebuilds against the fresh index.
@@ -244,7 +249,13 @@ async function initCore(config: AppConfig): Promise<void> {
     coreChunkOptions = { ...coreChunkOptions, ...hubConfig.chunking };
     const hub = core.createKnowledgeHub(hubConfig);
     await hub.store.initialize();
-    await hub.embedder.initialize();
+    // ★PERF: do NOT block coreReady on the ~470MB model load (~30-50s). The graph,
+    // file tree, and editor need zero embeddings → make them usable in seconds and warm
+    // the model in the background. embed()/embedBatch() lazy-init the (memoized) pipeline,
+    // so capture/search/ask arriving before it's ready simply await the in-flight load.
+    void hub.embedder.initialize().catch((err) => {
+      console.error('[main] embedder background init failed (AI features retry on use):', err);
+    });
     store = hub.store;
     searchEngine = hub.searchEngine;
     embedder = hub.embedder;
@@ -262,7 +273,11 @@ async function initCore(config: AppConfig): Promise<void> {
         const dbInstance = store.getDb();
         if (dbInstance) decayEngine = new core.DecayEngine(dbInstance);
       }
-      if (decayEngine) await decayEngine.initializeNewDocuments();
+      // ★PERF: seed FSRS decay in the BACKGROUND. initializeNewDocuments loads every
+      // missing doc's FULL content (line decay-engine.ts:249) — on a 12k-note / cold-disk
+      // vault that's tens of seconds, and it was awaited here BEFORE coreReady, blocking
+      // the whole app ("Waiting for AI engine…"). It gates nothing the graph/editor need.
+      if (decayEngine) void decayEngine.initializeNewDocuments().catch((e: unknown) => console.error('[main] decay seed skipped:', e));
     } catch (err) {
       console.error('[main] DecayEngine init skipped:', err);
     }
@@ -1093,6 +1108,54 @@ function registerIpcHandlers(config: AppConfig) {
     return p;
   });
 
+  // ─── Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md) ───
+  // graph:clusters → ≤~80 cluster super-nodes for the first paint (tiny payload).
+  // graph:expand-cluster → one cluster's members (a Map lookup after the first build).
+  // Both read from a per-(mode, version) cached ClusteredGraph, in-flight coalesced.
+  const getClustered = async (safeMode: 'semantic' | 'folder'): Promise<ClusteredGraph | null> => {
+    const key = `clustered:${safeMode}@${graphCacheVersion}`;
+    const cached = clusteredCache.get(key);
+    if (cached) return cached;
+    const inflight = clusteredInflight.get(key);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const core = await import('@stellavault/core');
+        const g = await core.buildClusteredGraph(store!, { mode: safeMode });
+        clusteredCache.set(key, g);
+        return g;
+      } catch (err) {
+        console.error('[main] clustered graph build failed:', err);
+        return null;
+      } finally {
+        clusteredInflight.delete(key);
+      }
+    })();
+    clusteredInflight.set(key, p);
+    return p;
+  };
+  const emptyGalaxy = { level: 'galaxy' as const, superNodes: [], metaEdges: [], totalNodes: 0, totalEdges: 0, layoutVersion: '' };
+
+  ipcMain.handle('graph:clusters', async (_e, opts?: { mode?: string }) => {
+    if (!coreReady || !store) return emptyGalaxy;
+    const safeMode: 'semantic' | 'folder' = opts?.mode === 'folder' ? 'folder' : 'semantic';
+    const g = await getClustered(safeMode);
+    return g ? g.clusterLevel : emptyGalaxy;
+  });
+
+  ipcMain.handle('graph:expand-cluster', async (_e, opts: { mode?: string; clusterId: number }) => {
+    const clusterId = opts?.clusterId ?? 0;
+    const empty = { clusterId, members: [], intraEdges: [], boundaryEdges: [] };
+    if (!coreReady || !store) return empty;
+    const safeMode: 'semantic' | 'folder' = opts?.mode === 'folder' ? 'folder' : 'semantic';
+    const g = await getClustered(safeMode);
+    return g?.members.get(clusterId) ?? empty;
+  });
+
+  // Startup race guard: the renderer queries this on mount in case it registered its
+  // 'core:ready' listener AFTER the (now-fast) init already fired the event.
+  ipcMain.handle('core:get-ready', () => coreReady);
+
   // Backlinks — find notes that contain [[title]]
   // T2-8: async (fs.promises, bounded concurrency) + cached per FS version so a
   // note-open scans the vault once, then later opens in the same version are Map
@@ -1560,6 +1623,19 @@ function registerCaptureHandlers(): void {
   ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));
   ipcMain.handle('capture:set-paused', (_e, paused: boolean) => { engine?.setPaused(paused); });
   ipcMain.handle('capture:counts', () => (engine ? engine.counts() : { capturedToday: 0, pendingReviewCount: 0, queueDepth: 0, watching: false }));
+  // Guaranteed capture path (works even if OS drag-drop delivery is flaky): native
+  // file picker → enqueue the real paths directly (no base64/tmp staging needed).
+  ipcMain.handle('capture:pick-files', async () => {
+    if (!engine) return { count: 0 };
+    const opts = { title: 'Choose files to capture', properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'> };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { count: 0 };
+    for (const filePath of result.filePaths) {
+      engine.enqueue({ kind: 'file', payload: filePath, source: 'drop' });
+    }
+    return { count: result.filePaths.length };
+  });
   ipcMain.handle('review:list', () => (engine ? engine.listReview() : []));
   ipcMain.handle('review:confirm', (_e, id: string, categoryId: string | null, stage?: string) => { engine?.confirmReview(id, categoryId, stage); });
   ipcMain.handle('review:skip', (_e, id: string) => { engine?.skipReview(id); });
@@ -2224,6 +2300,15 @@ app.whenReady().then(async () => {
   registerAssetProtocol(config);
 
   const win = createWindow();
+
+  // Startup race guard: initCore now resolves FAST (embedder + decay moved off the
+  // critical path), so it can finish BEFORE the renderer registers its 'core:ready'
+  // listener — a one-shot send would be missed → permanent "Waiting for AI engine…".
+  // Re-emit when the renderer finishes loading, if core is already up. (The renderer
+  // also queries 'core:get-ready' on mount as a belt-and-suspenders.)
+  win.webContents.on('did-finish-load', () => {
+    if (coreReady) win.webContents.send('core:ready');
+  });
 
   // Init core in background — don't block window creation
   void initCore(config).then(() => {

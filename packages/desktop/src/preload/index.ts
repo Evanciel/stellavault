@@ -2,7 +2,7 @@
 // CRIT-02: Runtime channel allowlist — TypeScript types are erased at runtime
 // and provide zero security. This explicit Set is the actual security boundary.
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { IpcChannel, IpcArgs, IpcResult } from '../shared/ipc-types.js';
 
 const ALLOWED_CHANNELS = new Set<string>([
@@ -22,6 +22,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'vault:update-links',
   'core:search',
   'core:get-stats',
+  'core:get-ready',
   'core:index',
   'core:decay-top',
   'core:draft',
@@ -37,6 +38,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   'core:contradictions',// T3-8 contradiction nudges
   'core:duplicates',    // T3-8 duplicate nudges
   'graph:build',
+  'graph:clusters',
+  'graph:expand-cluster',
   'backlinks:find',
   'window:minimize',
   'window:maximize',
@@ -77,6 +80,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'capture:list',
   'capture:set-paused',
   'capture:counts',
+  'capture:pick-files',
   'review:list',
   'review:confirm',
   'review:skip',
@@ -113,6 +117,12 @@ const api = {
     return () => ipcRenderer.removeListener(channel, listener);
   },
   platform: process.platform,
+  // Electron 35 removed File.path. webUtils.getPathForFile resolves a dropped File
+  // to its real absolute path so capture can enqueue the path directly (same fast
+  // path the native file picker uses), instead of round-tripping base64 over IPC.
+  getPathForFile: (file: File): string => {
+    try { return webUtils.getPathForFile(file); } catch { return ''; }
+  },
 };
 
 contextBridge.exposeInMainWorld('stellavault', api);
