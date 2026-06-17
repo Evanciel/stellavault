@@ -1618,7 +1618,25 @@ function registerCaptureHandlers(): void {
         return { id: '' };
       }
     }
-    return engine.enqueue(req);
+    // SECURITY (Codex P1): a file capture by PATH must NOT come through this
+    // renderer-callable channel — a compromised renderer could read ANY local file
+    // (bypassing assertInsideVault) by enqueuing an arbitrary absolute path. Dropped
+    // files go through the preload-only 'capture:dropped-file' (path resolved by
+    // webUtils.getPathForFile, which a renderer can't forge); explicit picks go
+    // through dialog (capture:pick-files). Reject renderer-supplied paths here.
+    if (req.kind === 'file') {
+      console.warn('[capture] rejected file capture without staged bytes (path must use captureDroppedFile / pick-files)');
+      return { id: '' };
+    }
+    return engine.enqueue(req); // url / text — payload is content/uri, not a path
+  });
+  // Preload-only channel (deliberately NOT in the renderer ALLOWED_CHANNELS): the
+  // dropped File's real path, resolved by webUtils.getPathForFile inside preload.
+  // Trusted because a renderer can't fabricate a path via getPathForFile (a memory
+  // File yields ''), and generic invoke() rejects this channel. Codex P1.
+  ipcMain.handle('capture:dropped-file', (_e, filePath: string, meta?: { fileName?: string; mime?: string }) => {
+    if (!engine || typeof filePath !== 'string' || !filePath) return { id: '' };
+    return engine.enqueue({ kind: 'file', payload: filePath, source: 'drop', sourceMeta: meta });
   });
   ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));
   ipcMain.handle('capture:set-paused', (_e, paused: boolean) => { engine?.setPaused(paused); });

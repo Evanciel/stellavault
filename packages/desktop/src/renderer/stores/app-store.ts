@@ -44,7 +44,7 @@ interface AppState {
 
   // Note preview — clicking a graph node (or a link) streams a READ-ONLY note
   // into the right panel instead of stealing the main pane (web/Obsidian style).
-  previewNote: { filePath: string; title: string; content: string } | null;
+  previewNote: { filePath: string; title: string; content: string; isDirty: boolean } | null;
 
   // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any
   // caller) sets a query via openSearchWithQuery(); SearchPanel consumes it,
@@ -88,9 +88,12 @@ interface AppState {
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
-  // Show a read-only note in the right panel (graph node click) + flip the
-  // panel to 'note-preview'. Does NOT touch tabs/activeTabId → graph stays put.
+  // Show a note in the right-panel explorer (graph node click / re-center) + flip
+  // the panel to 'note-preview'. Does NOT touch tabs/activeTabId → graph stays put.
   setPreviewNote: (note: { filePath: string; title: string; content: string }) => void;
+  // Explorer Edit segment: mutate the preview note's body (isDirty=true) / clear.
+  updatePreviewContent: (content: string) => void;
+  markPreviewClean: () => void;
   // Stage C additive (W1-6).
   openSearchWithQuery: (query: string) => void;
   clearPendingSearchQuery: () => void;
@@ -109,7 +112,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTabId: null,
 
   rightPanel: 'none',
-  rightPanelWidth: 380,
+  rightPanelWidth: 480,
   previewNote: null,
   pendingSearchQuery: null,
 
@@ -207,7 +210,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
-  setPreviewNote: (note) => set({ previewNote: note, rightPanel: 'note-preview' }),
+  setPreviewNote: (note) => set({ previewNote: { ...note, isDirty: false }, rightPanel: 'note-preview' }),
+  updatePreviewContent: (content) => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, content, isDirty: true } } : {}),
+  markPreviewClean: () => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, isDirty: false } } : {}),
   // Stage C additive (W1-6).
   openSearchWithQuery: (query) => set({ rightPanel: 'search', pendingSearchQuery: query }),
   clearPendingSearchQuery: () => set({ pendingSearchQuery: null }),

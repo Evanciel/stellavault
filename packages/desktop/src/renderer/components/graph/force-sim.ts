@@ -106,6 +106,15 @@ export class ForceSim {
         this.pos[i * 3 + 2] = 0;
         this.vel[i * 3 + 2] = 0;
       }
+    } else {
+      // Leaving 2D: every node sits at z=0, so dz=0 for all pairs → the z-axis
+      // repulsion is zero and the layout would stay stuck FLAT (a vertical sheet).
+      // Nudge z off the plane (deterministic hash, no Math.random) so 3D repulsion
+      // can re-inflate it into a volume.
+      for (let i = 0; i < this.n; i++) {
+        const h = (Math.imul(i + 1, 2654435761) >>> 0) / 4294967296; // 0..1
+        this.pos[i * 3 + 2] += (h - 0.5) * 10;
+      }
     }
     this.reheat(0.3);
   }

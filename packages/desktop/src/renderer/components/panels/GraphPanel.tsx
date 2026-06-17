@@ -74,6 +74,14 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
 
   // Base buffers — signature recipe: palette by cluster + brightness boost by size.
   const base = useMemo(() => buildBaseBuffers(nodes), [nodes]);
+  // Stable copies of the mutable hover buffers (color/size). Inline new Float32Array
+  // in <bufferAttribute args> gets rebuilt by R3F on every hover re-render, resetting
+  // the imperative hover highlight (review: low). position uses base.pos directly —
+  // this panel is static (no sim), so positions need no copy. Mirrors GraphView.
+  const coreCol = useMemo(() => new Float32Array(base.col), [base]);
+  const coreSz = useMemo(() => new Float32Array(base.sz), [base]);
+  const glowCol = useMemo(() => new Float32Array(base.col), [base]);
+  const glowSz = useMemo(() => new Float32Array(base.gsz), [base]);
 
   const coreMat = useMemo(() => makePointsMaterial(0.95, false), []);
   const glowMat = useMemo(() => makePointsMaterial(0.28, true), []);
@@ -202,8 +210,8 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         <points key={`glow-${nodes.length}`} ref={glowRef} material={glowMat} raycast={() => null}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.gsz), 1]} />
+            <bufferAttribute attach="attributes-color" args={[glowCol, 3]} />
+            <bufferAttribute attach="attributes-size" args={[glowSz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -238,8 +246,8 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         >
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.sz), 1]} />
+            <bufferAttribute attach="attributes-color" args={[coreCol, 3]} />
+            <bufferAttribute attach="attributes-size" args={[coreSz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -498,6 +506,108 @@ export function GraphPanel() {
         {visibleNodes.length} nodes · {visibleEdges.length} edges
         {mode === 'global' && allNodes.length > MAX_GLOBAL_NODES && ` (top ${MAX_GLOBAL_NODES} of ${allNodes.length})`}
       </div>
+    </div>
+  );
+}
+
+// ─── Local graph (preview explorer) ──────────────────
+// A node-centered local graph: BFS depth-N around a given file. Reuses GraphScene
+// (and the full graph:build, cached in main). Used by the NotePreviewPanel
+// explorer's Local segment; node clicks re-center the preview (onRecenter).
+export function LocalGraph({ filePath, onRecenter }: {
+  filePath: string;
+  onRecenter: (filePath: string, title: string) => void;
+}) {
+  const [allNodes, setAllNodes] = useState<GraphNode[]>([]);
+  const [allEdges, setAllEdges] = useState<GraphEdge[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [depth, setDepth] = useState(2);
+  const [fitSignal, setFitSignal] = useState(0);
+  const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const coreReady = useAppStore((s) => s.coreReady);
+  const vaultPath = useAppStore((s) => s.vaultPath);
+  const accent = useMemo(() => readAccentColor(), []);
+
+  useEffect(() => {
+    if (!coreReady) return;
+    void (async () => {
+      setLoading(true);
+      try {
+        const data = await ipc('graph:build', 'semantic') as unknown as {
+          nodes: CoreGraphNode[]; edges: GraphEdge[];
+        };
+        setAllNodes(mapCoreNodes(data.nodes ?? []));
+        setAllEdges((data.edges ?? []) as GraphEdge[]);
+      } catch (err) {
+        console.error('[graph] local build failed:', err);
+        setAllNodes([]); setAllEdges([]);
+      }
+      setLoading(false);
+    })();
+  }, [coreReady]);
+
+  // core stores vault-relative paths; preview filePath is absolute → match by suffix.
+  const centerNode = useMemo(() => {
+    if (!filePath) return null;
+    const abs = normalizePath(filePath);
+    return allNodes.find((n) => {
+      if (!n.filePath) return false;
+      const rel = normalizePath(n.filePath);
+      return abs === rel || abs.endsWith('/' + rel);
+    }) ?? null;
+  }, [allNodes, filePath]);
+
+  const { visibleNodes, visibleEdges } = useMemo(() => {
+    if (!centerNode) return { visibleNodes: [] as GraphNode[], visibleEdges: [] as GraphEdge[] };
+    const f = bfsFilter(allNodes, allEdges, centerNode.id, depth);
+    return { visibleNodes: f.nodes, visibleEdges: f.edges };
+  }, [centerNode, allNodes, allEdges, depth]);
+
+  useEffect(() => { setFitSignal((s) => s + 1); }, [centerNode, depth]);
+
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    if (!node.filePath) return;
+    const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(node.filePath);
+    const fullPath = isAbsolute ? node.filePath : `${vaultPath}/${node.filePath}`;
+    onRecenter(fullPath, node.title); // walk the graph in-place (preview re-center)
+  }, [onRecenter, vaultPath]);
+
+  const handleHover = useCallback((info: HoverInfo | null) => {
+    if (!info) { setHover(null); return; }
+    const node = visibleNodes[info.index];
+    if (!node) { setHover(null); return; }
+    const rect = containerRef.current?.getBoundingClientRect();
+    setHover({ title: node.title, x: info.clientX - (rect?.left ?? 0), y: info.clientY - (rect?.top ?? 0) });
+  }, [visibleNodes]);
+
+  if (!coreReady || loading) {
+    return <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>{coreReady ? 'Building graph...' : 'Waiting for AI engine...'}</div>;
+  }
+  if (!centerNode) {
+    return <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>This note isn't indexed yet — no local graph.</div>;
+  }
+
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 240, position: 'relative', background: DEEP_SPACE_BG }}>
+      <GraphErrorBoundary>
+        <Canvas camera={{ position: [0, 50, 200], fov: 55 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
+          <GraphScene nodes={visibleNodes} edges={visibleEdges} accent={accent} fitSignal={fitSignal} onNodeClick={handleNodeClick} onHover={handleHover} />
+        </Canvas>
+      </GraphErrorBoundary>
+      <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 6, background: 'rgba(10,10,20,0.7)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--ink-dim)' }}>
+          Depth
+          <input type="range" min={1} max={3} step={1} value={depth} onChange={(e) => setDepth(Number(e.target.value))} style={{ width: 56 }} />
+          {depth}
+        </label>
+        <button onClick={() => setFitSignal((s) => s + 1)} style={{ padding: '3px 10px', fontSize: 11, border: 'none', borderRadius: 4, cursor: 'pointer', background: 'rgba(120,120,160,0.15)', color: 'var(--ink-dim)' }}>Fit</button>
+      </div>
+      {hover && (
+        <div style={{ position: 'absolute', left: hover.x + 12, top: hover.y + 12, maxWidth: 240, padding: '3px 8px', fontSize: 11, color: '#e0e0f0', background: 'rgba(15,15,30,0.9)', border: '1px solid rgba(120,120,200,0.3)', borderRadius: 4, pointerEvents: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hover.title}</div>
+      )}
+      <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 10, color: 'rgba(200,200,255,0.4)' }}>{visibleNodes.length} nodes · {visibleEdges.length} edges · depth {depth}</div>
     </div>
   );
 }

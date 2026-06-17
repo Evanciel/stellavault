@@ -45,18 +45,20 @@ export function DropOverlay() {
     for (const file of Array.from(files)) {
       if (file.size > MAX_FILE) { console.warn(`[capture] skipping ${file.name} (>50MB)`); continue; }
       try {
-        // Prefer the real path (Electron webUtils) — the same reliable route the file
-        // picker uses, which works. base64-over-IPC is a fallback for files with no
-        // backing path (and was the path that silently failed on large drops).
-        const realPath = window.stellavault.getPathForFile(file);
-        let res: { id: string } | null;
-        if (realPath) {
-          res = await ipc('vault:capture', { kind: 'file', payload: realPath, source: 'drop', sourceMeta: { fileName: file.name, mime: file.type } });
-        } else {
+        // Path capture goes through the preload-only captureDroppedFile: the real
+        // path is resolved INSIDE preload via webUtils.getPathForFile and can't be
+        // forged by the renderer (Codex P1). base64-over-IPC is the fallback for
+        // files with no backing path (and large drops that silently failed on it).
+        let res: { id: string } | null = null;
+        let usedPath = false;
+        try {
+          res = await window.stellavault.captureDroppedFile(file, { fileName: file.name, mime: file.type });
+          usedPath = true;
+        } catch {
           const base64 = await fileToBase64(file);
           res = base64 ? await ipc('vault:capture', { kind: 'file', payload: file.name, source: 'drop', sourceMeta: { fileName: file.name, mime: file.type, base64 } }) : null;
         }
-        console.log('[capture] vault:capture →', { usedPath: !!realPath, res });
+        console.log('[capture] capture →', { usedPath, res });
         if (res && !res.id) console.warn('[capture] engine not ready yet — wait for "AI ready" in the status bar, then re-drop.');
       } catch (err) {
         console.error('[capture] file capture failed:', err);

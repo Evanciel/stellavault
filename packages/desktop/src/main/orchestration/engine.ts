@@ -190,6 +190,12 @@ export class OrchestrationEngine {
     };
     const res = d.ingest(d.vaultPath, input);
     const absPath = resolve(d.vaultPath, res.savedTo);
+    // Record the dedup hash IMMEDIATELY after the note is created — before embed/
+    // classify/index. If the app dies mid-pipeline, requeueStuck() re-runs this item
+    // and the hashGet above now finds it → 'duplicate' no-op instead of a SECOND note
+    // (Codex P2). An un-indexed orphan note is recovered by the watcher / next
+    // reindex — far less harmful than a duplicate.
+    d.queue.hashPut(hash, absPath);
 
     // 4. Embed for classification (cap length; classify cold on failure).
     let embedding: number[] = [];
@@ -235,7 +241,7 @@ export class OrchestrationEngine {
     // 7. Index immediately (read-after-write) + seed decay + record dedup hash.
     await d.indexFile(absPath);
     d.recordCapture(absPath);
-    d.queue.hashPut(hash, absPath);
+    // (dedup hash already recorded right after ingest above — Codex P2)
 
     return {
       status: 'created',

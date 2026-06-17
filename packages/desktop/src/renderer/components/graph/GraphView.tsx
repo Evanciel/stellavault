@@ -15,6 +15,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
+import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import {
@@ -126,19 +127,25 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   // critical when the galaxy sim is frozen (moved stays false → buffers never update).
   useEffect(() => { syncedRef.current = false; }, [sim]);
 
-  // Slider change → reheat (Obsidian: settings change restarts the sim).
+  // Slider change → reheat (Obsidian: settings change restarts the sim). The galaxy
+  // uses a frozen precomputed super-node layout — never reheat it, or the Force
+  // sliders would unfreeze and collapse the constellation (Codex P2).
   useEffect(() => {
+    if (isGalaxy) return;
     if (reheatSignal > 0) sim.reheat(0.3);
     const t = setTimeout(() => sim.cool(), 600);
     return () => clearTimeout(t);
-  }, [reheatSignal, sim]);
+  }, [reheatSignal, sim, isGalaxy]);
 
-  // T2-9: 2D ↔ 3D — constrain/release the z axis (setFlat reheats internally).
+  // T2-9: 2D ↔ 3D — constrain/release the z axis (setFlat reheats internally). Skip
+  // for the frozen galaxy so toggling 2D doesn't unfreeze + collapse it (Codex P2);
+  // 2D/3D still applies once you drill into a cluster's members.
   useEffect(() => {
+    if (isGalaxy) return;
     sim.setFlat(mode2d);
     const t = setTimeout(() => sim.cool(), 800);
     return () => clearTimeout(t);
-  }, [mode2d, sim]);
+  }, [mode2d, sim, isGalaxy]);
 
   const edgePositions = useMemo(
     () => new Float32Array(linkPairs.length * 6),
@@ -158,16 +165,18 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
 
   const applyHover = useCallback((hovered: number | null) => {
     applyHoverToBuffers(coreRef.current, glowRef.current, base, neighborSets, hovered, nodes.length);
-    // Lit edge subset for the hovered node.
+    // Lit edge subset for the hovered node. Galaxy meta-edges stay a dim-only
+    // overview layer — never lit on hover (a hub's spokes shooting across the
+    // galaxy was the old "breaks on hover"); drill-down member links still light.
     const lit: number[] = [];
-    if (hovered != null) {
+    if (hovered != null && !isGalaxy) {
       for (let k = 0; k < linkPairs.length; k++) {
         if (linkPairs[k][0] === hovered || linkPairs[k][1] === hovered) lit.push(k);
       }
     }
     litLinksRef.current = lit;
     if (litRef.current) litRef.current.geometry.setDrawRange(0, lit.length * 2);
-  }, [base, neighborSets, nodes.length, linkPairs]);
+  }, [base, neighborSets, nodes.length, linkPairs, isGalaxy]);
 
   useEffect(() => {
     hoveredRef.current = null;
@@ -451,9 +460,12 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         minDistance={10}
         maxDistance={1500}
         rotateSpeed={0.5}
+        // 2D: orthographic, rotation disabled. The camera sits on +z ([0,0,600])
+        // looking head-on at the z=0 plane where setFlat() lays the nodes out, so
+        // pan/zoom only. (A polar lock of 0 would look DOWN the +y axis at the x-z
+        // plane — edge-on to the flattened z=0 layout — collapsing every node onto a
+        // single horizontal line. That was the "2D = one row" bug.)
         enableRotate={!mode2d}
-        // 2D: lock the view straight down the z axis (no orbit).
-        {...(mode2d ? { minPolarAngle: 0, maxPolarAngle: 0 } : {})}
       />
     </>
   );
@@ -533,6 +545,7 @@ export function GraphView() {
     if (!coreReady) return;
     setLoading(true);
     setDrillCluster(null);
+    setMode2d(false); // galaxy is a frozen 3D overview — always 3D (2D/Forces hidden)
     expandedRef.current.clear();
     try {
       const galaxy = await ipc('graph:clusters', { mode: 'semantic' });
@@ -567,17 +580,14 @@ export function GraphView() {
 
   // Global safety cap — same policy as GraphPanel.
   const { visibleNodes, visibleEdges } = useMemo(() => {
-    // Galaxy view (drillCluster === null): render clusters as a clean constellation
-    // with NO edges. The super-node positions already encode relatedness (semantic
-    // layout), and the meta-edge web — especially lit-on-hover from a high-degree
-    // hub — just swamps the overview. Edges return on drill-down (intra-cluster
-    // links between a single cluster's member notes).
+    // Galaxy (drillCluster === null) now shows the precomputed meta-edges as a
+    // FAINT dim-only constellation. They are NOT lit on hover (applyHover skips lit
+    // when isGalaxy) — a high-degree hub's lit spokes shooting across the overview
+    // was the old "breaks on hover". Drill-down shows intra-cluster member links.
+    // Always drop edges whose endpoints aren't in the node set (expand/collapse
+    // mutates nodes + edges separately → guard against a transient dangling edge).
     const ids = new Set(allNodes.map((n) => n.id));
-    const edges = drillCluster === null
-      ? []
-      // Always drop edges whose endpoints aren't in the node set — expand/collapse
-      // mutates nodes + edges separately, so guard against a transient dangling edge.
-      : allEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
+    const edges = allEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
     if (allNodes.length > MAX_GLOBAL_NODES) {
       const kept = [...allNodes].sort((a, b) => b.size - a.size).slice(0, MAX_GLOBAL_NODES);
       const keptIds = new Set(kept.map((n) => n.id));
@@ -645,6 +655,7 @@ export function GraphView() {
     }
     if (!node.filePath) return;
     try {
+      await flushDirtyPreview(); // save unsaved preview Edit changes before swapping
       const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(node.filePath);
       const fullPath = isAbsolute ? node.filePath : `${vaultPath}/${node.filePath}`;
       const content = await ipc('vault:read-file', fullPath);
@@ -767,38 +778,55 @@ export function GraphView() {
         borderRadius: 8,
         background: 'rgba(10,10,20,0.72)',
         border: '1px solid rgba(120,120,200,0.18)',
-        minWidth: forcesOpen ? 250 : undefined,
+        minWidth: drillCluster && forcesOpen ? 250 : undefined,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* Drill-down "back" — top-left with the other controls + accent so it's
+              clearly visible (was tucked in the bottom-left caption). */}
+          {drillCluster && (
+            <button
+              style={{ ...overlayButtonStyle, background: 'var(--accent)', color: '#fff', fontWeight: 600 }}
+              title="Back to all clusters"
+              onClick={() => { void loadGalaxy(); }}
+            >
+              ← All clusters
+            </button>
+          )}
           <button style={overlayButtonStyle} title="Zoom to fit" onClick={() => setFitSignal((s) => s + 1)}>
             Fit
           </button>
-          {/* T2-9: 2D ↔ 3D toggle */}
-          <button
-            style={{
-              ...overlayButtonStyle,
-              background: mode2d ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
-              color: mode2d ? '#fff' : 'var(--ink-dim)',
-            }}
-            title={mode2d ? 'Switch to 3D' : 'Switch to 2D (flat, top-down)'}
-            onClick={() => setMode2d((m) => !m)}
-            aria-pressed={mode2d}
-          >
-            {mode2d ? '2D' : '3D'}
-          </button>
-          <button
-            style={{
-              ...overlayButtonStyle,
-              background: forcesOpen ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
-              color: forcesOpen ? '#fff' : 'var(--ink-dim)',
-            }}
-            onClick={() => setForcesOpen((o) => !o)}
-            aria-expanded={forcesOpen}
-          >
-            Forces {forcesOpen ? '▾' : '▸'}
-          </button>
+          {/* T2-9: 2D ↔ 3D + Forces — only in drill-down. The galaxy is a frozen
+              precomputed layout, so these have no effect there (and 2D would just
+              flatten an overview that's meant to be read in 3D) → hidden. */}
+          {drillCluster && (
+            <>
+              <button
+                style={{
+                  ...overlayButtonStyle,
+                  background: mode2d ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
+                  color: mode2d ? '#fff' : 'var(--ink-dim)',
+                }}
+                title={mode2d ? 'Switch to 3D' : 'Switch to 2D (flat, top-down)'}
+                onClick={() => setMode2d((m) => !m)}
+                aria-pressed={mode2d}
+              >
+                {mode2d ? '2D' : '3D'}
+              </button>
+              <button
+                style={{
+                  ...overlayButtonStyle,
+                  background: forcesOpen ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
+                  color: forcesOpen ? '#fff' : 'var(--ink-dim)',
+                }}
+                onClick={() => setForcesOpen((o) => !o)}
+                aria-expanded={forcesOpen}
+              >
+                Forces {forcesOpen ? '▾' : '▸'}
+              </button>
+            </>
+          )}
         </div>
-        {forcesOpen && (
+        {drillCluster && forcesOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
             <ForceSlider
               label="Repel force" min={0} max={20} step={1}
@@ -861,24 +889,8 @@ export function GraphView() {
         gap: 8,
       }}>
         {drillCluster ? (
-          <>
-            <button
-              onClick={() => { void loadGalaxy(); }}
-              style={{
-                pointerEvents: 'auto',
-                cursor: 'pointer',
-                background: 'rgba(120,120,200,0.15)',
-                border: '1px solid rgba(120,120,200,0.4)',
-                borderRadius: 4,
-                color: 'rgba(220,220,255,0.85)',
-                fontSize: 10,
-                padding: '2px 8px',
-              }}
-            >
-              ← All clusters
-            </button>
-            <span>{drillCluster.label} · {visibleNodes.length} notes · drag · scroll to zoom</span>
-          </>
+          // Back button moved to the top-left controls; caption only here now.
+          <span>{drillCluster.label} · {visibleNodes.length} notes · drag · scroll to zoom</span>
         ) : (
           <span>
             {galaxyInfo

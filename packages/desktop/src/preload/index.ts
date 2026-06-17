@@ -123,6 +123,17 @@ const api = {
   getPathForFile: (file: File): string => {
     try { return webUtils.getPathForFile(file); } catch { return ''; }
   },
+  // Capture a dropped file by its REAL path, resolved HERE in the (trusted) preload
+  // via webUtils.getPathForFile. Routed through 'capture:dropped-file', which is NOT
+  // in ALLOWED_CHANNELS, so a compromised renderer can't enqueue an arbitrary path
+  // via invoke() (Codex P1). A memory File (new File()) has no path → rejected → the
+  // caller falls back to base64 bytes.
+  captureDroppedFile: (file: File, meta: { fileName: string; mime: string }): Promise<{ id: string }> => {
+    let filePath = '';
+    try { filePath = webUtils.getPathForFile(file); } catch { /* no path */ }
+    if (!filePath) return Promise.reject(new Error('no-path'));
+    return ipcRenderer.invoke('capture:dropped-file', filePath, meta);
+  },
 };
 
 contextBridge.exposeInMainWorld('stellavault', api);

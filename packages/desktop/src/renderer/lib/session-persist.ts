@@ -126,6 +126,18 @@ async function saveAllDirtyTabs(): Promise<boolean> {
       return false; // abort close so the user doesn't lose this note silently
     }
   }
+  // The explorer's preview Edit segment is NOT a tab — save it too, or its unsaved
+  // edits are lost on close (review: high data-loss).
+  const preview = s.previewNote;
+  if (preview?.isDirty) {
+    try {
+      await ipc('vault:write-file', preview.filePath, preview.content);
+      s.markPreviewClean();
+    } catch (err) {
+      console.error('[close] failed to save preview', preview.filePath, err);
+      return false;
+    }
+  }
   return true;
 }
 
@@ -137,7 +149,8 @@ function installCloseGuard(): void {
     closeInFlight = true;
     void (async () => {
       try {
-        const dirty = useAppStore.getState().tabs.some((t) => t.isDirty && t.kind !== 'graph');
+        const st = useAppStore.getState();
+        const dirty = st.tabs.some((t) => t.isDirty && t.kind !== 'graph') || !!st.previewNote?.isDirty;
         if (!dirty) {
           await ipc('window:confirm-close', true); // clean → close immediately
           return;

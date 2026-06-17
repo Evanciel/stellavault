@@ -45,7 +45,7 @@ const PANEL_TITLES: Record<string, string> = {
   capture: 'Capture',
   review: 'Review',
   categories: 'Categories',
-  'note-preview': 'Preview',
+  'note-preview': 'Explorer',
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -232,7 +232,7 @@ export function App() {
             side="left"
             width={rightPanelWidth}
             min={280}
-            max={500}
+            max={800}
             onResize={setRightPanelWidth}
             onCommit={(w) => void useSettingsStore.getState().update({
               panels: {
@@ -246,7 +246,7 @@ export function App() {
           <div style={{
             width: rightPanelWidth,
             minWidth: 280,
-            maxWidth: 500,
+            maxWidth: 800,
             background: 'var(--sidebar-bg)',
             borderLeft: '1px solid var(--border)',
             overflow: 'hidden',
