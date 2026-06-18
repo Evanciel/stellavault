@@ -198,8 +198,24 @@ export function EditorArea() {
             </select>
           </div>
         )}
-        {/* T2-3: view-mode toggle (Live / Reading / Source) */}
-        <div style={{ maxWidth: 780, margin: '0 auto 8px', display: 'flex', justifyContent: 'flex-end' }}>
+        {/* T2-3: view-mode toggle (Live / Reading / Source) + "explore this note in the 3D graph" */}
+        <div style={{ maxWidth: 780, margin: '0 auto 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => {
+              const s = useAppStore.getState();
+              s.setRightPanel('note-graph');                                     // show the explore graph in the RIGHT panel — note stays in the main pane (no tab-switch)
+              s.setExploreTarget({ filePath: tab.filePath, title: tab.title });  // → GraphView focuses THIS note + pulses
+            }}
+            title="Show this note's 3D graph in the side panel and explore its connections"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '4px 11px', fontSize: 11, fontWeight: 600, lineHeight: 1.4,
+              borderRadius: 6, cursor: 'pointer', border: '1px solid var(--accent)',
+              background: 'transparent', color: 'var(--accent)', whiteSpace: 'nowrap',
+            }}
+          >
+            <span aria-hidden="true">🪐</span> Explore in graph
+          </button>
           <ViewModeToggle tabId={tab.id} />
         </div>
         {mode === 'source' ? (

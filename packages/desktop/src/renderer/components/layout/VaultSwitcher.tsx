@@ -1,11 +1,12 @@
 // Vault switcher (T3-9) — titlebar dropdown listing the registered vaults.
-// Wires core's multi-vault registry (add/remove/list) into the desktop, which
-// was hardwired single-vault. Picking a different vault re-points the bootstrap
-// config and prompts a restart (core re-init is heavy — see main vault:switch).
-// "Add vault…" opens a folder picker in main; the active vault can't be removed.
+// Picking a different vault opens a THEMED confirm modal (ConfirmModal); "Restart
+// now" relaunches the app into the chosen vault (core re-init is heavy — see main
+// vault:switch), "Cancel" leaves everything unchanged. "Add vault…" opens a folder
+// picker in main; the active vault can't be removed.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ipc } from '../../lib/ipc-client.js';
+import { ConfirmModal } from '../ui/Modal.js';
 import type { VaultRegistryEntry } from '../../../shared/ipc-types.js';
 
 // Electron-only CSS property for frameless-window drag regions.
@@ -19,6 +20,8 @@ export function VaultSwitcher() {
   const [open, setOpen] = useState(false);
   const [vaults, setVaults] = useState<VaultRegistryEntry[]>([]);
   const [busy, setBusy] = useState(false);
+  // The vault awaiting restart confirmation (null = modal closed).
+  const [pending, setPending] = useState<VaultRegistryEntry | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const active = vaults.find((v) => v.active);
@@ -68,24 +71,22 @@ export function VaultSwitcher() {
     }
   }, [busy]);
 
-  // Switching rewrites the bootstrap config in main and returns restartRequired
-  // (always true — core re-init is heavy). We surface a non-blocking restart hint
-  // rather than alert() (which freezes Electron).
-  const [needsRestart, setNeedsRestart] = useState(false);
-  const switchAndFlag = useCallback(async (v: VaultRegistryEntry) => {
+  // Picking a non-active vault opens the themed confirm modal; main relaunches the
+  // app only after the user clicks "Restart now". "Cancel" keeps the current vault.
+  const pickVault = useCallback((v: VaultRegistryEntry) => {
     if (v.active || busy) return;
-    setBusy(true);
+    setOpen(false);
+    setPending(v);
+  }, [busy]);
+
+  const confirmSwitch = useCallback(async () => {
+    if (!pending) return;
     try {
-      const { restartRequired } = await ipc('vault:switch', v.id);
-      setOpen(false);
-      await refresh();
-      if (restartRequired) setNeedsRestart(true);
+      await ipc('vault:switch', pending.id); // routes through the dirty-close guard, then commits + relaunches
     } catch (err) {
       console.error('[VaultSwitcher] switch failed:', err);
-    } finally {
-      setBusy(false);
     }
-  }, [busy, refresh]);
+  }, [pending]);
 
   return (
     <div ref={rootRef} style={{ position: 'relative', WebkitAppRegion: 'no-drag' }}>
@@ -142,7 +143,7 @@ export function VaultSwitcher() {
               role="menuitemradio"
               aria-checked={v.active}
               tabIndex={-1}
-              onClick={() => void switchAndFlag(v)}
+              onClick={() => pickVault(v)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -180,20 +181,24 @@ export function VaultSwitcher() {
             role="menuitem"
             tabIndex={-1}
             onClick={() => void onAdd()}
-            style={{ padding: '6px 10px', borderRadius: 5, cursor: 'pointer', color: 'var(--ink-dim)' }}
+            style={{ padding: '6px 10px', borderRadius: 5, cursor: 'pointer', color: 'var(--ink-dim)', opacity: busy ? 0.6 : 1 }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--hover)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
           >
             + Add vault…
           </div>
-
-          {needsRestart && (
-            <div style={{ padding: '8px 10px', marginTop: 4, borderRadius: 5, fontSize: 10.5, lineHeight: 1.5, color: 'var(--accent-2)', background: 'var(--selection)' }}>
-              Vault switched. Restart Stellavault to load the new vault.
-            </div>
-          )}
         </div>
       )}
+
+      {/* Themed restart confirm — Cancel keeps the current vault, Restart now relaunches. */}
+      <ConfirmModal
+        open={!!pending}
+        onClose={() => setPending(null)}
+        onConfirm={() => void confirmSwitch()}
+        title="Switch vault"
+        message={pending ? `Switch to "${pending.name}"? Stellavault needs to restart to load the new vault.` : ''}
+        confirmLabel="Restart now"
+      />
     </div>
   );
 }

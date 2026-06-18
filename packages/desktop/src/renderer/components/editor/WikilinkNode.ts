@@ -103,6 +103,20 @@ export async function openWikilinkTarget(rawTarget: string): Promise<void> {
   }
 }
 
+/**
+ * Resolve a wikilink target to an EXISTING note (synchronous — searches the
+ * in-memory file tree). Returns null for missing notes (the caller may then fall
+ * back to openWikilinkTarget for create-on-click). Used by the preview panel to
+ * route body wikilink clicks into the graph/preview explore flow instead of a tab.
+ */
+export function resolveWikilinkNote(rawTarget: string): { path: string; title: string } | null {
+  const hashAt = rawTarget.indexOf('#');
+  const target = (hashAt === -1 ? rawTarget : rawTarget.slice(0, hashAt)).trim();
+  if (!target) return null;
+  const existing = findNoteInTree(useAppStore.getState().fileTree, target);
+  return existing ? { path: existing.path, title: titleFromTarget(target) } : null;
+}
+
 // ─── Node ───────────────────────────────────────────────────────────────────
 
 export interface WikilinkAttrs {
@@ -157,6 +171,10 @@ export const WikilinkNode = Node.create({
   // node_modules/tiptap-markdown/src/util/extensions.js getMarkdownSpec).
   addStorage() {
     return {
+      // Per-editor override: when set (e.g. by the preview panel), a wikilink click
+      // calls this instead of opening a tab. Return true if handled; null/false →
+      // fall through to the default openWikilinkTarget (open/create in a tab).
+      clickHandler: null as ((target: string, alias: string | null) => boolean) | null,
       markdown: {
         serialize(state: any, node: any) {
           const { target, alias } = node.attrs as WikilinkAttrs;
@@ -174,13 +192,20 @@ export const WikilinkNode = Node.create({
   },
 
   addProseMirrorPlugins() {
+    const ext = this;
     return [
       new Plugin({
         key: new PluginKey('wikilinkClick'),
         props: {
           handleClickOn(_view, _pos, node, _nodePos, _event, direct) {
             if (!direct || node.type.name !== 'wikilink') return false;
-            void openWikilinkTarget(String(node.attrs.target));
+            const target = String(node.attrs.target);
+            const alias = (node.attrs.alias ?? null) as string | null;
+            // Per-editor override (preview panel routes clicks to recenter+explore).
+            const handler = ext.editor?.storage?.wikilink?.clickHandler as
+              | ((t: string, a: string | null) => boolean) | null | undefined;
+            if (handler && handler(target, alias)) return true;
+            void openWikilinkTarget(target);
             return true;
           },
         },

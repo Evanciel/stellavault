@@ -21,8 +21,8 @@ import { useSettingsStore } from '../../stores/settings-store.js';
 import {
   type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
   MAX_GLOBAL_NODES, DEEP_SPACE_BG,
-  mapCoreNodes, readAccentColor,
-  buildBaseBuffers, buildNeighborSets, applyHoverToBuffers,
+  mapCoreNodes, readAccentColor, bfsFilter, bfsVisitOrder,
+  buildBaseBuffers, buildNeighborSets, applyHoverToBuffers, applyPulseLitToBuffers,
   makePointsMaterial, StarFieldLite, GraphErrorBoundary,
 } from './graph-core.js';
 import { ForceSim, DEFAULT_SIM_SETTINGS, type SimSettings } from './force-sim.js';
@@ -38,7 +38,7 @@ const LABEL_FAR = 600;         // invisible beyond this (also raised for 2D zoom
 
 // ─── Scene ───────────────────────────────────────────
 
-function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, mode2d, onNodeClick, onHover, labelEls, labelRank }: {
+function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, mode2d, onNodeClick, onHover, labelEls, labelRank, pulseVisitIdx = [], pulseRunId = 0, onPulseArrive }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
   accent: string;
@@ -51,11 +51,30 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   labelEls: React.MutableRefObject<Map<number, HTMLDivElement>>;
   // T2-9: index → size rank (0 = largest). Drives zoom-adaptive label cutoff.
   labelRank: React.MutableRefObject<Map<number, number>>;
+  // "Explore connections" pulse — node indices to walk (BFS order); runId restarts.
+  pulseVisitIdx?: number[];
+  pulseRunId?: number;
+  // Fired when the explore comet REACHES a node — drives the arrival title popup.
+  onPulseArrive?: (info: { title: string; x: number; y: number }) => void;
 }) {
   const coreRef = useRef<THREE.Points>(null);
   const glowRef = useRef<THREE.Points>(null);
   const edgesRef = useRef<THREE.LineSegments>(null);
   const litRef = useRef<THREE.LineSegments>(null);
+  const pulseCoreRef = useRef<THREE.Points>(null);
+  const pulseGlowRef = useRef<THREE.Points>(null);
+  const pulseStepRef = useRef(0);
+  const pulseTRef = useRef(0);
+  const pulseRunningRef = useRef(false);
+  // Explore-pulse richness (ported feel from @stellavault/graph PulseAnimator):
+  // nodes light up + their title labels pop as the comet reaches them, with a trail.
+  const pulseLitRef = useRef<Set<number>>(new Set());          // pulse-visited node indices (labels stay lit)
+  const pulsePopRef = useRef<{ idx: number; t: number } | null>(null); // most-recent arrival → label scale-pop
+  const pulseFlashRef = useRef(0);                              // particle flash burst on arrival
+  const pulseLitDirtyRef = useRef(false);                       // node buffers are pulse-lit → restore on stop
+  const pulseTrailBuf = useRef(new Float32Array(60 * 3));       // comet trail ring buffer
+  const pulseTrailHead = useRef(0);
+  const pulseTrailCount = useRef(0);
   const controlsRef = useRef<any>(null);
   const hoveredRef = useRef<number | null>(null);
   const draggingRef = useRef<number | null>(null);
@@ -92,6 +111,39 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     () => ({ pos: new Float32Array(base.pos), col: new Float32Array(base.col), sz: new Float32Array(base.gsz) }),
     [base],
   );
+  // "Explore connections" pulse particle texture + per-run reset.
+  const pulseTex = useMemo(() => {
+    const sz = 64;
+    const cv = document.createElement('canvas');
+    cv.width = sz; cv.height = sz;
+    const ctx = cv.getContext('2d')!;
+    const g = ctx.createRadialGradient(sz / 2, sz / 2, 0, sz / 2, sz / 2, sz / 2);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.2, 'rgba(180,220,255,0.9)');
+    g.addColorStop(0.5, 'rgba(100,180,255,0.3)');
+    g.addColorStop(1, 'rgba(60,120,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, sz, sz);
+    const tex = new THREE.CanvasTexture(cv); tex.needsUpdate = true; return tex;
+  }, []);
+  // Comet trail line — stable object via useMemo (never recreated per render).
+  const pulseTrailObj = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(60 * 3), 3));
+    const mat = new THREE.LineBasicMaterial({ color: '#55c2ff', transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending });
+    const line = new THREE.Line(geo, mat);
+    line.visible = false;
+    return line;
+  }, []);
+  useEffect(() => {
+    pulseStepRef.current = 0; pulseTRef.current = 0;
+    pulseRunningRef.current = pulseVisitIdx.length > 1;
+    // Start node lit from frame 0; the rest reveal as the comet reaches them.
+    pulseLitRef.current = new Set(pulseVisitIdx.length > 0 ? [pulseVisitIdx[0]] : []);
+    pulsePopRef.current = pulseVisitIdx.length > 0 ? { idx: pulseVisitIdx[0], t: 0 } : null;
+    pulseFlashRef.current = 0;
+    pulseLitDirtyRef.current = false;
+    pulseTrailHead.current = 0; pulseTrailCount.current = 0;
+  }, [pulseRunId, pulseVisitIdx]);
   const neighborSets = useMemo(() => buildNeighborSets(nodes, edges), [nodes, edges]);
 
   // Index pairs for the sim + edge buffer (shared layout: link k → floats k*6..k*6+5).
@@ -180,10 +232,12 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
 
   useEffect(() => {
     hoveredRef.current = null;
+    pulseLitDirtyRef.current = false; // view changed → drop the persisted explored look; hover works again
     applyHover(null);
   }, [applyHover]);
 
   const setHovered = useCallback((index: number | null) => {
+    if (pulseRunningRef.current) return; // explore-pulse owns the node look while it runs (restored on completion)
     if (hoveredRef.current === index) return;
     hoveredRef.current = index;
     applyHover(index);
@@ -346,9 +400,13 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
       }
       const budget = Math.round(LABEL_MIN_VISIBLE + zoomT * (LABEL_POOL - LABEL_MIN_VISIBLE));
       const v = new THREE.Vector3();
+      const popState = pulsePopRef.current;
       for (const [idx, el] of labelEls.current) {
         const rank = labelRank.current.get(idx) ?? Number.MAX_SAFE_INTEGER;
-        if (idx >= sim.n || rank >= budget) { el.style.opacity = '0'; continue; }
+        // Pulse-visited nodes override the rank/zoom budget so the explored
+        // connections always show their titles (the "hologram pop").
+        const lit = pulseLitRef.current.has(idx);
+        if (idx >= sim.n || (rank >= budget && !lit)) { el.style.opacity = '0'; continue; }
         v.set(sim.pos[idx * 3], sim.pos[idx * 3 + 1], sim.pos[idx * 3 + 2]);
         const dist = camera.position.distanceTo(v);
         v.project(camera);
@@ -358,9 +416,118 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         }
         const x = (v.x * 0.5 + 0.5) * size.width;
         const y = (-v.y * 0.5 + 0.5) * size.height;
-        const fade = ortho ? 0.9 : 0.9 * Math.min(1, Math.max(0, (LABEL_FAR - dist) / (LABEL_FAR - LABEL_NEAR)));
-        el.style.opacity = String(fade);
-        el.style.transform = `translate(-50%, 0) translate(${x.toFixed(1)}px, ${(y + 8).toFixed(1)}px)`;
+        // Snap-in pop on the just-reached node: scale 0.6 → 1.0 over ~0.3s.
+        let scale = 1;
+        if (popState && popState.idx === idx) {
+          popState.t = Math.min(1, popState.t + 0.07);
+          const pe = popState.t < 0.5 ? 2 * popState.t * popState.t : 1 - Math.pow(-2 * popState.t + 2, 2) / 2;
+          scale = 0.6 + 0.4 * pe;
+        }
+        if (lit) {
+          el.style.opacity = '1';
+          el.style.color = '#eaf2ff';
+          el.style.textShadow = '0 0 8px rgba(120,190,255,0.9), 0 1px 4px rgba(0,0,0,0.9)';
+        } else {
+          const fade = ortho ? 0.9 : 0.9 * Math.min(1, Math.max(0, (LABEL_FAR - dist) / (LABEL_FAR - LABEL_NEAR)));
+          el.style.opacity = String(fade);
+          el.style.color = '#cdd3f0';
+          el.style.textShadow = '0 1px 4px rgba(0,0,0,0.9)';
+        }
+        el.style.transform = `translate(-50%, 0) translate(${x.toFixed(1)}px, ${(y + 8).toFixed(1)}px) scale(${scale.toFixed(2)})`;
+      }
+    }
+
+    // "Explore connections" pulse — walk the BFS visit order along LIVE sim positions
+    // so the particle tracks the nodes even while the layout is still settling.
+    // ── "Explore connections" pulse — comet + trail walks the BFS visit order; each
+    // node it reaches lights up and its title pops (hologram), like the web PulseAnimator.
+    const pc = pulseCoreRef.current, pg = pulseGlowRef.current, ptl = pulseTrailObj;
+    if (pc && pg) {
+      const running = pulseRunningRef.current && pulseVisitIdx.length > 1 && pulseStepRef.current < pulseVisitIdx.length - 1;
+      if (running) {
+        const fi = pulseVisitIdx[pulseStepRef.current];
+        const ti = pulseVisitIdx[pulseStepRef.current + 1];
+        if (fi >= sim.n || ti >= sim.n) {
+          // Defense-in-depth: stale indices from a previous explore sub-graph (the
+          // view changed under us) would read undefined sim.pos → NaN particle. Stop.
+          pulseRunningRef.current = false;
+          pc.visible = false; pg.visible = false; ptl.visible = false;
+        } else {
+          // First running frame: dim the neighbourhood + light the start node.
+          if (!pulseLitDirtyRef.current) {
+            applyPulseLitToBuffers(coreRef.current, glowRef.current, base, pulseLitRef.current, pulseVisitIdx[0], nodes.length);
+            pulseLitDirtyRef.current = true;
+          }
+          pc.visible = true; pg.visible = true;
+          pulseTRef.current += 0.035;
+          const pt = pulseTRef.current;
+          const pe = pt < 0.5 ? 2 * pt * pt : 1 - Math.pow(-2 * pt + 2, 2) / 2;
+          const px = sim.pos[fi * 3] + (sim.pos[ti * 3] - sim.pos[fi * 3]) * pe;
+          const py = sim.pos[fi * 3 + 1] + (sim.pos[ti * 3 + 1] - sim.pos[fi * 3 + 1]) * pe;
+          const pz = sim.pos[fi * 3 + 2] + (sim.pos[ti * 3 + 2] - sim.pos[fi * 3 + 2]) * pe;
+          const cp = pc.geometry.getAttribute('position') as THREE.BufferAttribute;
+          cp.setXYZ(0, px, py, pz); cp.needsUpdate = true;
+          const gp = pg.geometry.getAttribute('position') as THREE.BufferAttribute;
+          gp.setXYZ(0, px, py, pz); gp.needsUpdate = true;
+
+          // Comet trail — ring buffer of the last 60 particle positions.
+          const tb = pulseTrailBuf.current;
+          const hi = pulseTrailHead.current % 60;
+          tb[hi * 3] = px; tb[hi * 3 + 1] = py; tb[hi * 3 + 2] = pz;
+          pulseTrailHead.current++;
+          pulseTrailCount.current = Math.min(pulseTrailCount.current + 1, 60);
+          ptl.visible = true;
+          const tp = ptl.geometry.getAttribute('position') as THREE.BufferAttribute;
+          const cnt = pulseTrailCount.current;
+          for (let i = 0; i < 60; i++) {
+            if (i < cnt) {
+              const bi = ((pulseTrailHead.current - cnt + i) % 60 + 60) % 60;
+              tp.setXYZ(i, tb[bi * 3], tb[bi * 3 + 1], tb[bi * 3 + 2]);
+            } else { tp.setXYZ(i, px, py, pz); }
+          }
+          tp.needsUpdate = true;
+          ptl.geometry.setDrawRange(0, cnt);
+
+          // Flash decay → particle size pulse.
+          pulseFlashRef.current *= 0.88;
+          (pc.material as THREE.PointsMaterial).size = 11 + pulseFlashRef.current * 8;
+          (pg.material as THREE.PointsMaterial).size = 26 + pulseFlashRef.current * 18;
+
+          // Arrival → light the reached node, pop its title, flash.
+          if (pt >= 1) {
+            pulseTRef.current = 0;
+            pulseStepRef.current++;
+            const arrived = pulseVisitIdx[Math.min(pulseStepRef.current, pulseVisitIdx.length - 1)];
+            pulseLitRef.current.add(arrived);
+            pulsePopRef.current = { idx: arrived, t: 0 };
+            pulseFlashRef.current = 1;
+            applyPulseLitToBuffers(coreRef.current, glowRef.current, base, pulseLitRef.current, pulseVisitIdx[0], nodes.length);
+            // Pop a hologram title card at the reached node (projected to screen).
+            if (onPulseArrive && arrived < sim.n) {
+              const av = new THREE.Vector3(sim.pos[arrived * 3], sim.pos[arrived * 3 + 1], sim.pos[arrived * 3 + 2]);
+              av.project(camera);
+              if (av.z <= 1) {
+                onPulseArrive({
+                  title: nodes[arrived]?.title ?? '',
+                  x: (av.x * 0.5 + 0.5) * size.width,
+                  y: (-av.y * 0.5 + 0.5) * size.height,
+                });
+              }
+            }
+          }
+        }
+      } else {
+        // Done (or never started): hide the comet/trail, then restore the base node
+        // look ONCE — drop the lit/dim pass + lit titles so hover works normally and
+        // the node dots + labels return together (no half-restored flash on next hover).
+        pc.visible = false; pg.visible = false; ptl.visible = false;
+        pulseRunningRef.current = false;
+        if (pulseLitDirtyRef.current) {
+          pulseLitRef.current.clear();
+          pulsePopRef.current = null;
+          applyHoverToBuffers(coreRef.current, glowRef.current, base, neighborSets, hoveredRef.current, nodes.length);
+          pulseLitDirtyRef.current = false;
+        }
       }
     }
   });
@@ -443,6 +610,22 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         </points>
       )}
 
+      {/* "Explore connections" pulse — comet trail + glow + core particle; positions
+          are written in the frame loop from live sim positions. */}
+      <primitive object={pulseTrailObj} />
+      <points ref={pulseGlowRef} raycast={() => null} frustumCulled={false} visible={false}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[new Float32Array(3), 3]} />
+        </bufferGeometry>
+        <pointsMaterial color="#66ddff" size={26} transparent opacity={0.4} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation map={pulseTex} />
+      </points>
+      <points ref={pulseCoreRef} raycast={() => null} frustumCulled={false} visible={false}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[new Float32Array(3), 3]} />
+        </bufferGeometry>
+        <pointsMaterial color="#ffffff" size={11} transparent opacity={0.95} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation map={pulseTex} />
+      </points>
+
       {/* T2-9: swap camera by mode. makeDefault hands the active camera to R3F +
           OrbitControls. 2D = top-down orthographic (rotation disabled, pan/zoom
           only); 3D = the original perspective camera. */}
@@ -513,6 +696,19 @@ export function GraphView() {
   const [galaxyInfo, setGalaxyInfo] = useState<{ totalNodes: number; clusters: number } | null>(null);
   // Drill-down: the cluster currently opened to its members (null = galaxy view).
   const [drillCluster, setDrillCluster] = useState<{ id: number; label: string } | null>(null);
+  // "Explore connections" pulse — node indices to walk + a runId that restarts it.
+  const [pulse, setPulse] = useState<{ visitIdx: number[]; runId: number } | null>(null);
+  const pulseRunIdRef = useRef(0);
+  // Arrival title popup — the comet pops a hologram card at each node it reaches.
+  const [arrivePop, setArrivePop] = useState<{ title: string; x: number; y: number; seq: number } | null>(null);
+  const arriveSeqRef = useRef(0);
+  const arriveTimerRef = useRef<number | null>(null);
+  const handlePulseArrive = useCallback((info: { title: string; x: number; y: number }) => {
+    arriveSeqRef.current += 1;
+    setArrivePop({ ...info, seq: arriveSeqRef.current }); // seq → key remount replays the pop animation
+    if (arriveTimerRef.current) window.clearTimeout(arriveTimerRef.current);
+    arriveTimerRef.current = window.setTimeout(() => setArrivePop(null), 1200);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [fitSignal, setFitSignal] = useState(0);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
@@ -536,6 +732,7 @@ export function GraphView() {
   const coreReady = useAppStore((s) => s.coreReady);
   const setPreviewNote = useAppStore((s) => s.setPreviewNote);
   const vaultPath = useAppStore((s) => s.vaultPath);
+  const exploreTarget = useAppStore((s) => s.exploreTarget);
 
   const accent = useMemo(() => readAccentColor(), []);
 
@@ -545,6 +742,7 @@ export function GraphView() {
     if (!coreReady) return;
     setLoading(true);
     setDrillCluster(null);
+    setPulse(null); // leaving the explore view → stop any running connection pulse (its node indices are stale here)
     setMode2d(false); // galaxy is a frozen 3D overview — always 3D (2D/Forces hidden)
     expandedRef.current.clear();
     try {
@@ -576,7 +774,72 @@ export function GraphView() {
 
   // Wave 1 cluster-first LOD: open at the galaxy (cluster super-nodes), NOT all 12k
   // notes. Clicking a super-node drills into that cluster's members.
-  useEffect(() => { void loadGalaxy(); }, [loadGalaxy]);
+  useEffect(() => {
+    // Initial view = galaxy overview — UNLESS a body-link explore is already queued
+    // (clicking a [[link]] in a note opens the graph tab + sets exploreTarget). Then
+    // the exploreTarget effect below focuses that note directly, with no galaxy flash.
+    if (useAppStore.getState().exploreTarget) return;
+    void loadGalaxy();
+  }, [loadGalaxy]);
+
+  // "Explore connections" — focus a note: load the full note graph, keep only the
+  // BFS neighbourhood around it (the connected notes), and reheat so it spreads.
+  // (The pulse + title hologram lands in the next step.)
+  // Mapped full graph, cached across clicks — the vault graph is stable within a
+  // session, so we fetch+map ONCE instead of re-serialising up to 3000 nodes over IPC
+  // and re-running mapCoreNodes/BFS on every note click.
+  const fullGraphRef = useRef<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
+  const loadExplore = useCallback(async (filePath: string, title: string) => {
+    if (!coreReady) return;
+    // NB: no setLoading() here — blanking to the full-screen "Building graph..."
+    // placeholder on every click made the explore feel like a jarring flash. The old
+    // graph stays visible during the (now usually cached) swap.
+    try {
+      let full = fullGraphRef.current;
+      if (!full) {
+        const data = await ipc('graph:build', 'semantic') as unknown as { nodes: CoreGraphNode[]; edges: GraphEdge[] };
+        full = { nodes: mapCoreNodes(data.nodes ?? []), edges: (data.edges ?? []) as GraphEdge[] };
+        fullGraphRef.current = full;
+      }
+      const abs = filePath.replace(/\\/g, '/').toLowerCase();
+      const center = full.nodes.find((n) => {
+        if (!n.filePath) return false;
+        const rel = n.filePath.replace(/\\/g, '/').toLowerCase();
+        return abs === rel || abs.endsWith('/' + rel);
+      });
+      if (!center) return;
+      const sub = bfsFilter(full.nodes, full.edges, center.id, 2);
+      expandedRef.current.clear();
+      setAllNodes(sub.nodes);
+      setAllEdges(sub.edges);
+      setDrillCluster({ id: -2, label: `⚡ ${title}` }); // explore view (id -2 = not a real cluster)
+      setFitSignal((s) => s + 1);
+      setReheatSignal((s) => s + 1);
+      // Pulse the connections: BFS order → node indices within the sub-graph.
+      const order = bfsVisitOrder(center.id, sub.edges);
+      const idToIdx = new Map(sub.nodes.map((n, i) => [n.id, i] as [string, number]));
+      const visitIdx = order.map((id) => idToIdx.get(id)).filter((i): i is number => i != null);
+      pulseRunIdRef.current += 1;
+      setPulse({ visitIdx, runId: pulseRunIdRef.current });
+    } catch (err) {
+      console.error('[graph] explore failed:', err);
+    } finally {
+      // Clear the initial loading gate. Opening the graph straight into an explore
+      // (the "Explore in graph" button) starts with loading=true and SKIPS loadGalaxy
+      // (which was the only other place loading was cleared) — without this the view
+      // stays stuck on "Building graph...". We only clear here (never set true at the
+      // start) so re-exploring from an already-built graph doesn't flash a blank.
+      setLoading(false);
+    }
+  }, [coreReady]);
+
+  // Consume an "Explore connections" request from the preview panel.
+  useEffect(() => {
+    if (exploreTarget && coreReady) {
+      void loadExplore(exploreTarget.filePath, exploreTarget.title);
+      useAppStore.getState().setExploreTarget(null);
+    }
+  }, [exploreTarget, coreReady, loadExplore]);
 
   // Global safety cap — same policy as GraphPanel.
   const { visibleNodes, visibleEdges } = useMemo(() => {
@@ -644,6 +907,7 @@ export function GraphView() {
       try {
         const data = await ipc('graph:expand-cluster', { mode: 'semantic', clusterId });
         const memberNodes = mapCoreNodes(data.members as unknown as CoreGraphNode[]);
+        setPulse(null); // entering a cluster → drop any explore-pulse (its indices point into the old sub-graph)
         setAllNodes(memberNodes);
         setAllEdges(data.intraEdges);
         setDrillCluster({ id: clusterId, label: node.title.replace(/\s·\s\d+$/, '') });
@@ -659,12 +923,13 @@ export function GraphView() {
       const isAbsolute = /^([a-zA-Z]:[\\/]|\/)/.test(node.filePath);
       const fullPath = isAbsolute ? node.filePath : `${vaultPath}/${node.filePath}`;
       const content = await ipc('vault:read-file', fullPath);
-      // Web/Obsidian-style: stream into the right-panel READ-ONLY preview instead
-      // of stealing the main pane (which is showing the graph). The preview's
-      // "Open ↗" button opens a real editor tab when the user wants to edit.
+      // Clicking a note streams it into the right-panel preview (body/edit) AND
+      // auto-runs "Explore connections" on the graph: focus its neighbourhood +
+      // pulse. No button — the click itself is the explore gesture.
       setPreviewNote({ filePath: fullPath, title: node.title, content });
+      void loadExplore(fullPath, node.title);
     } catch { /* skip unreadable */ }
-  }, [setPreviewNote, vaultPath]);
+  }, [setPreviewNote, vaultPath, loadExplore]);
 
   const handleHover = useCallback((info: HoverInfo | null) => {
     if (!info) { setHover(null); return; }
@@ -732,6 +997,9 @@ export function GraphView() {
             onHover={handleHover}
             labelEls={labelEls}
             labelRank={labelRank}
+            pulseVisitIdx={pulse?.visitIdx ?? []}
+            pulseRunId={pulse?.runId ?? 0}
+            onPulseArrive={handlePulseArrive}
           />
         </Canvas>
       </GraphErrorBoundary>
@@ -765,6 +1033,13 @@ export function GraphView() {
           </div>
         ))}
       </div>
+
+      {/* Explore-pulse arrival popup — hologram title card that pops at the reached node. */}
+      {arrivePop && (
+        <div key={arrivePop.seq} className="sv-pulse-pop" style={{ left: arrivePop.x, top: arrivePop.y }}>
+          {arrivePop.title}
+        </div>
+      )}
 
       {/* Top-left controls: Fit + Forces (collapsible, Obsidian-style) */}
       <div style={{

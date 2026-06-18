@@ -78,6 +78,13 @@ let settingsStore: SettingsStore | null = null;
 // proceed). The 'close' handler lets these through instead of re-prompting.
 const closeConfirmed = new WeakSet<BrowserWindow>();
 
+// A vault switch deferred until the dirty-close round-trip confirms. Writing the
+// bootstrap config then calling app.quit() races the dirty-close guard: the guard
+// can veto the quit (Cancel / save-fail), leaving ~/.stellavault.json pointing at a
+// vault the running session never loaded. We instead stash the target here and
+// commit it in window:confirm-close, i.e. ONLY on a path that actually relaunches.
+let pendingVaultSwitch: { id: string; path: string; dbPath?: string } | null = null;
+
 function broadcastSettingsChanged(settings: AppSettings): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('settings:changed', settings);
@@ -1214,11 +1221,35 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('window:confirm-close', (e, proceed: boolean) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
-    if (proceed) {
-      closeConfirmed.add(win);
-      win.destroy();
+    if (!proceed) {
+      // Close vetoed (Cancel / save failed). Abandon any deferred vault switch so a
+      // later ordinary close never silently applies it; the 'close' handler already
+      // preventDefaulted, so the session stays on the current vault.
+      pendingVaultSwitch = null;
+      return;
     }
-    // proceed=false → nothing to do; the 'close' handler already preventDefaulted.
+    // Commit a deferred vault switch now that close is confirmed (dirty tabs were
+    // handled by the renderer guard). This rewrites the bootstrap pointer ONLY here,
+    // never on a vetoed close — fixing the write-then-veto inconsistency.
+    if (pendingVaultSwitch) {
+      const sw = pendingVaultSwitch;
+      pendingVaultSwitch = null;
+      try {
+        const list = settingsStore?.get().vaults ?? [];
+        settingsStore?.set({ vaults: list.map((v) => ({ ...v, active: v.id === sw.id })) });
+        writeFileSync(
+          join(homedir(), '.stellavault.json'),
+          JSON.stringify({ vaultPath: sw.path, dbPath: sw.dbPath }, null, 2),
+          'utf-8',
+        );
+        app.relaunch();
+      } catch (err) {
+        console.error('[main] vault:switch commit failed:', err);
+        return; // keep the session alive on the current vault rather than close into limbo
+      }
+    }
+    closeConfirmed.add(win);
+    win.destroy(); // → window-all-closed → app.quit() (+ relaunch if one was armed)
   });
 
   // ─── App menu (W2) — zoom + shell helpers ───────────
@@ -1832,23 +1863,25 @@ function registerPublishVaultClip(config: AppConfig): void {
   // re-init (native SQLite + embedder reload + DB swap) is heavy and the watcher/
   // asset-protocol/IPC closures are all bound to the boot vault path. A clean
   // restart is far safer than hot-swapping every closure mid-session.
-  ipcMain.handle('vault:switch', (_e, id: string): { restartRequired: boolean } => {
+  // Confirmation happens in the renderer (themed ConfirmModal) — when this is
+  // called the user already chose "Restart now". Rewrite the bootstrap config and
+  // relaunch into the chosen vault (heavy core re-init; closures bound to boot path).
+  ipcMain.handle('vault:switch', (e, id: string): { restartRequired: boolean } => {
     if (!settingsStore) settingsStore = new SettingsStore();
     const list = settingsStore.get().vaults ?? [];
     const target = list.find((v) => v.id === id);
     if (!target) throw new Error(`Unknown vault: ${id}`);
-    settingsStore.set({ vaults: list.map((v) => ({ ...v, active: v.id === id })) });
-    // Rewrite the bootstrap config so the next launch loads the chosen vault.
-    try {
-      writeFileSync(
-        join(homedir(), '.stellavault.json'),
-        JSON.stringify({ vaultPath: target.path, dbPath: target.dbPath }, null, 2),
-        'utf-8',
-      );
-    } catch (err) {
-      console.error('[main] vault:switch — failed to rewrite bootstrap config:', err);
-      throw new Error('Could not persist vault switch.');
+    // Defer the active-flag flip + bootstrap-config rewrite until the close round-trip
+    // confirms (window:confirm-close). This routes the switch through the existing
+    // dirty-tab guard — unsaved edits get the Save/Discard/Cancel prompt, and the
+    // config is committed ONLY if the user actually lets the app close + relaunch.
+    pendingVaultSwitch = { id, path: target.path, dbPath: target.dbPath };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) {
+      pendingVaultSwitch = null;
+      throw new Error('Could not resolve window for vault switch.');
     }
+    win.close(); // → 'close' guard → window:close-request → window:confirm-close commits it
     return { restartRequired: true };
   });
 
@@ -2318,6 +2351,28 @@ app.whenReady().then(async () => {
   registerAssetProtocol(config);
 
   const win = createWindow();
+
+  // ─── Memory diagnostics (OOM investigation) ──────────────────────────────
+  // Large vaults have OOM'd the MAIN process after extended runtime. Log heap +
+  // native memory (external/arrayBuffers) + suspect cache sizes every 30s so growth
+  // is visible and ATTRIBUTABLE: heapUsed climbing → a JS structure leaks; external/
+  // arrayBuffers climbing → native (the ONNX embedder / sqlite). Gate with
+  // STELLAVAULT_NO_MEM_LOG=1. Cheap (one line / 30s); unref'd so it never holds the app up.
+  if (process.env.STELLAVAULT_NO_MEM_LOG !== '1') {
+    const mb = (n: number) => Math.round(n / 1048576);
+    const memTimer = setInterval(() => {
+      const m = process.memoryUsage();
+      console.error(
+        `[mem] rss=${mb(m.rss)}MB heap=${mb(m.heapUsed)}/${mb(m.heapTotal)}MB ` +
+        `external=${mb(m.external)}MB arrayBuffers=${mb(m.arrayBuffers)}MB | ` +
+        `graphCache=${graphBuildCache.size} clusterCache=${clusteredCache.size} ` +
+        `selfWrites=${recentSelfWrites.size} mcpAct=${mcpActivity.length} ` +
+        `wins=${BrowserWindow.getAllWindows().length}`,
+      );
+    }, 30_000);
+    memTimer.unref?.();
+    app.on('before-quit', () => clearInterval(memTimer));
+  }
 
   // Startup race guard: initCore now resolves FAST (embedder + decay moved off the
   // critical path), so it can finish BEFORE the renderer registers its 'core:ready'

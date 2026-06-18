@@ -39,12 +39,19 @@ interface AppState {
   activeTabId: string | null;
 
   // Panel (Stage C adds 'search' | 'outline' | 'tags' — W1-4/5/6)
-  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis' | 'capture' | 'review' | 'categories' | 'note-preview'; // T2-6 coach; T3-1 synthesis; second-brain capture/review/categories; note-preview = web-style read-only preview
+  rightPanel: 'none' | 'graph' | 'note-graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis' | 'capture' | 'review' | 'categories' | 'note-preview'; // T2-6 coach; T3-1 synthesis; second-brain capture/review/categories; note-preview = web-style read-only preview; note-graph = note-focused 3D explore graph (Explore-in-graph button)
   rightPanelWidth: number;
 
   // Note preview — clicking a graph node (or a link) streams a READ-ONLY note
   // into the right panel instead of stealing the main pane (web/Obsidian style).
   previewNote: { filePath: string; title: string; content: string; isDirty: boolean } | null;
+  // Explorer back/forward history (browser-style). Re-centering pushes the current
+  // note onto previewBack and clears previewFwd; goPreviewBack/Fwd walk the stacks.
+  previewBack: Array<{ filePath: string; title: string; content: string; isDirty: boolean }>;
+  previewFwd: Array<{ filePath: string; title: string; content: string; isDirty: boolean }>;
+  // "Explore connections" hand-off: the preview asks the main graph tab to focus a
+  // note (BFS neighbours + pulse). GraphView consumes it then clears it.
+  exploreTarget: { filePath: string; title: string } | null;
 
   // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any
   // caller) sets a query via openSearchWithQuery(); SearchPanel consumes it,
@@ -94,6 +101,15 @@ interface AppState {
   // Explorer Edit segment: mutate the preview note's body (isDirty=true) / clear.
   updatePreviewContent: (content: string) => void;
   markPreviewClean: () => void;
+  // Replace the current preview note's body in place (NO history push) — used by
+  // Back/Forward to overwrite the restored snapshot with fresh DISK content so
+  // navigation reflects disk truth, not a stale (possibly clean-looking) in-memory copy.
+  setPreviewNoteInPlace: (note: { filePath: string; title: string; content: string }) => void;
+  // Explorer history navigation (header ← / → buttons).
+  goPreviewBack: () => void;
+  goPreviewFwd: () => void;
+  // "Explore connections" → focus a note in the main graph tab.
+  setExploreTarget: (t: { filePath: string; title: string } | null) => void;
   // Stage C additive (W1-6).
   openSearchWithQuery: (query: string) => void;
   clearPendingSearchQuery: () => void;
@@ -114,6 +130,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   rightPanel: 'none',
   rightPanelWidth: 480,
   previewNote: null,
+  previewBack: [],
+  previewFwd: [],
+  exploreTarget: null,
   pendingSearchQuery: null,
 
   theme: 'dark',
@@ -210,9 +229,42 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
-  setPreviewNote: (note) => set({ previewNote: { ...note, isDirty: false }, rightPanel: 'note-preview' }),
+  setPreviewNote: (note) => set((s) => {
+    // Re-centering onto the SAME note (re-clicking the centered node, or the
+    // LocalGraph centre node) must NOT push a duplicate history entry — that turns
+    // Back into a dead step. Refresh content in place; leave the stacks intact.
+    if (s.previewNote && s.previewNote.filePath === note.filePath) {
+      return { previewNote: { ...note, isDirty: false }, rightPanel: 'note-preview' };
+    }
+    return {
+      previewBack: s.previewNote ? [...s.previewBack, s.previewNote].slice(-50) : s.previewBack,
+      previewFwd: [],
+      previewNote: { ...note, isDirty: false },
+      rightPanel: 'note-preview',
+    };
+  }),
   updatePreviewContent: (content) => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, content, isDirty: true } } : {}),
   markPreviewClean: () => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, isDirty: false } } : {}),
+  setPreviewNoteInPlace: (note) => set((s) => s.previewNote ? { previewNote: { ...note, isDirty: false } } : {}),
+  goPreviewBack: () => set((s) => {
+    if (s.previewBack.length === 0) return {};
+    const prev = s.previewBack[s.previewBack.length - 1];
+    return {
+      previewBack: s.previewBack.slice(0, -1),
+      previewFwd: s.previewNote ? [...s.previewFwd, s.previewNote] : s.previewFwd,
+      previewNote: prev,
+    };
+  }),
+  goPreviewFwd: () => set((s) => {
+    if (s.previewFwd.length === 0) return {};
+    const next = s.previewFwd[s.previewFwd.length - 1];
+    return {
+      previewFwd: s.previewFwd.slice(0, -1),
+      previewBack: s.previewNote ? [...s.previewBack, s.previewNote] : s.previewBack,
+      previewNote: next,
+    };
+  }),
+  setExploreTarget: (t) => set({ exploreTarget: t }),
   // Stage C additive (W1-6).
   openSearchWithQuery: (query) => set({ rightPanel: 'search', pendingSearchQuery: query }),
   clearPendingSearchQuery: () => set({ pendingSearchQuery: null }),

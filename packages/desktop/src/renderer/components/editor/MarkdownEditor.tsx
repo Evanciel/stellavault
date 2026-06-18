@@ -38,6 +38,7 @@ import { BubbleMenuBar, TEXT_COLORS, HIGHLIGHT_COLORS } from './BubbleMenuBar.js
 import { TableControls } from './TableControls.js';
 import { PromptModal } from '../ui/Modal.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { showToast } from '../../lib/toast.js';
 
 const lowlight = createLowlight(common);
 
@@ -66,6 +67,24 @@ const VaultImage = Image.extend({
   },
 });
 
+/** Reading-mode markdown-link open: route by href. http(s) → external browser
+ *  (vetted https/loopback allowlist in main); file:// or a local/abs path → OS
+ *  default app (shell:open-path — vault-restricted in main, so out-of-vault paths
+ *  are rejected there). Failures are logged, never thrown. */
+async function openMarkdownLink(href: string): Promise<void> {
+  try {
+    if (/^https?:\/\//i.test(href)) {
+      await ipc('shell:open-external', href);
+      return;
+    }
+    let path = href;
+    if (path.startsWith('file://')) path = decodeURI(path.replace(/^file:\/\/+/, ''));
+    await ipc('shell:open-path', path);
+  } catch (err) {
+    console.error('[link] open failed:', href, err);
+  }
+}
+
 interface Props {
   // W1-7: markdown BODY source (never HTML, never frontmatter — EditorArea
   // splits/recombines the YAML block via lib/frontmatter.ts).
@@ -74,9 +93,13 @@ interface Props {
   // T2-3: Reading mode — render the document read-only with no editing chrome
   // (toolbar/bubble/table controls hidden). Wikilink click-nav still works.
   readOnly?: boolean;
+  // Optional per-editor wikilink click override (the preview panel routes body link
+  // clicks into recenter + graph-explore instead of opening a tab). Return true if
+  // handled; falsy → default open/create-in-tab behaviour.
+  onWikilinkClick?: (target: string, alias: string | null) => boolean;
 }
 
-export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
+export function MarkdownEditor({ content, onChange, readOnly = false, onWikilinkClick }: Props) {
   const [imagePromptOpen, setImagePromptOpen] = useState(false);
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);
   // Toolbar dropdown palettes (text color / highlight / callout type)
@@ -95,7 +118,7 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         .extend({ addNodeView() { return ReactNodeViewRenderer(CodeBlockView); } })
         .configure({ lowlight, HTMLAttributes: { class: 'sv-code-block' } }),
       Placeholder.configure({ placeholder: 'Start writing... (type / for commands)' }),
-      Link.configure({ openOnClick: false, autolink: true }),
+      Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { title: 'Open link — Reading mode: click · Edit mode: Ctrl/⌘+click' } }),
       Table.configure({ resizable: true }),
       TableRow,
       TableCell,
@@ -177,10 +200,29 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         }
         return false;
       },
+      handleClick: (_view, _pos, event) => {
+        const a = (event.target as HTMLElement | null)?.closest?.('a');
+        const href = a?.getAttribute('href');
+        if (!href) return false;
+        // Reading mode: plain click opens. Edit/Live: Ctrl/⌘+click opens (plain click
+        // keeps cursor placement for editing); a plain click on a link hints how to open.
+        if (readOnly || event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          void openMarkdownLink(href);
+          return true;
+        }
+        showToast('🔗 Ctrl/⌘-click to open (or switch to Reading mode)', 'info', 2200);
+        return false;
+      },
     },
   });
 
   useEffect(() => () => editor?.destroy(), [editor]);
+
+  // Wire the per-editor wikilink click override into the WikilinkNode storage.
+  useEffect(() => {
+    if (editor) editor.storage.wikilink.clickHandler = onWikilinkClick ?? null;
+  }, [editor, onWikilinkClick]);
 
   // ─── Stage C (W1-5, OutlinePanel) — scroll-to-heading listener ONLY ───
   // OutlinePanel dispatches CustomEvent('sv:scroll-to-heading', {detail:{text,index}})

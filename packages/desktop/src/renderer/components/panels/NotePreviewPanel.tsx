@@ -15,13 +15,12 @@ import { ipc } from '../../lib/ipc-client.js';
 import { showToast } from '../../lib/toast.js';
 import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { RelationLists, NoteRow, type OnOpen } from './links-shared.js';
-import { LocalGraph } from './GraphPanel.js';
 import { parseOutlinks, noteBasename } from '../../lib/outlinks.js';
 
-type Segment = 'read' | 'edit' | 'backlinks' | 'outlinks' | 'local';
-const SEGMENTS: Segment[] = ['read', 'edit', 'backlinks', 'outlinks', 'local'];
+type Segment = 'read' | 'edit' | 'backlinks' | 'outlinks';
+const SEGMENTS: Segment[] = ['read', 'edit', 'backlinks', 'outlinks'];
 const SEG_LABELS: Record<Segment, string> = {
-  read: 'Read', edit: 'Edit', backlinks: 'Backlinks', outlinks: 'Outlinks', local: 'Local',
+  read: 'Read', edit: 'Edit', backlinks: 'Backlinks', outlinks: 'Outlinks',
 };
 
 export function NotePreviewPanel() {
@@ -30,6 +29,10 @@ export function NotePreviewPanel() {
   const setPreviewNote = useAppStore((s) => s.setPreviewNote);
   const updatePreviewContent = useAppStore((s) => s.updatePreviewContent);
   const markPreviewClean = useAppStore((s) => s.markPreviewClean);
+  const goPreviewBack = useAppStore((s) => s.goPreviewBack);
+  const goPreviewFwd = useAppStore((s) => s.goPreviewFwd);
+  const canBack = useAppStore((s) => s.previewBack.length > 0);
+  const canFwd = useAppStore((s) => s.previewFwd.length > 0);
   const [segment, setSegment] = useState<Segment>('read');
 
   // Re-center the preview on another note. Auto-save current dirty edits first
@@ -87,6 +90,24 @@ export function NotePreviewPanel() {
     openFile(p.filePath, p.title, p.content);
   }, [openFile]);
 
+  // Browser-style history: flush dirty edits, walk the back/forward stacks, then
+  // RE-READ the restored note from disk. The stacks hold an in-memory snapshot that
+  // may be stale (the same note could have been edited in a tab); showing it as
+  // clean risks a later save silently overwriting newer disk content. Mirror
+  // recenter()'s disk read so Back/Forward always reflect disk truth.
+  const handleHistory = useCallback(async (dir: 'back' | 'fwd') => {
+    try { await flushDirtyPreview(); } catch { return; }
+    if (dir === 'back') goPreviewBack(); else goPreviewFwd();
+    const cur = useAppStore.getState().previewNote;
+    if (!cur) return;
+    try {
+      const content = await ipc('vault:read-file', cur.filePath);
+      useAppStore.getState().setPreviewNoteInPlace({ filePath: cur.filePath, title: cur.title, content });
+    } catch (err) {
+      console.error('[preview] history disk read failed:', err);
+    }
+  }, [goPreviewBack, goPreviewFwd]);
+
   if (!preview) {
     return (
       <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
@@ -110,7 +131,9 @@ export function NotePreviewPanel() {
       }}
     >
       {/* Header — title (+ dirty dot) + Save (when dirty) + "open in editor". */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+        <button onClick={() => void handleHistory('back')} disabled={!canBack} title="Back" style={{ background: 'transparent', border: 'none', cursor: canBack ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canBack ? 1 : 0.35 }}>←</button>
+        <button onClick={() => void handleHistory('fwd')} disabled={!canFwd} title="Forward" style={{ background: 'transparent', border: 'none', cursor: canFwd ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canFwd ? 1 : 0.35 }}>→</button>
         <span title={preview.title} style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {preview.isDirty && <span style={{ color: 'var(--accent)', marginRight: 4 }}>●</span>}
           {preview.title}
@@ -156,9 +179,6 @@ export function NotePreviewPanel() {
         )}
         {segment === 'outlinks' && (
           <OutlinksList content={preview.content} onOpen={onOpen} />
-        )}
-        {segment === 'local' && (
-          <LocalGraph filePath={preview.filePath} onRecenter={(fp, title) => void recenter(fp, title)} />
         )}
       </div>
     </div>

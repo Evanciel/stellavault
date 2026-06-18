@@ -17,6 +17,9 @@ import { AIPanel } from './components/panels/AIPanel.js';
 // T2-12: GraphPanel pulls in the three/fiber/drei "three" chunk — lazy-load so
 // it's fetched only when the graph panel is opened, not on app startup.
 const GraphPanel = lazy(() => import('./components/panels/GraphPanel.js').then((m) => ({ default: m.GraphPanel })));
+// Note-focused 3D explore graph for the right panel (Explore-in-graph button) — same
+// component as the full-tab graph; exploreTarget focuses it on the active note + pulses.
+const GraphView = lazy(() => import('./components/graph/GraphView.js').then((m) => ({ default: m.GraphView })));
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { SearchPanel } from './components/panels/SearchPanel.js';
 import { OutlinePanel } from './components/panels/OutlinePanel.js';
@@ -46,6 +49,7 @@ const PANEL_TITLES: Record<string, string> = {
   review: 'Review',
   categories: 'Categories',
   'note-preview': 'Explorer',
+  'note-graph': 'Graph',
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -276,6 +280,15 @@ export function App() {
               {rightPanel === 'graph' && (
                 <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>Loading graph…</div>}>
                   <GraphPanel />
+                </Suspense>
+              )}
+              {rightPanel === 'note-graph' && (
+                <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>Loading graph…</div>}>
+                  {/* GraphView is a full-bleed Canvas — give it a definite-height flex column
+                      (mirrors NotePreviewPanel) so it fills the panel instead of collapsing. */}
+                  <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <GraphView />
+                  </div>
                 </Suspense>
               )}
               {rightPanel === 'backlinks' && <BacklinksPanel />}

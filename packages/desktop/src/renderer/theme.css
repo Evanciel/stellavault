@@ -59,3 +59,35 @@
   background-clip: content-box;
 }
 ::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Explore-pulse arrival popup ──────────────────────────────────────────
+   A hologram-style title card that pops above each node the explore comet
+   reaches. Positioned imperatively (left/top) by GraphView; the keyframe does
+   the snap-in + fade-out so a key remount per arrival replays it. */
+.sv-pulse-pop {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  pointer-events: none;
+  z-index: 30;
+  max-width: 220px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #eaf2ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: linear-gradient(180deg, rgba(40,70,140,0.92), rgba(18,32,74,0.92));
+  border: 1px solid rgba(120,190,255,0.75);
+  border-radius: 7px;
+  box-shadow: 0 0 16px rgba(90,170,255,0.55), 0 4px 14px rgba(0,0,0,0.5);
+  animation: svPulsePop 1.2s ease-out forwards;
+}
+@keyframes svPulsePop {
+  0%   { opacity: 0; transform: translate(-50%, -118%) scale(0.6); }
+  16%  { opacity: 1; transform: translate(-50%, -140%) scale(1.06); }
+  28%  { transform: translate(-50%, -140%) scale(1); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -162%) scale(1); }
+}
