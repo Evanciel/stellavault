@@ -443,7 +443,10 @@ export interface IpcChannelMap {
   // Settings (W1-1)
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
-  'ai:list-models':     { args: [opts: { provider: string; apiKey: string; baseURL: string }]; result: string[] };
+  // T5: apiKey removed from args — key is loaded from secretStore in the main process.
+  // The renderer passes only provider + optional baseURL (needed for openai-compatible/Ollama).
+  // A compromised renderer can no longer pass an arbitrary key to trigger outbound requests.
+  'ai:list-models':     { args: [opts: { provider: string; baseURL?: string }]; result: string[] };
   // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
   // the plaintext key NEVER returns to the renderer after being stored.
   'ai:set-secret':   { args: [provider: string, key: string]; result: void };

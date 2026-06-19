@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal, ConfirmModal } from '../ui/Modal.js';
-import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META, modelsListRequest } from '../../../shared/ai-providers.js';
+import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META } from '../../../shared/ai-providers.js';
 import { useT, type MsgKey } from '../../lib/i18n.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
@@ -323,14 +323,15 @@ function AITab() {
   };
 
   // Fetch the provider's models (main-side: the renderer can't hit the provider
-  // cross-origin under CSP). Local servers (Ollama / LM Studio) need no key; cloud
-  // uses keyDraft (local write-only state — never read from settings). `silent`
-  // suppresses errors for the background auto-load.
+  // cross-origin under CSP). T5: the renderer no longer passes an API key — main
+  // loads the stored key from secretStore. `silent` suppresses errors for the
+  // background auto-load (before the user has saved a key the auto-load just keeps
+  // the hardcoded fallback list without showing an error).
   const loadModels = useCallback(async (silent = false) => {
     setLoadingModels(true);
     if (!silent) setModelError(null);
     try {
-      const models = await ipc('ai:list-models', { provider: ai.provider, apiKey: keyDraft, baseURL: ai.baseURL ?? '' });
+      const models = await ipc('ai:list-models', { provider: ai.provider, baseURL: ai.baseURL ?? '' });
       setFetchedModels(models);
       if (models.length === 0 && !silent) setModelError(t('settings.ai.model.error.noModels'));
     } catch (err) {
@@ -338,17 +339,22 @@ function AITab() {
     } finally {
       setLoadingModels(false);
     }
-  }, [ai.provider, keyDraft, ai.baseURL, t]);
+  }, [ai.provider, ai.baseURL, t]);
 
-  // Auto-load the real list over the internet as soon as the provider + key/base URL
-  // are sufficient — debounced so typing a key doesn't fire a request per keystroke.
-  // Failures fall back to the hardcoded list silently (no error spam while typing).
+  // Auto-load the real list as soon as the provider is selected and a key is known to
+  // be stored (ai.hasKey) or the provider is keyless (openai-compatible with a baseURL).
+  // T5: we no longer guard on keyDraft — the stored key is what matters.
+  // Failures fall back to the hardcoded list silently (no error spam before key saved).
   useEffect(() => {
     if (ai.provider === 'none') { setFetchedModels([]); return; }
-    if (!modelsListRequest(ai.provider, keyDraft, ai.baseURL ?? '')) return; // key/url missing → keep fallback
-    const t = setTimeout(() => { void loadModels(true); }, 600);
-    return () => clearTimeout(t);
-  }, [ai.provider, keyDraft, ai.baseURL, loadModels]);
+    const isKeyless = ai.provider === 'openai-compatible';
+    // For cloud providers, only auto-load when a key is already saved.
+    if (!isKeyless && !ai.hasKey) return;
+    // For openai-compatible, require a baseURL.
+    if (isKeyless && !ai.baseURL) return;
+    const timer = setTimeout(() => { void loadModels(true); }, 600);
+    return () => clearTimeout(timer);
+  }, [ai.provider, ai.hasKey, ai.baseURL, loadModels]);
 
   return (
     <div>

@@ -1234,11 +1234,22 @@ function registerIpcHandlers(config: AppConfig) {
   });
 
   // AI model dropdown — fetch a provider's available models (main-side: the renderer
-  // can't hit the provider cross-origin under CSP). The key is the one the user already
-  // typed in AI settings; used only for this request, never logged.
-  ipcMain.handle('ai:list-models', async (_e, opts: { provider: string; apiKey: string; baseURL: string }) => {
-    const req = modelsListRequest(opts.provider as AiProvider, opts.apiKey, opts.baseURL);
-    if (!req) return [];
+  // can't hit the provider cross-origin under CSP).
+  // T5 security fix: the API key is loaded from secretStore here in the main process.
+  // The renderer ONLY passes provider + optional baseURL — it can no longer supply an
+  // arbitrary key (closes the SSRF-adjacent gap where a compromised renderer could
+  // trigger outbound HTTP requests with any key it crafted).
+  ipcMain.handle('ai:list-models', async (_e, opts: { provider: string; baseURL?: string }) => {
+    // Load the stored key for this provider (undefined → no key saved yet).
+    const storedKey = secretStore?.getSecret(opts.provider) ?? '';
+    const req = modelsListRequest(opts.provider as AiProvider, storedKey, opts.baseURL ?? '');
+    if (!req) {
+      // Provider needs a key but none is stored yet — friendly error the UI surfaces.
+      const needsKey = ['anthropic', 'openai', 'google'].includes(opts.provider);
+      if (needsKey && !storedKey) throw new Error('No API key saved. Save a key first, then click Load.');
+      // No listing endpoint for this provider (e.g. 'none') or baseURL missing.
+      return [];
+    }
     const res = await net.fetch(req.url, { headers: req.headers });
     if (!res.ok) throw new Error(`Model list failed (${res.status})`);
     return parseModelsResponse(opts.provider as AiProvider, await res.json());
