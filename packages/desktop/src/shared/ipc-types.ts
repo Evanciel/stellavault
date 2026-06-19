@@ -438,6 +438,7 @@ export interface IpcChannelMap {
   // Settings (W1-1)
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
+  'ai:list-models':     { args: [opts: { provider: string; apiKey: string; baseURL: string }]; result: string[] };
 
   // [editor-upgrade additive] Local image import — copies image bytes (base64)
   // into <vault>/assets/, returns the VAULT-RELATIVE path. (The legacy srcPath

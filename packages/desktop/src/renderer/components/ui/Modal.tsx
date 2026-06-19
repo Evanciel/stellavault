@@ -38,6 +38,10 @@ export function Modal({ open, onClose, title, children, width = 420 }: ModalProp
         zIndex: 10000,
         display: 'flex',
         justifyContent: 'center',
+        // Hug the content height — without this the box stretches (align-items
+        // defaults to stretch) down to maxHeight:60vh, so a one-line confirm
+        // renders as a tall half-empty panel.
+        alignItems: 'flex-start',
         paddingTop: '18vh',
       }}
     >

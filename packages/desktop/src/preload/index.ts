@@ -51,6 +51,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'shell:open-external',
   'settings:get',
   'settings:set',
+  'ai:list-models',       // AI model dropdown — list models for the provider
   'vault:import-asset', // [editor-upgrade additive] local image → vault assets/
   // T3-7 Publish (read-only local server) + T3-4 web clipper endpoint
   'publish:start',

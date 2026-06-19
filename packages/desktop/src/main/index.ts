@@ -19,6 +19,7 @@ import { validateSettingsPatch } from './settings-validate.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
 import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
+import { modelsListRequest, parseModelsResponse, type AiProvider } from '../shared/ai-providers.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -1181,6 +1182,17 @@ function registerIpcHandlers(config: AppConfig) {
     const merged = settingsStore.set(validateSettingsPatch(patch ?? {}));
     broadcastSettingsChanged(merged);
     return merged;
+  });
+
+  // AI model dropdown — fetch a provider's available models (main-side: the renderer
+  // can't hit the provider cross-origin under CSP). The key is the one the user already
+  // typed in AI settings; used only for this request, never logged.
+  ipcMain.handle('ai:list-models', async (_e, opts: { provider: string; apiKey: string; baseURL: string }) => {
+    const req = modelsListRequest(opts.provider as AiProvider, opts.apiKey, opts.baseURL);
+    if (!req) return [];
+    const res = await net.fetch(req.url, { headers: req.headers });
+    if (!res.ok) throw new Error(`Model list failed (${res.status})`);
+    return parseModelsResponse(opts.provider as AiProvider, await res.json());
   });
 
   // Window controls

@@ -60,6 +60,16 @@
 }
 ::-webkit-scrollbar-corner { background: transparent; }
 
+/* ── Themed <select> dropdowns ────────────────────────────────────────────
+   Chromium renders <option> with a default (white) background; in dark mode it
+   clashes with --ink (light text) so the open list is invisible. Force an opaque
+   themed background + ink on the options so they're readable in BOTH themes. */
+select option,
+select optgroup {
+  background-color: var(--bg-2);
+  color: var(--ink);
+}
+
 /* ── Explore-pulse arrival popup ──────────────────────────────────────────
    A hologram-style title card that pops above each node the explore comet
    reaches. Positioned imperatively (left/top) by GraphView; the keyframe does

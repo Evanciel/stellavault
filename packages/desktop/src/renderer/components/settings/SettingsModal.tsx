@@ -9,7 +9,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
-import { DEFAULT_MODELS, OLLAMA_BASE_URL, PROVIDER_META } from '../../../shared/ai-providers.js';
+import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META, modelsListRequest } from '../../../shared/ai-providers.js';
 import { useT } from '../../lib/i18n.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
@@ -238,20 +238,63 @@ function AITab() {
   const update = useSettingsStore((s) => s.update);
   const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: '', baseURL: '' };
   const [showKey, setShowKey] = useState(false);
+  // AI model dropdown: live-fetched model ids + UI state. The list auto-loads from
+  // the provider over the internet as soon as the key/base URL are sufficient, so it
+  // shows ONLY models the account can actually use; the hardcoded list is just an
+  // offline fallback (shown before the fetch / when it fails). "Custom…" still lets
+  // the user type an id not in the list.
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [customModel, setCustomModel] = useState(false);
   const meta = PROVIDER_META[ai.provider];
+
+  // Real, live-fetched models when available; otherwise the hardcoded fallback so
+  // the dropdown is never empty (offline / before the key is entered).
+  const modelOptions = fetchedModels.length > 0 ? fetchedModels : (MODELS_BY_PROVIDER[ai.provider] ?? []);
+  const isCustom = customModel || (!!ai.model && !modelOptions.includes(ai.model));
 
   // Always send a full ai object (matches the existing optimistic-merge pattern).
   const patchAi = (patch: Partial<NonNullable<AppSettings['ai']>>) =>
     void update({ ai: { provider: ai.provider, apiKey: ai.apiKey, model: ai.model, baseURL: ai.baseURL ?? '', ...patch } });
 
-  // Switching provider resets the model to that provider's default and prefills the
-  // local base URL when picking openai-compatible.
-  const onProvider = (provider: NonNullable<AppSettings['ai']>['provider']) =>
+  // Switching provider resets the model to that provider's default, prefills the
+  // local base URL for openai-compatible, and clears fetched/custom state.
+  const onProvider = (provider: NonNullable<AppSettings['ai']>['provider']) => {
+    setFetchedModels([]); setModelError(null); setCustomModel(false);
     patchAi({
       provider,
       model: DEFAULT_MODELS[provider],
       baseURL: provider === 'openai-compatible' ? (ai.baseURL || OLLAMA_BASE_URL) : (ai.baseURL ?? ''),
     });
+  };
+
+  // Fetch the provider's models (main-side: the renderer can't hit the provider
+  // cross-origin under CSP). Local servers (Ollama / LM Studio) need no key; cloud
+  // uses the entered key. `silent` suppresses errors for the background auto-load.
+  const loadModels = useCallback(async (silent = false) => {
+    setLoadingModels(true);
+    if (!silent) setModelError(null);
+    try {
+      const models = await ipc('ai:list-models', { provider: ai.provider, apiKey: ai.apiKey, baseURL: ai.baseURL ?? '' });
+      setFetchedModels(models);
+      if (models.length === 0 && !silent) setModelError('No models returned — check the API key / base URL.');
+    } catch (err) {
+      if (!silent) setModelError(err instanceof Error ? err.message : 'Failed to load models');
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [ai.provider, ai.apiKey, ai.baseURL]);
+
+  // Auto-load the real list over the internet as soon as the provider + key/base URL
+  // are sufficient — debounced so typing a key doesn't fire a request per keystroke.
+  // Failures fall back to the hardcoded list silently (no error spam while typing).
+  useEffect(() => {
+    if (ai.provider === 'none') { setFetchedModels([]); return; }
+    if (!modelsListRequest(ai.provider, ai.apiKey, ai.baseURL ?? '')) return; // key/url missing → keep fallback
+    const t = setTimeout(() => { void loadModels(true); }, 600);
+    return () => clearTimeout(t);
+  }, [ai.provider, ai.apiKey, ai.baseURL, loadModels]);
 
   return (
     <div>
@@ -311,15 +354,45 @@ function AITab() {
           </Field>
 
           <Field label="Model" hint={meta.modelHint}>
-            <input
-              type="text"
-              value={ai.model || ''}
-              aria-label="Model id"
-              placeholder={DEFAULT_MODELS[ai.provider]}
-              spellCheck={false}
-              onChange={(e) => patchAi({ model: e.target.value })}
-              style={{ ...textInputStyle, width: 320 }}
-            />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <select
+                value={isCustom ? '__custom__' : (ai.model || '')}
+                aria-label="Model"
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') setCustomModel(true);
+                  else { setCustomModel(false); patchAi({ model: e.target.value }); }
+                }}
+                style={{ ...textInputStyle, width: 240, cursor: 'pointer' }}
+              >
+                {modelOptions.length === 0 && <option value="">{DEFAULT_MODELS[ai.provider] || '(none)'}</option>}
+                {modelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                <option value="__custom__">Custom…</option>
+              </select>
+              <button
+                onClick={() => void loadModels()}
+                disabled={loadingModels}
+                title="Fetch this provider's current model list"
+                style={{
+                  padding: '7px 10px', fontSize: 11, cursor: loadingModels ? 'default' : 'pointer',
+                  background: 'var(--hover)', border: '1px solid var(--border)',
+                  borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap', opacity: loadingModels ? 0.6 : 1,
+                }}
+              >
+                {loadingModels ? '…' : '↻ Load'}
+              </button>
+            </div>
+            {isCustom && (
+              <input
+                type="text"
+                value={ai.model || ''}
+                aria-label="Custom model id"
+                placeholder={DEFAULT_MODELS[ai.provider]}
+                spellCheck={false}
+                onChange={(e) => patchAi({ model: e.target.value })}
+                style={{ ...textInputStyle, width: 320, marginTop: 6 }}
+              />
+            )}
+            {modelError && <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>{modelError}</div>}
           </Field>
         </>
       )}

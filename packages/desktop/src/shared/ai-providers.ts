@@ -50,9 +50,62 @@ export const PROVIDER_META: Record<AiProvider, ProviderMeta> = {
     keyHint: 'Sent only to generativelanguage.googleapis.com.',
   },
   'openai-compatible': {
-    label: 'Local / OpenAI-compatible', needsKey: false, needsBaseURL: true,
+    label: 'Local (Ollama / LM Studio)', needsKey: false, needsBaseURL: true,
     keyPlaceholder: '(often blank for local)',
-    modelHint: `Model name as served (e.g. ${DEFAULT_OLLAMA_MODEL}, mistral, qwen2.5).`,
+    modelHint: `Model name as served (e.g. ${DEFAULT_OLLAMA_MODEL}, mistral, qwen2.5). Or click "Load" to list installed models.`,
     keyHint: 'Optional — local servers (Ollama, LM Studio) need no key. Required for Groq / OpenRouter / DeepSeek.',
   },
 };
+
+// Sensible per-provider model lists shown in the Settings dropdown BEFORE a live
+// fetch — so the dropdown is useful offline / before "Load models" is clicked.
+// "Load" hits the provider's own API for the real, always-current list.
+export const MODELS_BY_PROVIDER: Record<AiProvider, string[]> = {
+  none: [],
+  anthropic: ['claude-fable-5', 'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'o1', 'gpt-4.1', 'gpt-4.1-mini'],
+  google: ['gemini-2.0-flash', 'gemini-2.0-pro-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+  'openai-compatible': ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
+};
+
+// Build the "list models" HTTP request for a provider. Called in the MAIN process
+// (the renderer can't fetch the provider cross-origin under CSP). Returns null when
+// the provider has no listing endpoint (none) or a required key is missing.
+export function modelsListRequest(
+  provider: AiProvider, apiKey: string, baseURL: string,
+): { url: string; headers: Record<string, string> } | null {
+  const key = (apiKey || '').trim();
+  switch (provider) {
+    case 'openai':
+      if (!key) return null;
+      return { url: `${OPENAI_BASE_URL}/models`, headers: { Authorization: `Bearer ${key}` } };
+    case 'openai-compatible': {
+      const base = (baseURL || OLLAMA_BASE_URL).replace(/\/+$/, '');
+      return { url: `${base}/models`, headers: key ? { Authorization: `Bearer ${key}` } : {} };
+    }
+    case 'anthropic':
+      if (!key) return null;
+      return { url: 'https://api.anthropic.com/v1/models', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } };
+    case 'google':
+      if (!key) return null;
+      return { url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`, headers: {} };
+    default:
+      return null;
+  }
+}
+
+// Parse a provider's models response into chat-capable model ids (sorted, de-duped).
+export function parseModelsResponse(provider: AiProvider, json: unknown): string[] {
+  const j = (json ?? {}) as { data?: Array<{ id?: string }>; models?: Array<{ name?: string }> };
+  let ids: string[];
+  if (provider === 'google') {
+    ids = (j.models ?? [])
+      .map((m) => String(m?.name ?? '').replace(/^models\//, ''))
+      .filter((n) => n.includes('gemini'));
+  } else {
+    // OpenAI-shaped { data: [{ id }] } — openai, openai-compatible (Ollama/LM Studio), anthropic.
+    ids = (j.data ?? []).map((m) => String(m?.id ?? '')).filter(Boolean);
+    if (provider === 'openai') ids = ids.filter((id) => /^(gpt-|o\d|chatgpt)/i.test(id));
+  }
+  return [...new Set(ids)].sort();
+}
