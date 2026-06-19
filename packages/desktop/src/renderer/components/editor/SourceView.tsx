@@ -11,6 +11,7 @@
 // all. EditorArea routes the change back through updateTabContent directly.
 
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../../lib/i18n.js';
 
 interface Props {
   /** Full markdown source of the tab (frontmatter + body), verbatim. */
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function SourceView({ content, onChange }: Props) {
+  const t = useT();
   // Local mirror so the caret isn't reset by the controlled round-trip; the
   // textarea is the source of truth while focused. Re-sync if the tab content
   // changes underneath us (external reload / programmatic edit).
@@ -35,7 +37,7 @@ export function SourceView({ content, onChange }: Props) {
       className="sv-source-view"
       value={value}
       spellCheck={false}
-      aria-label="Markdown source"
+      aria-label={t('editor.sourceView.ariaLabel')}
       onChange={(e) => {
         dirtyRef.current = true;
         setValue(e.target.value);

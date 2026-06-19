@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { ipc } from '../../lib/ipc-client.js';
 import { invokeIpcRaw } from '../../lib/runtime-sync.js';
+import { useT } from '../../lib/i18n.js';
 import type { SearchResult } from '../../../shared/ipc-types.js';
 
 export interface OpenTarget { filePath: string; title: string; }
@@ -21,6 +22,7 @@ type Mode = 'backlinks' | 'related';
 // Backlinks + Related as a two-tab strip — the exact UI BacklinksPanel had,
 // now driven by props so the preview explorer can mount it on the preview note.
 export function RelationLists({ title, filePath, onOpen }: { title: string; filePath: string; onOpen: OnOpen }) {
+  const t = useT();
   const [mode, setMode] = useState<Mode>('backlinks');
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -42,7 +44,7 @@ export function RelationLists({ title, filePath, onOpen }: { title: string; file
               fontSize: 11,
             }}
           >
-            {m === 'backlinks' ? 'Backlinks' : 'Related'}
+            {m === 'backlinks' ? t('panel.links.tabBacklinks') : t('panel.links.tabRelated')}
           </button>
         ))}
       </div>
@@ -95,6 +97,7 @@ export function NoteRow({ title, snippet, score, onOpen }: {
 }
 
 export function BacklinksList({ title, filePath, onOpen }: { title: string; filePath: string; onOpen: OnOpen }) {
+  const t = useT();
   const [backlinks, setBacklinks] = useState<Backlink[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -113,18 +116,18 @@ export function BacklinksList({ title, filePath, onOpen }: { title: string; file
   return (
     <div style={{ padding: 12 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>
-        Backlinks to "{title}"
+        {t('panel.links.backlinksSectionTitle', { title })}
       </div>
 
       {loading && (
-        <div style={{ color: 'var(--ink-faint)', fontSize: 11 }}>Scanning vault...</div>
+        <div style={{ color: 'var(--ink-faint)', fontSize: 11 }}>{t('panel.links.scanning')}</div>
       )}
 
       {!loading && backlinks.length === 0 && (
         <div style={{ color: 'var(--ink-faint)', fontSize: 11, padding: 12, textAlign: 'center' }}>
-          No notes link to this note yet.
+          {t('panel.links.noBacklinks')}
           <div style={{ marginTop: 4, fontSize: 10 }}>
-            Use [[{title}]] in other notes to create backlinks.
+            {t('panel.links.createBacklinksHint', { title })}
           </div>
         </div>
       )}
@@ -140,7 +143,7 @@ export function BacklinksList({ title, filePath, onOpen }: { title: string; file
 
       {backlinks.length > 0 && (
         <div style={{ marginTop: 12, fontSize: 10, color: 'var(--ink-faint)' }}>
-          {backlinks.length} backlink{backlinks.length !== 1 ? 's' : ''}
+          {t('panel.links.backlinkCount', { count: backlinks.length })}
         </div>
       )}
     </div>
@@ -148,6 +151,7 @@ export function BacklinksList({ title, filePath, onOpen }: { title: string; file
 }
 
 export function RelatedList({ title, filePath, onOpen }: { title: string; filePath: string; onOpen: OnOpen }) {
+  const t = useT();
   const [related, setRelated] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,11 +179,11 @@ export function RelatedList({ title, filePath, onOpen }: { title: string; filePa
   return (
     <div style={{ padding: 12 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>
-        Related to "{title}"
+        {t('panel.links.relatedSectionTitle', { title })}
       </div>
 
       {loading && (
-        <div style={{ color: 'var(--ink-faint)', fontSize: 11 }}>Finding related notes...</div>
+        <div style={{ color: 'var(--ink-faint)', fontSize: 11 }}>{t('panel.links.findingRelated')}</div>
       )}
 
       {error && !loading && (
@@ -190,9 +194,9 @@ export function RelatedList({ title, filePath, onOpen }: { title: string; filePa
 
       {!loading && !error && related.length === 0 && (
         <div style={{ color: 'var(--ink-faint)', fontSize: 11, padding: 12, textAlign: 'center' }}>
-          No related notes found.
+          {t('panel.links.noRelated')}
           <div style={{ marginTop: 4, fontSize: 10 }}>
-            New notes appear here after indexing.
+            {t('panel.links.relatedAfterIndexing')}
           </div>
         </div>
       )}

@@ -4,8 +4,10 @@
 // official TipTap table commands — only this bar UI is custom.
 
 import type { Editor } from '@tiptap/react';
+import { useT } from '../../lib/i18n.js';
 
 export function TableControls({ editor }: { editor: Editor }) {
+  const t = useT();
   if (!editor.isActive('table')) return null;
 
   const Btn = ({ label, title, onClick, danger }: {
@@ -47,15 +49,15 @@ export function TableControls({ editor }: { editor: Editor }) {
       }}
     >
       <span style={{ fontSize: 10, color: 'var(--ink-faint)', marginRight: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        Table
+        {t('editor.tableControls.label')}
       </span>
-      <Btn label="+Row" title="Add row below" onClick={() => editor.chain().focus().addRowAfter().run()} />
-      <Btn label="−Row" title="Delete row" onClick={() => editor.chain().focus().deleteRow().run()} />
-      <Btn label="+Col" title="Add column after" onClick={() => editor.chain().focus().addColumnAfter().run()} />
-      <Btn label="−Col" title="Delete column" onClick={() => editor.chain().focus().deleteColumn().run()} />
-      <Btn label="Header" title="Toggle header row" onClick={() => editor.chain().focus().toggleHeaderRow().run()} />
-      <Btn label="Merge" title="Merge or split cells" onClick={() => editor.chain().focus().mergeOrSplit().run()} />
-      <Btn label="× Table" title="Delete table" danger onClick={() => editor.chain().focus().deleteTable().run()} />
+      <Btn label="+Row" title={t('editor.tableControls.addRow')} onClick={() => editor.chain().focus().addRowAfter().run()} />
+      <Btn label="−Row" title={t('editor.tableControls.deleteRow')} onClick={() => editor.chain().focus().deleteRow().run()} />
+      <Btn label="+Col" title={t('editor.tableControls.addCol')} onClick={() => editor.chain().focus().addColumnAfter().run()} />
+      <Btn label="−Col" title={t('editor.tableControls.deleteCol')} onClick={() => editor.chain().focus().deleteColumn().run()} />
+      <Btn label="Header" title={t('editor.tableControls.header')} onClick={() => editor.chain().focus().toggleHeaderRow().run()} />
+      <Btn label="Merge" title={t('editor.tableControls.merge')} onClick={() => editor.chain().focus().mergeOrSplit().run()} />
+      <Btn label="× Table" title={t('editor.tableControls.deleteTable')} danger onClick={() => editor.chain().focus().deleteTable().run()} />
     </div>
   );
 }

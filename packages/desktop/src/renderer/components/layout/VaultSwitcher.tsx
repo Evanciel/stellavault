@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { ConfirmModal } from '../ui/Modal.js';
 import type { VaultRegistryEntry } from '../../../shared/ipc-types.js';
 
@@ -17,6 +18,7 @@ declare module 'react' {
 }
 
 export function VaultSwitcher() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [vaults, setVaults] = useState<VaultRegistryEntry[]>([]);
   const [busy, setBusy] = useState(false);
@@ -92,8 +94,8 @@ export function VaultSwitcher() {
     <div ref={rootRef} style={{ position: 'relative', WebkitAppRegion: 'no-drag' }}>
       <button
         onClick={() => setOpen((o) => !o)}
-        title="Switch vault"
-        aria-label="Switch vault"
+        title={t('dialog.switchVault')}
+        aria-label={t('dialog.switchVault')}
         aria-haspopup="menu"
         aria-expanded={open}
         style={{
@@ -121,7 +123,7 @@ export function VaultSwitcher() {
       {open && (
         <div
           role="menu"
-          aria-label="Vaults"
+          aria-label={t('dialog.vaults')}
           style={{
             position: 'absolute',
             top: '100%',
@@ -165,7 +167,7 @@ export function VaultSwitcher() {
               {!v.active && (
                 <button
                   onClick={(e) => void onRemove(e, v)}
-                  title="Remove from list"
+                  title={t('dialog.removeVault')}
                   aria-label={`Remove ${v.name} from vault list`}
                   style={{ background: 'transparent', border: 'none', color: 'var(--ink-faint)', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }}
                 >
@@ -185,7 +187,7 @@ export function VaultSwitcher() {
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--hover)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
           >
-            + Add vault…
+            {t('dialog.addVault')}
           </div>
         </div>
       )}
@@ -195,9 +197,9 @@ export function VaultSwitcher() {
         open={!!pending}
         onClose={() => setPending(null)}
         onConfirm={() => void confirmSwitch()}
-        title="Switch vault"
+        title={t('dialog.switchVault')}
         message={pending ? `Switch to "${pending.name}"? Stellavault needs to restart to load the new vault.` : ''}
-        confirmLabel="Restart now"
+        confirmLabel={t('dialog.restartNow')}
       />
     </div>
   );

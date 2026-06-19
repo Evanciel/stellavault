@@ -12,6 +12,7 @@ import { ipc } from '../../lib/ipc-client.js';
 import { showToast } from '../../lib/toast.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useDecisionsUi } from './decisions-store.js';
+import { useT } from '../../lib/i18n.js';
 
 const inputStyle: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box', background: 'var(--hover)',
@@ -23,6 +24,7 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function DecisionCaptureModal() {
+  const t = useT();
   const open = useDecisionsUi((s) => s.captureOpen);
   const prefill = useDecisionsUi((s) => s.capturePrefillTitle);
   const close = useDecisionsUi((s) => s.closeCapture);
@@ -84,69 +86,69 @@ export function DecisionCaptureModal() {
   }
 
   return (
-    <Modal open={open} onClose={close} title="Log a decision (ADR)" width={520}>
+    <Modal open={open} onClose={close} title={t('decisions.captureTitle')} width={520}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
-          <label style={labelStyle}>Title *</label>
+          <label style={labelStyle}>{t('decisions.fieldTitle')}</label>
           <input
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Zustand 대신 Jotai 선택"
+            placeholder={t('decisions.titlePlaceholder')}
             aria-label="Decision title"
             style={inputStyle}
           />
         </div>
         <div>
-          <label style={labelStyle}>Context</label>
+          <label style={labelStyle}>{t('decisions.fieldContext')}</label>
           <textarea
             value={context}
             onChange={(e) => setContext(e.target.value)}
-            placeholder="배경/상황 — what prompted this decision?"
+            placeholder={t('decisions.contextPlaceholder')}
             aria-label="Decision context"
             rows={2}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
           />
         </div>
         <div>
-          <label style={labelStyle}>Decision *</label>
+          <label style={labelStyle}>{t('decisions.fieldDecision')}</label>
           <textarea
             value={decision}
             onChange={(e) => setDecision(e.target.value)}
-            placeholder="선택한 내용 — what did you decide?"
+            placeholder={t('decisions.decisionPlaceholder')}
             aria-label="Decision"
             rows={2}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
           />
         </div>
         <div>
-          <label style={labelStyle}>Alternatives considered</label>
+          <label style={labelStyle}>{t('decisions.fieldAlternatives')}</label>
           <textarea
             value={alternatives}
             onChange={(e) => setAlternatives(e.target.value)}
-            placeholder="One per line"
+            placeholder={t('decisions.alternativesPlaceholder')}
             aria-label="Alternatives considered"
             rows={2}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
           />
         </div>
         <div>
-          <label style={labelStyle}>Reasoning *</label>
+          <label style={labelStyle}>{t('decisions.fieldReasoning')}</label>
           <textarea
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
-            placeholder="선택 이유 — why this over the alternatives?"
+            placeholder={t('decisions.reasoningPlaceholder')}
             aria-label="Reasoning"
             rows={3}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
           />
         </div>
         <div>
-          <label style={labelStyle}>Project</label>
+          <label style={labelStyle}>{t('decisions.fieldProject')}</label>
           <input
             value={project}
             onChange={(e) => setProject(e.target.value)}
-            placeholder="optional"
+            placeholder={t('decisions.projectPlaceholder')}
             aria-label="Project"
             style={inputStyle}
           />
@@ -156,7 +158,7 @@ export function DecisionCaptureModal() {
             onClick={close}
             style={{ padding: '6px 14px', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)', cursor: 'pointer', fontSize: 12 }}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={() => void handleSave()}
@@ -166,7 +168,7 @@ export function DecisionCaptureModal() {
               color: '#fff', cursor: canSave ? 'pointer' : 'default', fontSize: 12, opacity: canSave ? 1 : 0.5,
             }}
           >
-            {saving ? 'Saving…' : 'Log decision'}
+            {saving ? t('decisions.saving') : t('decisions.logButton')}
           </button>
         </div>
       </div>

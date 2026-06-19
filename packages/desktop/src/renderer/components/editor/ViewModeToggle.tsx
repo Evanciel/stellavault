@@ -6,26 +6,28 @@
 // remembers its own mode.
 
 import { useUiStore, type ViewMode } from '../../lib/commands.js';
+import { useT } from '../../lib/i18n.js';
 
-const MODES: { id: ViewMode; label: string; title: string }[] = [
-  { id: 'live', label: 'Live', title: 'Live (WYSIWYG)' },
-  { id: 'reading', label: 'Reading', title: 'Reading (rendered, read-only)' },
-  { id: 'source', label: 'Source', title: 'Source (raw markdown)' },
+const MODES: { id: ViewMode; labelKey: 'viewMode.live.label' | 'viewMode.reading.label' | 'viewMode.source.label'; titleKey: 'viewMode.live.title' | 'viewMode.reading.title' | 'viewMode.source.title' }[] = [
+  { id: 'live', labelKey: 'viewMode.live.label', titleKey: 'viewMode.live.title' },
+  { id: 'reading', labelKey: 'viewMode.reading.label', titleKey: 'viewMode.reading.title' },
+  { id: 'source', labelKey: 'viewMode.source.label', titleKey: 'viewMode.source.title' },
 ];
 
 export function ViewModeToggle({ tabId }: { tabId: string }) {
+  const t = useT();
   const mode = useUiStore((s) => s.viewModes[tabId] ?? 'live');
   const setViewMode = useUiStore((s) => s.setViewMode);
 
   return (
-    <div className="sv-mode-toggle" role="group" aria-label="Editor view mode">
+    <div className="sv-mode-toggle" role="group" aria-label={t('viewMode.ariaLabel')}>
       {MODES.map((m) => {
         const active = mode === m.id;
         return (
           <button
             key={m.id}
             type="button"
-            title={m.title}
+            title={t(m.titleKey)}
             aria-pressed={active}
             onClick={() => setViewMode(tabId, m.id)}
             style={{
@@ -39,7 +41,7 @@ export function ViewModeToggle({ tabId }: { tabId: string }) {
               fontWeight: active ? 600 : 400,
             }}
           >
-            {m.label}
+            {t(m.labelKey)}
           </button>
         );
       })}

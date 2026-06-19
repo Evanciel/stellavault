@@ -16,14 +16,17 @@ import { showToast } from '../../lib/toast.js';
 import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { RelationLists, NoteRow, type OnOpen } from './links-shared.js';
 import { parseOutlinks, noteBasename } from '../../lib/outlinks.js';
+import { useT, type MsgKey } from '../../lib/i18n.js';
 
 type Segment = 'read' | 'edit' | 'backlinks' | 'outlinks';
 const SEGMENTS: Segment[] = ['read', 'edit', 'backlinks', 'outlinks'];
-const SEG_LABELS: Record<Segment, string> = {
-  read: 'Read', edit: 'Edit', backlinks: 'Backlinks', outlinks: 'Outlinks',
+const SEG_LABEL_KEYS: Record<Segment, MsgKey> = {
+  read: 'panel.preview.tabRead', edit: 'panel.preview.tabEdit',
+  backlinks: 'panel.preview.tabBacklinks', outlinks: 'panel.preview.tabOutlinks',
 };
 
 export function NotePreviewPanel() {
+  const t = useT();
   const preview = useAppStore((s) => s.previewNote);
   const openFile = useAppStore((s) => s.openFile);
   const setPreviewNote = useAppStore((s) => s.setPreviewNote);
@@ -111,7 +114,7 @@ export function NotePreviewPanel() {
   if (!preview) {
     return (
       <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
-        Click a note in the graph to explore it here
+        {t('panel.preview.noNote')}
       </div>
     );
   }
@@ -132,19 +135,19 @@ export function NotePreviewPanel() {
     >
       {/* Header — title (+ dirty dot) + Save (when dirty) + "open in editor". */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-        <button onClick={() => void handleHistory('back')} disabled={!canBack} title="Back" style={{ background: 'transparent', border: 'none', cursor: canBack ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canBack ? 1 : 0.35 }}>←</button>
-        <button onClick={() => void handleHistory('fwd')} disabled={!canFwd} title="Forward" style={{ background: 'transparent', border: 'none', cursor: canFwd ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canFwd ? 1 : 0.35 }}>→</button>
+        <button onClick={() => void handleHistory('back')} disabled={!canBack} title={t('panel.preview.backButton')} style={{ background: 'transparent', border: 'none', cursor: canBack ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canBack ? 1 : 0.35 }}>←</button>
+        <button onClick={() => void handleHistory('fwd')} disabled={!canFwd} title={t('panel.preview.forwardButton')} style={{ background: 'transparent', border: 'none', cursor: canFwd ? 'pointer' : 'default', color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px', opacity: canFwd ? 1 : 0.35 }}>→</button>
         <span title={preview.title} style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {preview.isDirty && <span style={{ color: 'var(--accent)', marginRight: 4 }}>●</span>}
           {preview.title}
         </span>
         {preview.isDirty && (
-          <button onClick={() => void handleSave()} title="Save (Ctrl+S)" style={{ padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff', whiteSpace: 'nowrap' }}>
-            Save
+          <button onClick={() => void handleSave()} title={t('panel.preview.saveTooltip')} style={{ padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff', whiteSpace: 'nowrap' }}>
+            {t('common.save')}
           </button>
         )}
-        <button onClick={() => void openInEditor()} title="Open in editor" style={{ padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--accent-2)', whiteSpace: 'nowrap' }}>
-          Open ↗
+        <button onClick={() => void openInEditor()} title={t('panel.preview.openInEditorTooltip')} style={{ padding: '3px 10px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--accent-2)', whiteSpace: 'nowrap' }}>
+          {t('panel.preview.openButton')}
         </button>
       </div>
 
@@ -158,7 +161,7 @@ export function NotePreviewPanel() {
             role="tab"
             style={{ flex: 1, padding: '7px 0', background: segment === s ? 'var(--selection)' : 'transparent', border: 'none', color: segment === s ? 'var(--accent-2)' : 'var(--ink-dim)', cursor: 'pointer', fontWeight: segment === s ? 600 : 400, fontSize: 11 }}
           >
-            {SEG_LABELS[s]}
+            {t(SEG_LABEL_KEYS[s])}
           </button>
         ))}
       </div>
@@ -188,6 +191,7 @@ export function NotePreviewPanel() {
 // Outgoing [[wikilinks]] for the preview note, resolved to files by BASENAME against
 // the graph node list. Resolved links open/re-center; unresolved show greyed.
 function OutlinksList({ content, onOpen }: { content: string; onOpen: OnOpen }) {
+  const t = useT();
   const coreReady = useAppStore((s) => s.coreReady);
   const vaultPath = useAppStore((s) => s.vaultPath);
   const [paths, setPaths] = useState<string[]>([]);
@@ -223,14 +227,14 @@ function OutlinksList({ content, onOpen }: { content: string; onOpen: OnOpen }) 
   const missing = resolved.filter((l) => !l.filePath);
 
   if (links.length === 0) {
-    return <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>No outgoing [[links]] in this note.</div>;
+    return <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>{t('panel.preview.noOutlinks')}</div>;
   }
 
   const toFull = (rel: string) => (/^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${vaultPath}/${rel}`);
 
   return (
     <div style={{ padding: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>Outgoing links</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>{t('panel.preview.outlinksTitle')}</div>
       {present.map((l, i) => (
         <NoteRow
           key={`p-${l.target}-${i}`}
@@ -240,7 +244,7 @@ function OutlinksList({ content, onOpen }: { content: string; onOpen: OnOpen }) 
       ))}
       {missing.length > 0 && (
         <>
-          <div style={{ fontSize: 10, color: 'var(--ink-faint)', margin: '12px 0 4px' }}>Unresolved</div>
+          <div style={{ fontSize: 10, color: 'var(--ink-faint)', margin: '12px 0 4px' }}>{t('panel.preview.unresolvedLabel')}</div>
           {missing.map((l, i) => (
             <div key={`m-${l.target}-${i}`} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 4, fontSize: 12, color: 'var(--ink-faint)', border: '1px dashed var(--border)' }}>
               {l.alias ?? l.target}

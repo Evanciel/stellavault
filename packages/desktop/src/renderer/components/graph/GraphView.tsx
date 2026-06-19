@@ -15,6 +15,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
@@ -689,6 +690,7 @@ function ForceSlider({ label, min, max, step, value, onChange, onCommit }: {
 // ─── View ────────────────────────────────────────────
 
 export function GraphView() {
+  const t = useT();
   const [allNodes, setAllNodes] = useState<GraphNode[]>([]);
   const [allEdges, setAllEdges] = useState<GraphEdge[]>([]);
   // Wave 1 cluster-first LOD: clusters the user has expanded into their members.
@@ -946,7 +948,7 @@ export function GraphView() {
   if (!coreReady || loading) {
     return (
       <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--ink-faint)', fontSize: 12, background: DEEP_SPACE_BG }}>
-        {coreReady ? 'Building graph...' : 'Waiting for AI engine...'}
+        {coreReady ? t('panel.graph.building') : t('panel.graph.waitingForAi')}
       </div>
     );
   }
@@ -954,7 +956,7 @@ export function GraphView() {
   if (allNodes.length === 0) {
     return (
       <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--ink-faint)', fontSize: 12, background: DEEP_SPACE_BG }}>
-        No documents indexed. Run re-index from the AI panel.
+        {t('panel.graph.noDocuments')}
       </div>
     );
   }
@@ -1061,14 +1063,14 @@ export function GraphView() {
           {drillCluster && (
             <button
               style={{ ...overlayButtonStyle, background: 'var(--accent)', color: '#fff', fontWeight: 600 }}
-              title="Back to all clusters"
+              title={t('graph.backToClusters')}
               onClick={() => { void loadGalaxy(); }}
             >
               ← All clusters
             </button>
           )}
-          <button style={overlayButtonStyle} title="Zoom to fit" onClick={() => setFitSignal((s) => s + 1)}>
-            Fit
+          <button style={overlayButtonStyle} title={t('panel.graph.fitTooltip')} onClick={() => setFitSignal((s) => s + 1)}>
+            {t('panel.graph.fitButton')}
           </button>
           {/* T2-9: 2D ↔ 3D + Forces — only in drill-down. The galaxy is a frozen
               precomputed layout, so these have no effect there (and 2D would just
@@ -1081,11 +1083,11 @@ export function GraphView() {
                   background: mode2d ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
                   color: mode2d ? '#fff' : 'var(--ink-dim)',
                 }}
-                title={mode2d ? 'Switch to 3D' : 'Switch to 2D (flat, top-down)'}
+                title={mode2d ? t('graph.switchTo3d') : t('graph.switchTo2d')}
                 onClick={() => setMode2d((m) => !m)}
                 aria-pressed={mode2d}
               >
-                {mode2d ? '2D' : '3D'}
+                {mode2d ? t('graph.mode2d') : t('graph.mode3d')}
               </button>
               <button
                 style={{
@@ -1096,7 +1098,7 @@ export function GraphView() {
                 onClick={() => setForcesOpen((o) => !o)}
                 aria-expanded={forcesOpen}
               >
-                Forces {forcesOpen ? '▾' : '▸'}
+                {forcesOpen ? t('graph.forcesOpen') : t('graph.forcesClosed')}
               </button>
             </>
           )}
@@ -1104,25 +1106,25 @@ export function GraphView() {
         {drillCluster && forcesOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
             <ForceSlider
-              label="Repel force" min={0} max={20} step={1}
+              label={t('graph.repelForce')} min={0} max={20} step={1}
               value={settings.repel}
               onChange={(v) => updateSetting({ repel: v })}
               onCommit={persistSettings}
             />
             <ForceSlider
-              label="Link force" min={0} max={1} step={0.05}
+              label={t('graph.linkForce')} min={0} max={1} step={0.05}
               value={settings.link}
               onChange={(v) => updateSetting({ link: v })}
               onCommit={persistSettings}
             />
             <ForceSlider
-              label="Center force" min={0} max={1} step={0.05}
+              label={t('graph.centerForce')} min={0} max={1} step={0.05}
               value={settings.center}
               onChange={(v) => updateSetting({ center: v })}
               onCommit={persistSettings}
             />
             <ForceSlider
-              label="Link distance" min={20} max={200} step={5}
+              label={t('graph.linkDistance')} min={20} max={200} step={5}
               value={settings.linkDistance}
               onChange={(v) => updateSetting({ linkDistance: v })}
               onCommit={persistSettings}
@@ -1165,14 +1167,14 @@ export function GraphView() {
       }}>
         {drillCluster ? (
           // Back button moved to the top-left controls; caption only here now.
-          <span>{drillCluster.label} · {visibleNodes.length} notes · drag · scroll to zoom</span>
+          <span>{drillCluster.label} · {visibleNodes.length} notes · {t('graph.controlsHint')}</span>
         ) : (
           <span>
             {galaxyInfo
-              ? `${galaxyInfo.totalNodes.toLocaleString()} notes · ${galaxyInfo.clusters} clusters · click a cluster to open`
+              ? `${galaxyInfo.totalNodes.toLocaleString()} notes · ${galaxyInfo.clusters} clusters · ${t('graph.clusterHint')}`
               : `${visibleNodes.length} nodes · ${visibleEdges.length} edges`}
             {allNodes.length > MAX_GLOBAL_NODES && ` (top ${MAX_GLOBAL_NODES} of ${allNodes.length})`}
-            {' '}· drag · scroll to zoom
+            {' '}· {t('graph.controlsHint')}
           </span>
         )}
       </div>

@@ -10,18 +10,18 @@ import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal } from '../ui/Modal.js';
 import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META, modelsListRequest } from '../../../shared/ai-providers.js';
-import { useT } from '../../lib/i18n.js';
+import { useT, type MsgKey } from '../../lib/i18n.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: 'general', label: 'General' },
-  { id: 'editor', label: 'Editor' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'ai', label: 'AI' }, // T3-2: provider + API key for LLM synthesis
-  { id: 'agent', label: 'Agent Memory' }, // T3-3: embedded MCP server toggle + activity
-  { id: 'hotkeys', label: 'Hotkeys' },
-  { id: 'about', label: 'About' },
+const TABS: { id: TabId; labelKey: MsgKey }[] = [
+  { id: 'general', labelKey: 'settings.tabs.general' },
+  { id: 'editor', labelKey: 'settings.tabs.editor' },
+  { id: 'appearance', labelKey: 'settings.tabs.appearance' },
+  { id: 'ai', labelKey: 'settings.tabs.ai' }, // T3-2: provider + API key for LLM synthesis
+  { id: 'agent', labelKey: 'settings.tabs.agent' }, // T3-3: embedded MCP server toggle + activity
+  { id: 'hotkeys', labelKey: 'settings.tabs.hotkeys' },
+  { id: 'about', labelKey: 'settings.tabs.about' },
 ];
 
 const ACCENT_SWATCHES = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6'];
@@ -30,24 +30,25 @@ export function SettingsModal() {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [tab, setTab] = useState<TabId>('general');
+  const t = useT();
 
   // App menu (W2): honor the requested tab (Hotkeys/About deep links).
   useEffect(() => { if (open) setTab(useUiStore.getState().settingsTab); }, [open]);
 
   return (
-    <Modal open={open} onClose={() => setOpen(false)} title="Settings" width={560}>
+    <Modal open={open} onClose={() => setOpen(false)} title={t('settings.modal.title')} width={560}>
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {TABS.map((t) => (
+        {TABS.map((tb) => (
           <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
+            key={tb.id}
+            onClick={() => setTab(tb.id)}
             style={{
               padding: '5px 12px', fontSize: 12, border: 'none', borderRadius: 5, cursor: 'pointer',
-              background: tab === t.id ? 'var(--selection)' : 'transparent',
-              color: tab === t.id ? 'var(--accent-2)' : 'var(--ink-dim)',
+              background: tab === tb.id ? 'var(--selection)' : 'transparent',
+              color: tab === tb.id ? 'var(--accent-2)' : 'var(--ink-dim)',
             }}
           >
-            {t.label}
+            {t(tb.labelKey)}
           </button>
         ))}
       </div>
@@ -100,36 +101,36 @@ function GeneralTab() {
           onChange={(e) => void update({ language: e.target.value as 'en' | 'ko' })}
           style={{ ...textInputStyle, width: 180, cursor: 'pointer' }}
         >
-          <option value="en">English</option>
+          <option value="en">{t('settings.language.option.en')}</option>
           <option value="ko">한국어</option>
         </select>
       </Field>
-      <Field label="Vault path" hint='Managed by ~/.stellavault.json — change via "stellavault setup" and restart.'>
-        <input type="text" value={vaultPath} readOnly aria-label="Vault path" style={{ ...textInputStyle, color: 'var(--ink-dim)' }} />
+      <Field label={t('settings.general.vaultPath.label')} hint={t('settings.general.vaultPath.hint')}>
+        <input type="text" value={vaultPath} readOnly aria-label={t('settings.general.vaultPath.label')} style={{ ...textInputStyle, color: 'var(--ink-dim)' }} />
       </Field>
-      <Field label="Daily notes folder" hint="Relative to the vault root.">
+      <Field label={t('settings.general.dailyNotes.folder.label')} hint={t('settings.general.relativeToVaultHint')}>
         <input
           type="text"
           value={settings.dailyNotes.folder}
-          aria-label="Daily notes folder"
+          aria-label={t('settings.general.dailyNotes.folder.label')}
           onChange={(e) => void update({ dailyNotes: { ...settings.dailyNotes, folder: e.target.value } })}
           style={textInputStyle}
         />
       </Field>
-      <Field label="Daily note format" hint="Tokens: YYYY, MM, DD.">
+      <Field label={t('settings.general.dailyNotes.format.label')} hint={t('settings.general.dailyNotes.format.hint')}>
         <input
           type="text"
           value={settings.dailyNotes.format}
-          aria-label="Daily note format"
+          aria-label={t('settings.general.dailyNotes.format.label')}
           onChange={(e) => void update({ dailyNotes: { ...settings.dailyNotes, format: e.target.value } })}
           style={textInputStyle}
         />
       </Field>
-      <Field label="Templates folder" hint="Relative to the vault root.">
+      <Field label={t('settings.general.templatesFolder.label')} hint={t('settings.general.relativeToVaultHint')}>
         <input
           type="text"
           value={settings.templatesFolder}
-          aria-label="Templates folder"
+          aria-label={t('settings.general.templatesFolder.label')}
           onChange={(e) => void update({ templatesFolder: e.target.value })}
           style={textInputStyle}
         />
@@ -143,12 +144,13 @@ function GeneralTab() {
 function EditorTab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
+  const t = useT();
   const patchEditor = (patch: Partial<AppSettings['editor']>) =>
     void update({ editor: { ...settings.editor, ...patch } });
 
   return (
     <div>
-      <Field label={`Font size — ${settings.editor.fontSize}px`}>
+      <Field label={`${t('settings.editor.fontSize.label')}${settings.editor.fontSize}px`}>
         <input
           type="range" min={11} max={24} step={1}
           value={settings.editor.fontSize}
@@ -157,7 +159,7 @@ function EditorTab() {
           style={{ width: '100%', accentColor: 'var(--accent)' }}
         />
       </Field>
-      <Field label={`Line width — ${settings.editor.lineWidth}px`} hint="Maximum width of the editing column.">
+      <Field label={`${t('settings.editor.lineWidth.label')}${settings.editor.lineWidth}px`} hint={t('settings.editor.lineWidth.hint')}>
         <input
           type="range" min={480} max={1200} step={20}
           value={settings.editor.lineWidth}
@@ -166,7 +168,7 @@ function EditorTab() {
           style={{ width: '100%', accentColor: 'var(--accent)' }}
         />
       </Field>
-      <Field label="Spellcheck">
+      <Field label={t('settings.editor.spellcheck.label')}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -174,7 +176,7 @@ function EditorTab() {
             onChange={(e) => patchEditor({ spellcheck: e.target.checked })}
             style={{ accentColor: 'var(--accent)' }}
           />
-          Check spelling while typing
+          {t('settings.editor.spellcheck.checkbox')}
         </label>
       </Field>
     </div>
@@ -186,22 +188,23 @@ function EditorTab() {
 function AppearanceTab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
+  const t = useT();
 
   return (
     <div>
-      <Field label="Theme">
+      <Field label={t('settings.appearance.theme.label')}>
         <select
           value={settings.theme}
-          aria-label="Theme"
+          aria-label={t('settings.appearance.theme.label')}
           onChange={(e) => void update({ theme: e.target.value as AppSettings['theme'] })}
           style={{ ...textInputStyle, width: 180, cursor: 'pointer' }}
         >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="system">System</option>
+          <option value="dark">{t('settings.appearance.theme.option.dark')}</option>
+          <option value="light">{t('settings.appearance.theme.option.light')}</option>
+          <option value="system">{t('settings.appearance.theme.option.system')}</option>
         </select>
       </Field>
-      <Field label="Accent color">
+      <Field label={t('settings.appearance.accentColor.label')}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {ACCENT_SWATCHES.map((hex) => (
             <button
@@ -236,6 +239,7 @@ function AppearanceTab() {
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
+  const t = useT();
   const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: '', baseURL: '' };
   const [showKey, setShowKey] = useState(false);
   // AI model dropdown: live-fetched model ids + UI state. The list auto-loads from
@@ -278,13 +282,13 @@ function AITab() {
     try {
       const models = await ipc('ai:list-models', { provider: ai.provider, apiKey: ai.apiKey, baseURL: ai.baseURL ?? '' });
       setFetchedModels(models);
-      if (models.length === 0 && !silent) setModelError('No models returned — check the API key / base URL.');
+      if (models.length === 0 && !silent) setModelError(t('settings.ai.model.error.noModels'));
     } catch (err) {
-      if (!silent) setModelError(err instanceof Error ? err.message : 'Failed to load models');
+      if (!silent) setModelError(err instanceof Error ? err.message : t('settings.ai.model.error.failed'));
     } finally {
       setLoadingModels(false);
     }
-  }, [ai.provider, ai.apiKey, ai.baseURL]);
+  }, [ai.provider, ai.apiKey, ai.baseURL, t]);
 
   // Auto-load the real list over the internet as soon as the provider + key/base URL
   // are sufficient — debounced so typing a key doesn't fire a request per keystroke.
@@ -298,10 +302,10 @@ function AITab() {
 
   return (
     <div>
-      <Field label="AI provider" hint="Synthesizes answers in Ask and compiles articles in Synthesis. Without a configured provider, both fall back to an extractive (search-based) summary.">
+      <Field label={t('settings.ai.provider.label')} hint={t('settings.ai.provider.hint')}>
         <select
           value={ai.provider}
-          aria-label="AI provider"
+          aria-label={t('settings.ai.provider.label')}
           onChange={(e) => onProvider(e.target.value as NonNullable<AppSettings['ai']>['provider'])}
           style={{ ...textInputStyle, width: 260, cursor: 'pointer' }}
         >
@@ -314,11 +318,11 @@ function AITab() {
       {ai.provider !== 'none' && (
         <>
           {meta.needsBaseURL && (
-            <Field label="Base URL" hint="OpenAI-compatible endpoint. Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1 · Groq: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1">
+            <Field label={t('settings.ai.baseUrl.label')} hint={t('settings.ai.baseUrl.hint')}>
               <input
                 type="text"
                 value={ai.baseURL ?? ''}
-                aria-label="Base URL"
+                aria-label={t('settings.ai.baseUrl.label')}
                 placeholder={OLLAMA_BASE_URL}
                 spellCheck={false}
                 onChange={(e) => patchAi({ baseURL: e.target.value })}
@@ -327,7 +331,7 @@ function AITab() {
             </Field>
           )}
 
-          <Field label={meta.needsKey ? 'API key' : 'API key (optional)'} hint={`Stored locally in ~/.stellavault/desktop-settings.json. ${meta.keyHint} Never logged.`}>
+          <Field label={meta.needsKey ? t('settings.ai.apiKey.label') : t('settings.ai.apiKey.label.optional')} hint={`${t('settings.ai.apiKey.hint.prefix')}${meta.keyHint} ${t('settings.ai.apiKey.hint.suffix')}`}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
                 type={showKey ? 'text' : 'password'}
@@ -341,44 +345,44 @@ function AITab() {
               />
               <button
                 onClick={() => setShowKey((v) => !v)}
-                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                aria-label={showKey ? t('settings.ai.apiKey.button.hide.aria') : t('settings.ai.apiKey.button.show.aria')}
                 style={{
                   padding: '7px 10px', fontSize: 11, cursor: 'pointer',
                   background: 'var(--hover)', border: '1px solid var(--border)',
                   borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
                 }}
               >
-                {showKey ? 'Hide' : 'Show'}
+                {showKey ? t('settings.ai.apiKey.button.hide') : t('settings.ai.apiKey.button.show')}
               </button>
             </div>
           </Field>
 
-          <Field label="Model" hint={meta.modelHint}>
+          <Field label={t('settings.ai.model.label')} hint={meta.modelHint}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <select
                 value={isCustom ? '__custom__' : (ai.model || '')}
-                aria-label="Model"
+                aria-label={t('settings.ai.model.label')}
                 onChange={(e) => {
                   if (e.target.value === '__custom__') setCustomModel(true);
                   else { setCustomModel(false); patchAi({ model: e.target.value }); }
                 }}
                 style={{ ...textInputStyle, width: 240, cursor: 'pointer' }}
               >
-                {modelOptions.length === 0 && <option value="">{DEFAULT_MODELS[ai.provider] || '(none)'}</option>}
+                {modelOptions.length === 0 && <option value="">{DEFAULT_MODELS[ai.provider] || t('settings.ai.model.none')}</option>}
                 {modelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-                <option value="__custom__">Custom…</option>
+                <option value="__custom__">{t('settings.ai.model.custom')}</option>
               </select>
               <button
                 onClick={() => void loadModels()}
                 disabled={loadingModels}
-                title="Fetch this provider's current model list"
+                title={t('settings.ai.model.loadButton.title')}
                 style={{
                   padding: '7px 10px', fontSize: 11, cursor: loadingModels ? 'default' : 'pointer',
                   background: 'var(--hover)', border: '1px solid var(--border)',
                   borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap', opacity: loadingModels ? 0.6 : 1,
                 }}
               >
-                {loadingModels ? '…' : '↻ Load'}
+                {loadingModels ? '…' : t('settings.ai.model.loadButton.text')}
               </button>
             </div>
             {isCustom && (
@@ -405,6 +409,7 @@ function AITab() {
 function HotkeysTab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
+  const t = useT();
   const [capturingId, setCapturingId] = useState<string | null>(null);
 
   const commands = listCommands().sort((a, b) =>
@@ -437,7 +442,7 @@ function HotkeysTab() {
   return (
     <div>
       <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginBottom: 10 }}>
-        Click a binding, then press the new key combination. Esc cancels.
+        {t('settings.hotkeys.instructions')}
       </div>
       {commands.map((cmd) => {
         const chord = bindingFor(cmd, settings.hotkeys);
@@ -466,13 +471,13 @@ function HotkeysTab() {
               <span style={{ color: 'var(--ink-faint)', fontSize: 10, marginRight: 6 }}>{cmd.category}</span>
               {cmd.title}
             </span>
-            {isConflict && <span title="Conflicts with another command" style={{ color: '#ef4444', fontSize: 10 }}>conflict</span>}
+            {isConflict && <span title={t('settings.hotkeys.conflict.title')} style={{ color: '#ef4444', fontSize: 10 }}>{t('settings.hotkeys.conflict.badge')}</span>}
             {!isConflict && isEditorConflict && (
               <span
-                title="Conflicts with the editor — will do nothing while editing"
+                title={t('settings.hotkeys.editorConflict.title')}
                 style={{ color: '#f59e0b', fontSize: 10 }}
               >
-                editor
+                {t('settings.hotkeys.editorConflict.badge')}
               </span>
             )}
             <button
@@ -486,12 +491,12 @@ function HotkeysTab() {
                 color: isCapturing ? 'var(--accent-2)' : chord ? 'var(--ink)' : 'var(--ink-faint)',
               }}
             >
-              {isCapturing ? 'Press keys…' : chord ? formatChord(chord) : 'Not set'}
+              {isCapturing ? t('settings.hotkeys.button.capturing') : chord ? formatChord(chord) : t('settings.hotkeys.button.notSet')}
             </button>
             <button
               onClick={() => setBinding(cmd.id, null)}
               disabled={!isCustom}
-              title="Reset to default"
+              title={t('settings.hotkeys.reset.title')}
               aria-label={`Reset ${cmd.title} binding`}
               style={{
                 padding: '3px 8px', fontSize: 11, background: 'transparent',
@@ -513,13 +518,14 @@ function HotkeysTab() {
 // ─── About ───
 
 function AboutTab() {
+  const t = useT();
   return (
     <div style={{ fontSize: 12, color: 'var(--ink-dim)', lineHeight: 1.8 }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink)', marginBottom: 4 }}>Stellavault Desktop</div>
-      <p style={{ margin: '0 0 12px' }}>Self-compiling knowledge base — local embeddings, FSRS memory decay, zero API keys.</p>
-      <div>GitHub: <span style={{ color: 'var(--accent-2)' }}>github.com/Evanciel/stellavault</span></div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink)', marginBottom: 4 }}>{t('settings.about.appTitle')}</div>
+      <p style={{ margin: '0 0 12px' }}>{t('settings.about.description')}</p>
+      <div>{t('settings.about.github.label')}<span style={{ color: 'var(--accent-2)' }}>github.com/Evanciel/stellavault</span></div>
       <div style={{ marginTop: 8, fontSize: 10, color: 'var(--ink-faint)' }}>
-        Settings file: ~/.stellavault/desktop-settings.json
+        {t('settings.about.settingsFile')}
       </div>
     </div>
   );
@@ -534,6 +540,7 @@ function AboutTab() {
 function AgentMemoryTab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
+  const t = useT();
 
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -561,8 +568,8 @@ function AgentMemoryTab() {
   return (
     <div>
       <Field
-        label="Agent Memory (MCP server)"
-        hint="Local, loopback-only. Lets an agent (Claude) read & write your FSRS-pruned vault over MCP. Off by default."
+        label={t('settings.agent.label')}
+        hint={t('settings.agent.hint')}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
@@ -574,13 +581,13 @@ function AgentMemoryTab() {
               background: running ? '#ef4444' : 'var(--accent)', opacity: busy ? 0.6 : 1,
             }}
           >
-            {busy ? '…' : running ? 'Stop server' : 'Start server'}
+            {busy ? '…' : running ? t('settings.agent.button.stop') : t('settings.agent.button.start')}
           </button>
           <span style={{ fontSize: 12, color: running ? '#10b981' : 'var(--ink-faint)' }}>
-            {running ? `Running · 127.0.0.1:${status?.port}` : 'Stopped'}
+            {running ? `${t('settings.agent.status.running')}${status?.port}` : t('settings.agent.status.stopped')}
           </span>
           <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
-            {status?.toolCount ?? 21} tools
+            {status?.toolCount ?? 21} {t('settings.agent.toolCount')}
           </span>
         </div>
         {status?.error && (
@@ -588,7 +595,7 @@ function AgentMemoryTab() {
         )}
       </Field>
 
-      <Field label="Auto-start on launch">
+      <Field label={t('settings.agent.autoStart.label')}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -596,14 +603,14 @@ function AgentMemoryTab() {
             onChange={(e) => void update({ mcpAutoStart: e.target.checked })}
             style={{ accentColor: 'var(--accent)' }}
           />
-          Start Agent Memory automatically when the app opens
+          {t('settings.agent.autoStart.checkbox')}
         </label>
       </Field>
 
-      <Field label="Activity" hint="What the agent recently searched or fetched. Titles/queries only — never full note text.">
+      <Field label={t('settings.agent.activity.label')} hint={t('settings.agent.activity.hint')}>
         {(!status || status.recent.length === 0) ? (
           <div style={{ fontSize: 11, color: 'var(--ink-faint)', padding: '8px 0' }}>
-            {running ? 'No activity yet — waiting for the agent.' : 'Start the server to see activity.'}
+            {running ? t('settings.agent.activity.empty.running') : t('settings.agent.activity.empty.stopped')}
           </div>
         ) : (
           <div style={{ maxHeight: 180, overflow: 'auto' }}>

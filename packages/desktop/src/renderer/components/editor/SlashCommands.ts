@@ -6,6 +6,7 @@ import Suggestion from '@tiptap/suggestion';
 import { PluginKey } from '@tiptap/pm/state';
 import type { Editor } from '@tiptap/core';
 import { requestImageUrl } from '../../lib/ui-requests.js';
+import { t } from '../../lib/i18n.js';
 
 interface SlashCommand {
   id: string;
@@ -15,65 +16,69 @@ interface SlashCommand {
   action: (editor: Editor) => void;
 }
 
-const COMMANDS: SlashCommand[] = [
-  {
-    id: 'heading1', label: 'Heading 1', icon: 'H1', description: 'Large heading',
-    action: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
-  },
-  {
-    id: 'heading2', label: 'Heading 2', icon: 'H2', description: 'Medium heading',
-    action: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
-  },
-  {
-    id: 'heading3', label: 'Heading 3', icon: 'H3', description: 'Small heading',
-    action: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(),
-  },
-  {
-    id: 'bullet', label: 'Bullet list', icon: '•', description: 'Unordered list',
-    action: (e) => e.chain().focus().toggleBulletList().run(),
-  },
-  {
-    id: 'numbered', label: 'Numbered list', icon: '1.', description: 'Ordered list',
-    action: (e) => e.chain().focus().toggleOrderedList().run(),
-  },
-  {
-    id: 'task', label: 'Task list', icon: '☑', description: 'Checklist with checkboxes',
-    action: (e) => e.chain().focus().toggleTaskList().run(),
-  },
-  {
-    id: 'quote', label: 'Quote', icon: '❝', description: 'Block quote',
-    action: (e) => e.chain().focus().toggleBlockquote().run(),
-  },
-  {
-    id: 'code', label: 'Code block', icon: '{}', description: 'Syntax-highlighted code',
-    action: (e) => e.chain().focus().toggleCodeBlock().run(),
-  },
-  {
-    id: 'table', label: 'Table', icon: '⊞', description: '3×3 table with header',
-    action: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
-  },
-  {
-    id: 'hr', label: 'Divider', icon: '—', description: 'Horizontal rule',
-    action: (e) => e.chain().focus().setHorizontalRule().run(),
-  },
-  {
-    id: 'image', label: 'Image', icon: '🖼', description: 'Insert image from URL',
-    action: (e) => {
-      // Async modal — window.prompt() freezes Electron's main thread.
-      void requestImageUrl().then((url) => {
-        if (url) e.chain().focus().setImage({ src: url }).run();
-      });
+// Built fresh on each invocation so labels/descriptions track the current
+// language (t() is non-reactive; calling it at trigger time picks up the latest).
+function getCommands(): SlashCommand[] {
+  return [
+    {
+      id: 'heading1', label: t('editor.toolbar.heading1'), icon: 'H1', description: t('editor.slash.heading1.description'),
+      action: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
     },
-  },
-  {
-    id: 'callout', label: 'Callout', icon: '💡', description: 'Highlighted callout block',
-    action: (e) => {
-      e.chain().focus().toggleBlockquote().run();
-      // Insert a bold prefix for callout style
-      e.chain().focus().insertContent('💡 **Note:** ').run();
+    {
+      id: 'heading2', label: t('editor.toolbar.heading2'), icon: 'H2', description: t('editor.slash.heading2.description'),
+      action: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
     },
-  },
-];
+    {
+      id: 'heading3', label: t('editor.toolbar.heading3'), icon: 'H3', description: t('editor.slash.heading3.description'),
+      action: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(),
+    },
+    {
+      id: 'bullet', label: t('editor.toolbar.bulletList'), icon: '•', description: t('editor.slash.bullet.description'),
+      action: (e) => e.chain().focus().toggleBulletList().run(),
+    },
+    {
+      id: 'numbered', label: t('editor.toolbar.numberedList'), icon: '1.', description: t('editor.slash.numbered.description'),
+      action: (e) => e.chain().focus().toggleOrderedList().run(),
+    },
+    {
+      id: 'task', label: t('editor.toolbar.taskList'), icon: '☑', description: t('editor.slash.task.description'),
+      action: (e) => e.chain().focus().toggleTaskList().run(),
+    },
+    {
+      id: 'quote', label: t('editor.toolbar.quote'), icon: '❝', description: t('editor.slash.quote.description'),
+      action: (e) => e.chain().focus().toggleBlockquote().run(),
+    },
+    {
+      id: 'code', label: t('editor.toolbar.codeBlock'), icon: '{}', description: t('editor.slash.code.description'),
+      action: (e) => e.chain().focus().toggleCodeBlock().run(),
+    },
+    {
+      id: 'table', label: t('editor.slash.table.label'), icon: '⊞', description: t('editor.slash.table.description'),
+      action: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+    },
+    {
+      id: 'hr', label: t('editor.slash.hr.label'), icon: '—', description: t('editor.slash.hr.description'),
+      action: (e) => e.chain().focus().setHorizontalRule().run(),
+    },
+    {
+      id: 'image', label: t('editor.slash.image.label'), icon: '🖼', description: t('editor.slash.image.description'),
+      action: (e) => {
+        // Async modal — window.prompt() freezes Electron's main thread.
+        void requestImageUrl().then((url) => {
+          if (url) e.chain().focus().setImage({ src: url }).run();
+        });
+      },
+    },
+    {
+      id: 'callout', label: t('editor.slash.callout.label'), icon: '💡', description: t('editor.slash.callout.description'),
+      action: (e) => {
+        e.chain().focus().toggleBlockquote().run();
+        // Insert a bold prefix for callout style
+        e.chain().focus().insertContent('💡 **Note:** ').run();
+      },
+    },
+  ];
+}
 
 function createPopup(): {
   element: HTMLDivElement;
@@ -100,7 +105,7 @@ function createPopup(): {
 
   function render() {
     el.innerHTML = items.length === 0
-      ? `<div style="padding:12px;color:var(--ink-faint);font-size:12px">No matching commands</div>`
+      ? `<div style="padding:12px;color:var(--ink-faint);font-size:12px">${t('editor.slash.noMatches')}</div>`
       : items.map((item, i) => `
           <div class="sv-slash-item${i === selectedIndex ? ' sv-slash-active' : ''}" data-index="${i}"
                style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;
@@ -169,15 +174,16 @@ export const SlashCommandExtension = Extension.create({
         allowSpaces: false,
 
         items: ({ query }: { query: string }) => {
-          if (!query) return COMMANDS;
+          const commands = getCommands();
+          if (!query) return commands;
           const q = query.toLowerCase();
-          return COMMANDS.filter((c) =>
+          return commands.filter((c) =>
             c.label.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
           );
         },
 
         command: ({ editor, range, props }: any) => {
-          const cmd = COMMANDS.find((c) => c.id === props.id);
+          const cmd = getCommands().find((c) => c.id === props.id);
           if (!cmd) return;
           // Delete the /query text first
           editor.chain().focus().deleteRange(range).run();

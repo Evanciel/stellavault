@@ -3,6 +3,7 @@
 import { useAppStore } from '../../stores/app-store.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { AppMenu } from './AppMenu.js';
 import { VaultSwitcher } from './VaultSwitcher.js';
 
@@ -14,6 +15,7 @@ declare module 'react' {
 }
 
 export function TitleBar() {
+  const t = useT();
   const theme = useAppStore((s) => s.theme);
   const rightPanel = useAppStore((s) => s.rightPanel);
   const setRightPanel = useAppStore((s) => s.setRightPanel);
@@ -57,21 +59,21 @@ export function TitleBar() {
       <button
         onClick={() => setRightPanel(rightPanel === 'search' ? 'none' : 'search')}
         style={{ ...btnStyle(), color: rightPanel === 'search' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Search" aria-label="Toggle search panel"
+        title="Search" aria-label={t('titlebar.search')}
       >
         &#x2315;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'outline' ? 'none' : 'outline')}
         style={{ ...btnStyle(), color: rightPanel === 'outline' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Outline" aria-label="Toggle outline panel"
+        title="Outline" aria-label={t('titlebar.outline')}
       >
         &#x2261;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'tags' ? 'none' : 'tags')}
         style={{ ...btnStyle(), color: rightPanel === 'tags' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Tags" aria-label="Toggle tags panel"
+        title="Tags" aria-label={t('titlebar.tags')}
       >
         #
       </button>
@@ -80,21 +82,21 @@ export function TitleBar() {
       <button
         onClick={openGraphTab}
         style={btnStyle()}
-        title="Open graph view (Ctrl+G)" aria-label="Open graph view"
+        title={t('titlebar.openGraphView')} aria-label="Open graph view"
       >
         &#x25C9;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}
         style={{ ...btnStyle(), color: rightPanel === 'ai' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="AI panel" aria-label="Toggle AI panel"
+        title="AI panel" aria-label={t('titlebar.aiPanel')}
       >
         &#x2726;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'backlinks' ? 'none' : 'backlinks')}
         style={{ ...btnStyle(), color: rightPanel === 'backlinks' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Backlinks" aria-label="Toggle backlinks panel"
+        title="Backlinks" aria-label={t('titlebar.backlinks')}
       >
         &#x21C4;
       </button>
@@ -102,7 +104,7 @@ export function TitleBar() {
       <button
         onClick={() => setRightPanel(rightPanel === 'coach' ? 'none' : 'coach')}
         style={{ ...btnStyle(), color: rightPanel === 'coach' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Coach — knowledge gaps + learning path" aria-label="Toggle Coach panel"
+        title={t('titlebar.coach')} aria-label="Toggle Coach panel"
       >
         &#x2316;
       </button>
@@ -110,19 +112,19 @@ export function TitleBar() {
       <button
         onClick={() => setRightPanel(rightPanel === 'synthesis' ? 'none' : 'synthesis')}
         style={{ ...btnStyle(), color: rightPanel === 'synthesis' ? 'var(--accent-2)' : 'var(--ink)' }}
-        title="Synthesize — compile a cited article from your vault" aria-label="Toggle Synthesis panel"
+        title={t('titlebar.synthesis')} aria-label="Toggle Synthesis panel"
       >
         &#x2726;
       </button>
-      <button onClick={() => void useSettingsStore.getState().update({ theme: isDark ? 'light' : 'dark' })} style={btnStyle()} title="Toggle theme" aria-label="Toggle dark/light theme">
+      <button onClick={() => void useSettingsStore.getState().update({ theme: isDark ? 'light' : 'dark' })} style={btnStyle()} title="Toggle theme" aria-label={t('action.toggleThemeDarkLight')}>
         {isDark ? '\u263C' : '\u263E'}
       </button>
 
       {!isMac && (
         <>
-          <button onClick={() => void ipc('window:minimize')} style={btnStyle()} title="Minimize" aria-label="Minimize window">&#x2014;</button>
-          <button onClick={() => void ipc('window:maximize')} style={btnStyle()} title="Maximize" aria-label="Maximize window">&#x25A1;</button>
-          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(), color: '#ef4444' }} title="Close" aria-label="Close window">&#x2715;</button>
+          <button onClick={() => void ipc('window:minimize')} style={btnStyle()} title={t('titlebar.minimize')} aria-label="Minimize window">&#x2014;</button>
+          <button onClick={() => void ipc('window:maximize')} style={btnStyle()} title={t('titlebar.maximize')} aria-label="Maximize window">&#x25A1;</button>
+          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(), color: '#ef4444' }} title={t('titlebar.close')} aria-label="Close window">&#x2715;</button>
         </>
       )}
     </div>

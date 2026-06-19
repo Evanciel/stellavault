@@ -6,6 +6,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc, searchQuery, type SearchQueryOpts } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import type { SearchResult, CrossVaultResult } from '../../../shared/ipc-types.js';
 
 type SearchMode = 'hybrid' | 'keyword';
@@ -64,6 +65,7 @@ function Highlighted({ text, terms }: { text: string; terms: string[] }) {
 }
 
 export function SearchPanel() {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('hybrid');
   // T3-9: "All vaults" cross-vault search. When on, queries go to core's
@@ -185,7 +187,7 @@ export function SearchPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(query, mode, allVaults); }}
-          placeholder="Search… (tag:x path:y operators)"
+          placeholder={t('panel.search.placeholder')}
           aria-label="Search vault"
           style={{
             width: '100%',
@@ -218,7 +220,7 @@ export function SearchPanel() {
                 fontWeight: mode === m ? 600 : 400,
               }}
             >
-              {m === 'hybrid' ? 'Hybrid' : 'Keyword'}
+              {m === 'hybrid' ? t('panel.search.modeHybrid') : t('panel.search.modeKeyword')}
             </button>
           ))}
           {/* T3-9: cross-vault search toggle. */}
@@ -237,7 +239,7 @@ export function SearchPanel() {
               fontWeight: allVaults ? 600 : 400,
             }}
           >
-            All vaults
+            {t('panel.search.allVaultsButton')}
           </button>
           {!allVaults && (parsed.tags.length > 0 || parsed.pathPrefix) && (
             <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
@@ -251,7 +253,7 @@ export function SearchPanel() {
       <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
         {!coreReady && (
           <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-            AI engine is still loading — search will be available shortly.
+            {t('panel.search.aiLoading')}
           </div>
         )}
 
@@ -266,7 +268,7 @@ export function SearchPanel() {
 
         {loading && (
           <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-            Searching…
+            {t('panel.search.searching')}
           </div>
         )}
 
@@ -301,7 +303,7 @@ export function SearchPanel() {
 
         {allVaults && !loading && !error && searched && crossResults.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-            No results across your vaults. Add vaults from the vault switcher (titlebar).
+            {t('panel.search.noCrossResults')}
           </div>
         )}
 
@@ -328,7 +330,7 @@ export function SearchPanel() {
                     fontSize: 9, padding: '1px 6px', borderRadius: 3,
                     background: 'var(--selection)', color: 'var(--accent-2)', flexShrink: 0,
                   }}>
-                    semantic
+                    {t('panel.search.semanticBadge')}
                   </span>
                 )}
                 <span style={{ fontSize: 10, color: 'var(--accent-2)', flexShrink: 0 }}>
@@ -349,16 +351,16 @@ export function SearchPanel() {
 
         {!allVaults && !loading && !error && searched && groups.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-            No results. Try different keywords, or remove tag:/path: filters.
+            {t('panel.search.noResults')}
           </div>
         )}
 
         {!loading && !error && !searched && !query && (
-          <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20, lineHeight: 1.7 }}>
-            Hybrid search combines semantic + keyword signals.<br />
-            Operators: <code style={{ fontSize: 10 }}>tag:project</code>{' '}
-            <code style={{ fontSize: 10 }}>path:Daily/</code>
-          </div>
+          <div
+            style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20, lineHeight: 1.7 }}
+            // Static, developer-authored i18n string (no user input) — safe to render as HTML.
+            dangerouslySetInnerHTML={{ __html: t('panel.search.helpText') }}
+          />
         )}
       </div>
     </div>

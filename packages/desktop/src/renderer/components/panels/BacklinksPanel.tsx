@@ -5,9 +5,11 @@
 
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { RelationLists, type OnOpen } from './links-shared.js';
 
 export function BacklinksPanel() {
+  const t = useT();
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const openFile = useAppStore((s) => s.openFile);
@@ -18,7 +20,7 @@ export function BacklinksPanel() {
   if (!activeTitle) {
     return (
       <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>
-        Open a note to see its backlinks
+        {t('panel.backlinks.noNote')}
       </div>
     );
   }

@@ -8,9 +8,11 @@ import { Modal } from '../ui/Modal.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useDecisionsUi } from './decisions-store.js';
+import { useT } from '../../lib/i18n.js';
 import type { DecisionEntry, EvolutionEntry } from '../../../shared/ipc-types.js';
 
 export function DecisionsBrowser() {
+  const t = useT();
   const open = useDecisionsUi((s) => s.browserOpen);
   const close = useDecisionsUi((s) => s.closeBrowser);
   const openCapture = useDecisionsUi((s) => s.openCapture);
@@ -66,20 +68,20 @@ export function DecisionsBrowser() {
   }, [openFile, close]);
 
   return (
-    <Modal open={open} onClose={close} title="Decisions" width={560}>
+    <Modal open={open} onClose={close} title={t('decisions.browserTitle')} width={560}>
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {(['decisions', 'evolution'] as const).map((t) => (
+        {(['decisions', 'evolution'] as const).map((tabKey) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={tabKey}
+            onClick={() => setTab(tabKey)}
             style={{
               padding: '5px 12px', fontSize: 12, border: 'none', borderRadius: 5, cursor: 'pointer',
-              background: tab === t ? 'var(--selection)' : 'transparent',
-              color: tab === t ? 'var(--accent-2)' : 'var(--ink-dim)',
+              background: tab === tabKey ? 'var(--selection)' : 'transparent',
+              color: tab === tabKey ? 'var(--accent-2)' : 'var(--ink-dim)',
             }}
           >
-            {t === 'decisions' ? 'Decision log' : 'Evolution'}
+            {tabKey === 'decisions' ? t('decisions.tabDecisions') : t('decisions.tabEvolution')}
           </button>
         ))}
         <div style={{ flex: 1 }} />
@@ -87,7 +89,7 @@ export function DecisionsBrowser() {
           onClick={() => { close(); openCapture(); }}
           style={{ padding: '5px 12px', fontSize: 12, background: 'var(--accent)', border: 'none', borderRadius: 5, color: '#fff', cursor: 'pointer' }}
         >
-          + Log decision
+          {t('decisions.newButton')}
         </button>
       </div>
 
@@ -97,8 +99,8 @@ export function DecisionsBrowser() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void loadDecisions(query); }}
-            placeholder="Search decisions… (Enter)"
-            aria-label="Search decisions"
+            placeholder={t('decisions.searchPlaceholder')}
+            aria-label={t('decisions.searchPlaceholder')}
             style={{
               width: '100%', boxSizing: 'border-box', background: 'var(--hover)',
               border: '1px solid var(--border)', borderRadius: 4, padding: '7px 10px',
@@ -107,7 +109,7 @@ export function DecisionsBrowser() {
           />
           {loading && <Skeleton />}
           {!loading && decisions.length === 0 && (
-            <Empty text="No decisions yet. Log one to start your ADR history." />
+            <Empty text={t('decisions.emptyState')} />
           )}
           {decisions.map((d) => (
             <Row
@@ -124,11 +126,11 @@ export function DecisionsBrowser() {
       {tab === 'evolution' && (
         <>
           <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-            Notes whose meaning has shifted most recently — where your knowledge is actively evolving.
+            {t('decisions.evolutionDescription')}
           </div>
           {loading && <Skeleton />}
           {!loading && evolution.length === 0 && (
-            <Empty text="Nothing to show — index the vault first." />
+            <Empty text={t('decisions.evolutionEmpty')} />
           )}
           {evolution.map((e) => (
             <Row

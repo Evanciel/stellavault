@@ -13,9 +13,11 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore } from '../../lib/commands.js';
 import { parse as parseFrontmatter } from '../../lib/frontmatter.js';
 import { showToast } from '../../lib/toast.js';
+import { useT } from '../../lib/i18n.js';
 import { useDecisionsUi } from './decisions-store.js';
 
 export function AutoLinkModal() {
+  const t = useT();
   const review = useDecisionsUi((s) => s.autoLinkReview);
   const close = useDecisionsUi((s) => s.closeAutoLinkReview);
 
@@ -39,15 +41,15 @@ export function AutoLinkModal() {
   }
 
   return (
-    <Modal open={true} onClose={close} title="Suggest links for this note" width={480}>
+    <Modal open={true} onClose={close} title={t('decisions.autolinkTitle')} width={480}>
       {!hasAny ? (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12, padding: 20 }}>
-          No new links found — no plain-text mentions of other vault notes in this note.
+          {t('decisions.autolinkEmpty')}
         </div>
       ) : (
         <>
           <div style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 12, lineHeight: 1.5 }}>
-            {suggestions.length} mention{suggestions.length === 1 ? '' : 's'} of existing notes can become wikilinks:
+            {suggestions.length} mention{suggestions.length === 1 ? '' : 's'} of existing notes {t('decisions.autolinkConvert')}
           </div>
           <div style={{ maxHeight: '34vh', overflow: 'auto', marginBottom: 14 }}>
             {suggestions.map((s, i) => (
@@ -70,13 +72,13 @@ export function AutoLinkModal() {
               onClick={close}
               style={{ padding: '6px 14px', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)', cursor: 'pointer', fontSize: 12 }}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               onClick={apply}
               style={{ padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 12 }}
             >
-              Convert all
+              {t('decisions.autolinkConvertButton')}
             </button>
           </div>
         </>

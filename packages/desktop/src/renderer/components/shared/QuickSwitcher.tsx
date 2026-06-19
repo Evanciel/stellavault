@@ -7,6 +7,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore } from '../../lib/commands.js';
 import { fuzzyFilter } from '../../lib/fuzzy.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 
 // T2-16: exported so the command palette can reuse the same fuzzy file list
 // (one entry point — mod+p — finds both commands and files). QuickSwitcher stays.
@@ -35,6 +36,7 @@ export function collectNotes(nodes: FileTreeNode[], vaultPath: string, out: Note
 }
 
 export function QuickSwitcher() {
+  const t = useT();
   const open = useUiStore((s) => s.switcherOpen);
   const setOpen = useUiStore((s) => s.setSwitcherOpen);
   const [query, setQuery] = useState('');
@@ -137,14 +139,14 @@ export function QuickSwitcher() {
             ref={inputRef}
             type="text"
             role="combobox"
-            aria-label="Quick switcher"
+            aria-label={t('dialog.quickSwitcher')}
             aria-expanded={true}
             aria-controls="sv-qs-list"
             aria-activedescendant={results[selectedIdx] ? `sv-qs-${selectedIdx}` : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Open a note..."
+            placeholder={t('dialog.openNote')}
             style={{
               width: '100%',
               background: 'transparent',
@@ -183,8 +185,8 @@ export function QuickSwitcher() {
           {results.length === 0 && (
             <div style={{ padding: '16px', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '12px' }}>
               {query.trim()
-                ? <>No notes found — Shift+↵ creates &ldquo;{query.trim()}&rdquo;</>
-                : 'No notes found'}
+                ? t('dialog.noNotesFound', { query: query.trim() })
+                : t('dialog.noNotesFoundEmpty')}
             </div>
           )}
         </div>
@@ -197,10 +199,10 @@ export function QuickSwitcher() {
           display: 'flex',
           gap: 16,
         }}>
-          <span>↑↓ navigate</span>
-          <span>↵ open</span>
-          <span>shift+↵ create</span>
-          <span>esc close</span>
+          <span>{t('dialog.navigateKeys')}</span>
+          <span>{t('dialog.qs.open')}</span>
+          <span>{t('dialog.qs.create')}</span>
+          <span>{t('dialog.escClose')}</span>
         </div>
       </div>
     </div>

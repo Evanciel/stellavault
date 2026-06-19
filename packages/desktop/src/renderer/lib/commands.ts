@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import { useAppStore } from '../stores/app-store.js';
 import { useSettingsStore } from '../stores/settings-store.js';
 import { ipc } from './ipc-client.js';
+import { t } from './i18n.js';
 
 export interface CommandDef {
   id: string;
@@ -177,55 +178,55 @@ export function registerBuiltinCommands(): void {
 
   const builtins: CommandDef[] = [
     {
-      id: 'app.command-palette', title: 'Open command palette', category: 'App',
+      id: 'app.command-palette', title: t('command.commandPalette'), category: 'App',
       defaultKeys: 'mod+shift+p', allowInEditor: true,
       run: () => ui().setPaletteOpen(!ui().paletteOpen),
     },
     {
-      id: 'app.quick-switcher', title: 'Open quick switcher', category: 'App',
+      id: 'app.quick-switcher', title: t('command.quickSwitcher'), category: 'App',
       defaultKeys: 'mod+p', allowInEditor: true,
       run: () => ui().setSwitcherOpen(!ui().switcherOpen),
     },
     {
-      id: 'app.open-settings', title: 'Open settings', category: 'App',
+      id: 'app.open-settings', title: t('command.openSettings'), category: 'App',
       defaultKeys: 'mod+,', allowInEditor: true,
       run: () => ui().setSettingsOpen(true),
     },
     {
-      id: 'file.new-note', title: 'Create new note', category: 'File',
+      id: 'file.new-note', title: t('action.newNote'), category: 'File',
       defaultKeys: 'mod+n',
       // Palette morphs into a title input — prompt() freezes Electron.
       run: () => ui().setPaletteOpen(true, 'new-note'),
     },
     {
-      id: 'file.save', title: 'Save current note', category: 'File',
+      id: 'file.save', title: t('command.saveNote'), category: 'File',
       defaultKeys: 'mod+s', allowInEditor: true,
       run: () => saveActiveTab(),
     },
     {
-      id: 'file.daily-note', title: "Open today's daily note", category: 'File',
+      id: 'file.daily-note', title: t('command.dailyNote'), category: 'File',
       defaultKeys: 'mod+shift+d',
       run: () => openDailyNote(),
     },
     // T2-4: in-note find & replace. allowInEditor so Ctrl+F/Ctrl+H fire while
     // typing. The FindReplace overlay reads ui.findReplaceMode.
     {
-      id: 'editor.find', title: 'Find in note', category: 'Edit',
+      id: 'editor.find', title: t('command.findInNote'), category: 'Edit',
       defaultKeys: 'mod+f', allowInEditor: true,
       run: () => ui().setFindReplaceMode('find'),
     },
     {
-      id: 'editor.replace', title: 'Find & replace in note', category: 'Edit',
+      id: 'editor.replace', title: t('command.findReplace'), category: 'Edit',
       defaultKeys: 'mod+h', allowInEditor: true,
       run: () => ui().setFindReplaceMode('replace'),
     },
     {
-      id: 'view.toggle-sidebar', title: 'Toggle sidebar', category: 'View',
+      id: 'view.toggle-sidebar', title: t('action.toggleSidebar'), category: 'View',
       defaultKeys: 'mod+b',
       run: () => app().toggleSidebar(),
     },
     {
-      id: 'view.toggle-theme', title: 'Toggle dark/light theme', category: 'View',
+      id: 'view.toggle-theme', title: t('action.toggleThemeDarkLight'), category: 'View',
       run: () => {
         const settings = useSettingsStore.getState();
         const next = settings.settings.theme === 'light' ? 'dark' : 'light';
@@ -233,26 +234,26 @@ export function registerBuiltinCommands(): void {
       },
     },
     {
-      id: 'graph.open-view', title: 'Open graph view', category: 'View',
+      id: 'graph.open-view', title: t('action.openGraphView'), category: 'View',
       defaultKeys: 'mod+g',
       // Full main-pane graph TAB (Wave 2) — the side panel stays on 'panel.graph'.
       run: () => app().openGraphTab(),
     },
     // ─── T2-3: editor view modes ───
     {
-      id: 'view.editor-live', title: 'Editor: Live (WYSIWYG)', category: 'View',
+      id: 'view.editor-live', title: t('command.editorLive'), category: 'View',
       run: () => setActiveViewMode('live'),
     },
     {
-      id: 'view.editor-reading', title: 'Editor: Reading (rendered)', category: 'View',
+      id: 'view.editor-reading', title: t('command.editorReading'), category: 'View',
       run: () => setActiveViewMode('reading'),
     },
     {
-      id: 'view.editor-source', title: 'Editor: Source (raw markdown)', category: 'View',
+      id: 'view.editor-source', title: t('command.editorSource'), category: 'View',
       run: () => setActiveViewMode('source'),
     },
     {
-      id: 'view.editor-cycle-mode', title: 'Editor: cycle view mode', category: 'View',
+      id: 'view.editor-cycle-mode', title: t('command.editorCycleMode'), category: 'View',
       defaultKeys: 'mod+shift+m', allowInEditor: true,
       run: () => {
         const order: ViewMode[] = ['live', 'reading', 'source'];
@@ -261,34 +262,34 @@ export function registerBuiltinCommands(): void {
       },
     },
     {
-      id: 'panel.ai', title: 'Open AI panel', category: 'Panels',
+      id: 'panel.ai', title: t('command.openAiPanel'), category: 'Panels',
       run: () => app().setRightPanel('ai'),
     },
     {
       // T3-1: Wiki Synthesis panel. SynthesisPanel also self-registers this id
       // (idempotent) with a default hotkey; this builtin keeps it discoverable.
-      id: 'panel.synthesis', title: 'Open Synthesis panel', category: 'Panels',
+      id: 'panel.synthesis', title: t('command.openSynthesisPanel'), category: 'Panels',
       run: () => app().setRightPanel('synthesis'),
     },
     {
-      id: 'panel.graph', title: 'Open 3D graph', category: 'Panels',
+      id: 'panel.graph', title: t('command.open3dGraph'), category: 'Panels',
       run: () => app().setRightPanel('graph'),
     },
     {
-      id: 'panel.backlinks', title: 'Open backlinks', category: 'Panels',
+      id: 'panel.backlinks', title: t('command.openBacklinks'), category: 'Panels',
       run: () => app().setRightPanel('backlinks'),
     },
     {
-      id: 'panel.close', title: 'Close right panel', category: 'Panels',
+      id: 'panel.close', title: t('command.closeRightPanel'), category: 'Panels',
       run: () => app().setRightPanel('none'),
     },
     // ─── App menu (W2) — File ───
     {
-      id: 'file.new-folder', title: 'Create new folder', category: 'File',
+      id: 'file.new-folder', title: t('action.newFolder'), category: 'File',
       run: () => createNewFolder(),
     },
     {
-      id: 'file.open-vault-folder', title: 'Open vault folder in Explorer', category: 'File',
+      id: 'file.open-vault-folder', title: t('action.openVaultFolder'), category: 'File',
       run: async () => {
         const vaultPath = app().vaultPath || await ipc('vault:get-path');
         await ipc('shell:open-path', vaultPath);
@@ -296,68 +297,68 @@ export function registerBuiltinCommands(): void {
     },
     // ─── App menu (W2) — View ───
     {
-      id: 'view.toggle-right-panel', title: 'Toggle right panel', category: 'View',
+      id: 'view.toggle-right-panel', title: t('action.toggleRightPanel'), category: 'View',
       run: () => {
         const s = app();
         s.setRightPanel(s.rightPanel === 'none' ? 'graph' : 'none');
       },
     },
     {
-      id: 'panel.search', title: 'Open search panel', category: 'Panels',
+      id: 'panel.search', title: t('command.searchPanel'), category: 'Panels',
       run: () => app().setRightPanel('search'),
     },
     {
-      id: 'panel.outline', title: 'Open outline panel', category: 'Panels',
+      id: 'panel.outline', title: t('command.outlinePanel'), category: 'Panels',
       run: () => app().setRightPanel('outline'),
     },
     {
-      id: 'panel.tags', title: 'Open tags panel', category: 'Panels',
+      id: 'panel.tags', title: t('command.tagsPanel'), category: 'Panels',
       run: () => app().setRightPanel('tags'),
     },
     {
-      id: 'view.zoom-in', title: 'Zoom in', category: 'View',
+      id: 'view.zoom-in', title: t('action.zoomIn'), category: 'View',
       defaultKeys: 'mod+=', allowInEditor: true,
       run: () => { void ipc('window:zoom', 'in'); },
     },
     {
-      id: 'view.zoom-out', title: 'Zoom out', category: 'View',
+      id: 'view.zoom-out', title: t('action.zoomOut'), category: 'View',
       defaultKeys: 'mod+-', allowInEditor: true,
       run: () => { void ipc('window:zoom', 'out'); },
     },
     {
-      id: 'view.zoom-reset', title: 'Reset zoom', category: 'View',
+      id: 'view.zoom-reset', title: t('action.resetZoom'), category: 'View',
       defaultKeys: 'mod+0', allowInEditor: true,
       run: () => { void ipc('window:zoom', 'reset'); },
     },
     // ─── App menu (W2) — Tools / Help ───
     {
-      id: 'app.keyboard-shortcuts', title: 'Keyboard shortcuts', category: 'App',
+      id: 'app.keyboard-shortcuts', title: t('action.keyboardShortcuts'), category: 'App',
       run: () => ui().setSettingsOpen(true, 'hotkeys'),
     },
     {
-      id: 'help.about', title: 'About Stellavault', category: 'Help',
+      id: 'help.about', title: t('action.aboutStellavault'), category: 'Help',
       run: () => ui().setSettingsOpen(true, 'about'),
     },
     // T3-12: in-app auto-update. Returns a status string (disabled on unsigned
     // builds); the main process also broadcasts progress via 'update:status'.
     {
-      id: 'help.check-updates', title: 'Check for updates', category: 'Help',
+      id: 'help.check-updates', title: t('action.checkForUpdates'), category: 'Help',
       run: async () => {
         const status = await ipc('update:check');
         ui().setStatsText(`Updates: ${status}`);
       },
     },
     {
-      id: 'help.github', title: 'Open GitHub repository', category: 'Help',
+      id: 'help.github', title: t('command.openGithubRepo'), category: 'Help',
       run: () => { void ipc('shell:open-external', 'https://github.com/Evanciel/stellavault'); },
     },
     {
-      id: 'vault.reindex', title: 'Re-index vault', category: 'Vault',
+      id: 'vault.reindex', title: t('action.reindexVault'), category: 'Vault',
       run: () => { void ipc('core:index'); },
     },
     // ─── T3-7: Publish (local read-only PWA + dashboard) ───
     {
-      id: 'publish.start', title: 'Publish: start local read-only server', category: 'Vault',
+      id: 'publish.start', title: t('command.publishStartLocal'), category: 'Vault',
       run: async () => {
         try {
           const status = await ipc('publish:start');
@@ -376,7 +377,7 @@ export function registerBuiltinCommands(): void {
       },
     },
     {
-      id: 'publish.stop', title: 'Publish: stop local server', category: 'Vault',
+      id: 'publish.stop', title: t('command.publishStopLocal'), category: 'Vault',
       run: async () => {
         try {
           await ipc('publish:stop');
@@ -388,7 +389,7 @@ export function registerBuiltinCommands(): void {
     },
     // ─── T3-9: multi-vault ───
     {
-      id: 'vault.add', title: 'Add a vault…', category: 'Vault',
+      id: 'vault.add', title: t('action.addVault'), category: 'Vault',
       run: async () => {
         try {
           const added = await ipc('vault:add-to-registry');
@@ -399,7 +400,7 @@ export function registerBuiltinCommands(): void {
       },
     },
     {
-      id: 'vault.diagnostics', title: 'Run diagnostics', category: 'Vault',
+      id: 'vault.diagnostics', title: t('command.runDiagnostics'), category: 'Vault',
       run: async () => {
         const stats = await ipc('core:get-stats');
         // Modal instead of alert() — alert() freezes Electron.
