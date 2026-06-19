@@ -68,6 +68,16 @@ export const MODELS_BY_PROVIDER: Record<AiProvider, string[]> = {
   'openai-compatible': ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
 };
 
+// Valid key-accepting providers (excludes 'none', which never stores a key).
+export const KEY_PROVIDERS: ReadonlySet<string> = new Set<string>([
+  'anthropic', 'openai', 'openai-compatible', 'google',
+] satisfies AiProvider[]);
+
+/** Type-guard: is `p` a valid, key-accepting AiProvider (not 'none')? */
+export function isValidProvider(p: string): p is Exclude<AiProvider, 'none'> {
+  return KEY_PROVIDERS.has(p);
+}
+
 // Build the "list models" HTTP request for a provider. Called in the MAIN process
 // (the renderer can't fetch the provider cross-origin under CSP). Returns null when
 // the provider has no listing endpoint (none) or a required key is missing.

@@ -166,8 +166,6 @@ export const messages = {
   "settings.ai.baseUrl.hint": { en: "OpenAI-compatible endpoint. Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1 · Groq: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1", ko: "OpenAI 호환 엔드포인트. Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1 · Groq: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1" },
   "settings.ai.apiKey.label": { en: "API key", ko: "API 키" },
   "settings.ai.apiKey.label.optional": { en: "API key (optional)", ko: "API 키 (선택 사항)" },
-  "settings.ai.apiKey.hint.prefix": { en: "Stored locally in ~/.stellavault/desktop-settings.json. ", ko: "~/.stellavault/desktop-settings.json에 로컬로 저장됩니다. " },
-  "settings.ai.apiKey.hint.suffix": { en: "Never logged.", ko: "기록되지 않습니다." },
   "settings.ai.apiKey.button.show": { en: "Show", ko: "표시" },
   "settings.ai.apiKey.button.hide": { en: "Hide", ko: "숨김" },
   "settings.ai.apiKey.button.show.aria": { en: "Show API key", ko: "API 키 표시" },

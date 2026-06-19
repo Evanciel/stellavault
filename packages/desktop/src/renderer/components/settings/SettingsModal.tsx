@@ -339,9 +339,11 @@ function AITab() {
   };
 
   // Save key: call ai:set-secret, then confirm with ai:has-secret, clear draft.
+  // I-2: if secretStore is unavailable main throws — surface that to the user.
   const saveKey = async () => {
     if (!keyDraft.trim()) return;
     setSavingKey(true);
+    setModelError(null);
     try {
       await ipc('ai:set-secret', ai.provider, keyDraft.trim());
       setKeyDraft('');
@@ -351,6 +353,7 @@ function AITab() {
       void loadModels(true);
     } catch (err) {
       console.error('[AITab] ai:set-secret failed:', err);
+      setModelError(err instanceof Error ? err.message : 'Failed to save key');
     } finally {
       setSavingKey(false);
     }

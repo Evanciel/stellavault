@@ -22,7 +22,7 @@ import { redactSecrets } from './redact-secrets.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
 import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
-import { modelsListRequest, parseModelsResponse, type AiProvider } from '../shared/ai-providers.js';
+import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvider } from '../shared/ai-providers.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -1240,6 +1240,10 @@ function registerIpcHandlers(config: AppConfig) {
   // arbitrary key (closes the SSRF-adjacent gap where a compromised renderer could
   // trigger outbound HTTP requests with any key it crafted).
   ipcMain.handle('ai:list-models', async (_e, opts: { provider: string; baseURL?: string }) => {
+    // I-1: reject arbitrary/unknown provider strings from the renderer.
+    if (!isValidProvider(opts.provider)) {
+      throw new Error(`Unknown provider: ${opts.provider}`);
+    }
     // Load the stored key for this provider (undefined → no key saved yet).
     const storedKey = secretStore?.getSecret(opts.provider) ?? '';
     const req = modelsListRequest(opts.provider as AiProvider, storedKey, opts.baseURL ?? '');
@@ -1258,14 +1262,20 @@ function registerIpcHandlers(config: AppConfig) {
   // T4: Write-only key IPC (Design §6.3 / CRIT-03).
   // The renderer can store, check, or clear a provider API key, but NEVER read it
   // back — there is intentionally no ai:get-secret / ai:read-secret handler.
-  // Guards against secretStore === null (IPC only fires post-ready, but defensive).
+  // I-1: validate provider against the known AiProvider whitelist.
+  // I-2: ai:set-secret throws when secretStore is null so the renderer can surface
+  //       the failure instead of silently believing the save succeeded.
   ipcMain.handle('ai:set-secret', (_e, provider: string, key: string): void => {
-    secretStore?.setSecret(provider, key);
+    if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
+    if (!secretStore) throw new Error('Secret store unavailable — key not saved'); // I-2
+    secretStore.setSecret(provider, key);
   });
   ipcMain.handle('ai:has-secret', (_e, provider: string): boolean => {
+    if (!isValidProvider(provider)) return false; // I-1: unknown provider → false
     return secretStore?.hasSecret(provider) ?? false;
   });
   ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
+    if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
     secretStore?.clearSecret(provider);
   });
 
