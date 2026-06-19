@@ -19,7 +19,7 @@ LLM provider 인증과 비밀(API 키·OAuth 토큰) 저장을 개선한다. 이
 
 - `shared/ai-providers.ts`: provider enum = `none|anthropic|openai|openai-compatible|google`, `needsKey`/`needsBaseURL` 메타. API 키 방식.
 - `llm-synthesizer.ts`(core 아님, desktop): BYO 키 호출 경로 **이미 완성** — Claude(x-api-key), OpenAI(Bearer→api.openai.com/v1), Gemini(?key=→generativelanguage), Ollama(keyless baseURL).
-- **보안 구멍(발견)**: `index.ts:1176` `settings:get`가 `ai.apiKey` 포함 전체 객체를 renderer로 반환. safeStorage를 도입해도 contextBridge를 넘으면 XSS/합성 콘텐츠/웹클리퍼/devtools로 탈취 가능.
+- **보안 구멍(발견)**: `settings:get` 핸들러(`main/index.ts`, ~L1174)가 `ai.apiKey` 포함 전체 객체를 renderer로 반환. safeStorage를 도입해도 contextBridge를 넘으면 XSS/합성 콘텐츠/웹클리퍼/devtools로 탈취 가능.
 - core(`@stellavault/core`)는 LLM SDK·키를 보유하지 않는 불변식 — 이 스펙은 core 시그니처를 변경하지 않는다.
 
 ## 3. Track A — 구현 대상 (보안 강화 + BYO 키 통일)
@@ -93,7 +93,7 @@ LLM provider 인증과 비밀(API 키·OAuth 토큰) 저장을 개선한다. 이
 | 1 | ChatGPT-OAuth 토큰이 `v1/chat/completions`에서 401/403 (설계 최대 거짓 전제) | critical | `openai-chatgpt` 전용 분기(Responses API)로만. experimental. Track A는 키로 이미 작동 |
 | 2 | Gemini device-code OAuth 부재 — google.ts 설계 불가 | critical | google.ts 삭제. Gemini=BYO키. Vertex는 별도 PRD |
 | 3 | Codex client_id 위장 = ToS 회색 + 단일 차단점(회전 시 전원 사망 + 계정 ban 전가) | critical | experimental off + in-UI 동의. authMethod 데이터화로 깨지면 1줄 apikey 폴백. canary ping |
-| 4 | 키/토큰 `settings:get`로 renderer 누출(현 index.ts:1176) | critical | secret-store 분리·redact·write-only IPC·main 주입. 회귀 테스트. **OAuth 무관 지금 적용** |
+| 4 | 키/토큰 `settings:get`로 renderer 누출(`settings:get` 핸들러, main/index.ts ~L1174) | critical | secret-store 분리·redact·write-only IPC·main 주입. 회귀 테스트. **OAuth 무관 지금 적용** |
 | 5 | safeStorage 미지원(Linux basic_text)서 refresh 토큰 평문 저장 | high | `isEncryptionAvailable`/backend 게이트, false면 평문 금지 |
 | 6 | 동시 LLM 호출이 같은 refresh로 병렬 refresh → 강제 로그아웃/write 경합 | high | single-flight 뮤텍스 + atomic + 선제 갱신 |
 | 7 | device-code 피싱 + verification_uri 변조 | medium | host 화이트리스트, 안티피싱 경고, single in-flight |
