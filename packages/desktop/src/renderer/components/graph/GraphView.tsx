@@ -712,6 +712,7 @@ export function GraphView() {
     arriveTimerRef.current = window.setTimeout(() => setArrivePop(null), 1200);
   }, []);
   const [loading, setLoading] = useState(true);
+  const [indexing, setIndexing] = useState(false);
   const [fitSignal, setFitSignal] = useState(0);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
   const [forcesOpen, setForcesOpen] = useState(false);
@@ -955,8 +956,31 @@ export function GraphView() {
 
   if (allNodes.length === 0) {
     return (
-      <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--ink-faint)', fontSize: 12, background: DEEP_SPACE_BG }}>
-        {t('panel.graph.noDocuments')}
+      <div style={{ flex: 1, display: 'grid', placeItems: 'center', background: DEEP_SPACE_BG }}>
+        <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
+          <div style={{ marginBottom: 12 }}>{t('panel.graph.noDocuments')}</div>
+          <button
+            disabled={indexing}
+            onClick={async () => {
+              setIndexing(true);
+              try {
+                await ipc('core:index');
+                fullGraphRef.current = null; // invalidate cached full graph so explore rebuilds
+                await loadGalaxy();
+              } catch (err) {
+                console.error('[graph] index failed:', err);
+              } finally {
+                setIndexing(false);
+              }
+            }}
+            style={{
+              padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4,
+              color: '#fff', fontSize: 12, cursor: indexing ? 'default' : 'pointer', opacity: indexing ? 0.6 : 1,
+            }}
+          >
+            {indexing ? t('panel.graph.indexing') : t('panel.graph.runIndex')}
+          </button>
+        </div>
       </div>
     );
   }
