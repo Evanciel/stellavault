@@ -273,14 +273,22 @@ function AppearanceTab() {
 
 // ─── AI (T3-2) ───
 // Provider + API key for LLM synthesis (Ask panel + Wiki Synthesis). The key is
-// stored in desktop-settings.json (main process) and only sent to the provider's
-// API — it is never logged. Provider 'none' (or empty key) → extractive fallback.
+// stored in SecretStore (safeStorage-backed) in the main process — it is NEVER
+// sent back to the renderer via settings:get. Provider 'none' (or no key) →
+// extractive fallback. keyDraft is local write-only state: the rendered value is
+// always a placeholder/bullet mask showing whether a key exists (ai.hasKey).
+// Full write-only UX (T6) wires 'secret:set-key'; for now the draft is passed
+// inline to ai:list-models so live model fetching still works.
 
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const t = useT();
-  const ai = settings.ai ?? { provider: 'none' as const, apiKey: '', model: '', baseURL: '' };
+  const ai = settings.ai ?? { provider: 'none' as const, model: '', baseURL: '' };
+  // keyDraft: local state for the key input — write-only, never populated from
+  // settings (the renderer never receives the raw key). Placeholder shows whether
+  // a key is already stored (ai.hasKey). Full T6 UX will wire 'secret:set-key'.
+  const [keyDraft, setKeyDraft] = useState('');
   const [showKey, setShowKey] = useState(false);
   // AI model dropdown: live-fetched model ids + UI state. The list auto-loads from
   // the provider over the internet as soon as the key/base URL are sufficient, so it
@@ -298,9 +306,10 @@ function AITab() {
   const modelOptions = fetchedModels.length > 0 ? fetchedModels : (MODELS_BY_PROVIDER[ai.provider] ?? []);
   const isCustom = customModel || (!!ai.model && !modelOptions.includes(ai.model));
 
-  // Always send a full ai object (matches the existing optimistic-merge pattern).
+  // patchAi: send only the safe non-secret fields to settings:set.
+  // apiKey is intentionally absent — keys travel via secret:set-key (T4/T6).
   const patchAi = (patch: Partial<NonNullable<AppSettings['ai']>>) =>
-    void update({ ai: { provider: ai.provider, apiKey: ai.apiKey, model: ai.model, baseURL: ai.baseURL ?? '', ...patch } });
+    void update({ ai: { provider: ai.provider, model: ai.model, baseURL: ai.baseURL ?? '', ...patch } });
 
   // Switching provider resets the model to that provider's default, prefills the
   // local base URL for openai-compatible, and clears fetched/custom state.
@@ -315,12 +324,13 @@ function AITab() {
 
   // Fetch the provider's models (main-side: the renderer can't hit the provider
   // cross-origin under CSP). Local servers (Ollama / LM Studio) need no key; cloud
-  // uses the entered key. `silent` suppresses errors for the background auto-load.
+  // uses keyDraft (local write-only state — never read from settings). `silent`
+  // suppresses errors for the background auto-load.
   const loadModels = useCallback(async (silent = false) => {
     setLoadingModels(true);
     if (!silent) setModelError(null);
     try {
-      const models = await ipc('ai:list-models', { provider: ai.provider, apiKey: ai.apiKey, baseURL: ai.baseURL ?? '' });
+      const models = await ipc('ai:list-models', { provider: ai.provider, apiKey: keyDraft, baseURL: ai.baseURL ?? '' });
       setFetchedModels(models);
       if (models.length === 0 && !silent) setModelError(t('settings.ai.model.error.noModels'));
     } catch (err) {
@@ -328,17 +338,17 @@ function AITab() {
     } finally {
       setLoadingModels(false);
     }
-  }, [ai.provider, ai.apiKey, ai.baseURL, t]);
+  }, [ai.provider, keyDraft, ai.baseURL, t]);
 
   // Auto-load the real list over the internet as soon as the provider + key/base URL
   // are sufficient — debounced so typing a key doesn't fire a request per keystroke.
   // Failures fall back to the hardcoded list silently (no error spam while typing).
   useEffect(() => {
     if (ai.provider === 'none') { setFetchedModels([]); return; }
-    if (!modelsListRequest(ai.provider, ai.apiKey, ai.baseURL ?? '')) return; // key/url missing → keep fallback
+    if (!modelsListRequest(ai.provider, keyDraft, ai.baseURL ?? '')) return; // key/url missing → keep fallback
     const t = setTimeout(() => { void loadModels(true); }, 600);
     return () => clearTimeout(t);
-  }, [ai.provider, ai.apiKey, ai.baseURL, loadModels]);
+  }, [ai.provider, keyDraft, ai.baseURL, loadModels]);
 
   return (
     <div>
@@ -375,12 +385,12 @@ function AITab() {
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
                 type={showKey ? 'text' : 'password'}
-                value={ai.apiKey}
+                value={keyDraft}
                 aria-label="AI API key"
-                placeholder={meta.keyPlaceholder}
+                placeholder={ai.hasKey ? '••••••••••••••••' : meta.keyPlaceholder}
                 autoComplete="off"
                 spellCheck={false}
-                onChange={(e) => patchAi({ apiKey: e.target.value })}
+                onChange={(e) => setKeyDraft(e.target.value)}
                 style={{ ...textInputStyle, flex: 1 }}
               />
               <button

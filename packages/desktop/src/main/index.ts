@@ -18,6 +18,7 @@ import { createQueueDao } from './orchestration/queue-dao.js';
 import type { CaptureRequest } from '../shared/ipc-types.js';
 import type { ClusteredGraph } from '@stellavault/core';
 import { validateSettingsPatch } from './settings-validate.js';
+import { redactSecrets } from './redact-secrets.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
 import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
@@ -93,8 +94,15 @@ const closeConfirmed = new WeakSet<BrowserWindow>();
 let pendingVaultSwitch: { id: string; path: string; dbPath?: string } | null = null;
 
 function broadcastSettingsChanged(settings: AppSettings): void {
+  // Redact secrets BEFORE sending to any renderer window — the broadcast path
+  // is as dangerous as settings:get if left unguarded.
+  const safe = redactSecrets(
+    settings,
+    (p) => !!secretStore?.hasSecret(p),
+    secretStore?.isPersistent() ?? false,
+  );
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send('settings:changed', settings);
+    win.webContents.send('settings:changed', safe);
   }
 }
 
@@ -1184,15 +1192,45 @@ function registerIpcHandlers(config: AppConfig) {
   // Settings (W1-1) — get/set + broadcast to all windows on change
   ipcMain.handle('settings:get', () => {
     if (!settingsStore) settingsStore = new SettingsStore();
-    return settingsStore.get();
+    // T3: Never return raw settings to the renderer — strip apiKey and replace
+    // with hasKey/keychainAvailable indicators (see redact-secrets.ts).
+    return redactSecrets(
+      settingsStore.get(),
+      (p) => !!secretStore?.hasSecret(p),
+      secretStore?.isPersistent() ?? false,
+    );
   });
   ipcMain.handle('settings:set', (_e, patch: Partial<AppSettings>) => {
     if (!settingsStore) settingsStore = new SettingsStore();
+    const rawPatch = patch ?? {};
+
+    // T3: Strip ai.apiKey from any incoming patch — keys are set-only via
+    // 'secret:set-key'. Silently drop so a rogue/buggy renderer can't write
+    // a key back into the plaintext settings file.
+    if (rawPatch.ai && typeof rawPatch.ai === 'object') {
+      // ai-namespace hardening: only accept known safe fields (provider/model/baseURL).
+      // This also blocks null-deletion of ai fields via deepMerge's null=delete
+      // sentinel (a renderer sending { ai: { provider: null } } would wipe the
+      // provider from the stored object — self-DoS, not a key leak, but unwanted).
+      const { provider, model, baseURL } = rawPatch.ai as Record<string, unknown>;
+      const safeAi: Record<string, unknown> = {};
+      // Only propagate known scalar fields; silently ignore null/unknown keys.
+      if (provider !== undefined && provider !== null) safeAi.provider = provider;
+      if (model !== undefined && model !== null) safeAi.model = model;
+      if (baseURL !== undefined && baseURL !== null) safeAi.baseURL = baseURL;
+      (rawPatch as Record<string, unknown>).ai = safeAi;
+    }
+
     // T1-13: drop invalid fields (negative window size, bad theme/accent) before
     // they persist + re-apply. Pure, unit-tested in tests/settings-validate.test.ts.
-    const merged = settingsStore.set(validateSettingsPatch(patch ?? {}));
+    const merged = settingsStore.set(validateSettingsPatch(rawPatch));
     broadcastSettingsChanged(merged);
-    return merged;
+    // Return redacted settings to the renderer (same contract as settings:get).
+    return redactSecrets(
+      merged,
+      (p) => !!secretStore?.hasSecret(p),
+      secretStore?.isPersistent() ?? false,
+    );
   });
 
   // AI model dropdown — fetch a provider's available models (main-side: the renderer

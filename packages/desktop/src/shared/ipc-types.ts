@@ -263,16 +263,21 @@ export interface AppSettings {
   // T3-7: local Publish server port. Project port registry convention (3105 —
   // never 3000). Optional; defaults in both main getDefaults + renderer DEFAULT.
   publishPort?: number;
-  // T3-2: AI synthesis provider + API key. Optional — when `apiKey` is set, the
-  // Ask panel and Wiki Synthesis use the LLM synthesizer; otherwise extractive.
-  // The key lives ONLY in desktop-settings.json (never logged, never sent to the
-  // renderer except as the value the user typed). model defaults to the latest
-  // Claude model id for the anthropic provider (see settings-store getDefaults).
+  // T3-2: AI synthesis provider/model config. Optional — when a key is stored in
+  // SecretStore, the Ask panel and Wiki Synthesis use the LLM synthesizer; otherwise
+  // extractive. apiKey is INTENTIONALLY ABSENT here: the renderer never sees the raw
+  // key. settings:get returns hasKey/keychainAvailable instead (redact-secrets.ts).
+  // The raw key only travels via 'secret:set-key' (write-only, main stores in
+  // SecretStore/safeStorage). model defaults to the latest Claude model id for the
+  // anthropic provider (see settings-store getDefaults).
   ai?: {
     provider: 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google';
-    apiKey: string;
     model: string;
     baseURL?: string; // only for provider 'openai-compatible' (e.g. http://localhost:11434/v1)
+    /** True when SecretStore has a key for this provider (renderer display only). */
+    hasKey?: boolean;
+    /** True when safeStorage (OS keychain) backed the key (renderer display only). */
+    keychainAvailable?: boolean;
   };
   // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
   // Optional; defaults false in both main getDefaults + renderer DEFAULT.

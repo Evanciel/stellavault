@@ -51,6 +51,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+// WARNING: null is a deletion sentinel — a null value in a patch REMOVES the key
+// from the stored object. Nullable AppSettings fields must therefore never be
+// patched with null via settingsStore.set (use deepMerge only with validated patches).
 function deepMerge<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
