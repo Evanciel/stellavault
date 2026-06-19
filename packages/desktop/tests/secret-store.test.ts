@@ -17,11 +17,29 @@ describe('secret-store', () => {
 
   it('round-trips a key through safeStorage to disk', async () => {
     const { SecretStore } = await import('../src/main/secret-store.js');
-    const s = new SecretStore(`${process.env.TEMP || '/tmp'}/sv-secrets-test-${Math.random().toString(36).slice(2)}.enc`);
+    const path = `${process.env.TEMP || '/tmp'}/sv-secrets-test-${Math.random().toString(36).slice(2)}.enc`;
+    const s = new SecretStore(path);
     s.setSecret('anthropic', 'sk-ant-xyz');
     expect(s.hasSecret('anthropic')).toBe(true);
-    expect(s.getSecret('anthropic')).toBe('sk-ant-xyz'); // decrypts
+    expect(s.getSecret('anthropic')).toBe('sk-ant-xyz'); // in-memory read
     expect(enc).toHaveBeenCalled(); // never plaintext
+
+    // Reload round-trip: second instance reads from disk and decrypts
+    vi.clearAllMocks();
+    const s2 = new SecretStore(path); // same path as s
+    expect(s2.getSecret('anthropic')).toBe('sk-ant-xyz');
+    expect(dec).toHaveBeenCalled(); // decryptString path exercised
+  });
+
+  it('clearSecret removes the key from store and does not persist it', async () => {
+    const { SecretStore } = await import('../src/main/secret-store.js');
+    const path = `${process.env.TEMP || '/tmp'}/sv-secrets-clear-${Math.random().toString(36).slice(2)}.enc`;
+    const s = new SecretStore(path);
+    s.setSecret('anthropic', 'sk-ant-xyz');
+    expect(s.hasSecret('anthropic')).toBe(true);
+    s.clearSecret('anthropic');
+    expect(s.hasSecret('anthropic')).toBe(false);
+    expect(s.getSecret('anthropic')).toBeUndefined();
   });
 
   it('when encryption unavailable: memory-only, NEVER writes plaintext to disk', async () => {

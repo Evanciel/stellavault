@@ -19,6 +19,7 @@ export class SecretStore {
     // basic_text backend = plaintext fallback ⇒ treat as NOT persistent (memory-only).
     this.persistent =
       safeStorage.isEncryptionAvailable() &&
+      // `?.` is a defensive guard: getSelectedStorageBackend is absent in Electron <15 and test shims.
       safeStorage.getSelectedStorageBackend?.() !== 'basic_text';
     if (this.persistent) this.mem = this.load();
   }
