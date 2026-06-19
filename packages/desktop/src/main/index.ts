@@ -1244,6 +1244,20 @@ function registerIpcHandlers(config: AppConfig) {
     return parseModelsResponse(opts.provider as AiProvider, await res.json());
   });
 
+  // T4: Write-only key IPC (Design §6.3 / CRIT-03).
+  // The renderer can store, check, or clear a provider API key, but NEVER read it
+  // back — there is intentionally no ai:get-secret / ai:read-secret handler.
+  // Guards against secretStore === null (IPC only fires post-ready, but defensive).
+  ipcMain.handle('ai:set-secret', (_e, provider: string, key: string): void => {
+    secretStore?.setSecret(provider, key);
+  });
+  ipcMain.handle('ai:has-secret', (_e, provider: string): boolean => {
+    return secretStore?.hasSecret(provider) ?? false;
+  });
+  ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
+    secretStore?.clearSecret(provider);
+  });
+
   // Window controls
   ipcMain.handle('window:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
   ipcMain.handle('window:maximize', (e) => {

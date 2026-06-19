@@ -444,6 +444,11 @@ export interface IpcChannelMap {
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
   'ai:list-models':     { args: [opts: { provider: string; apiKey: string; baseURL: string }]; result: string[] };
+  // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
+  // the plaintext key NEVER returns to the renderer after being stored.
+  'ai:set-secret':   { args: [provider: string, key: string]; result: void };
+  'ai:has-secret':   { args: [provider: string]; result: boolean };
+  'ai:clear-secret': { args: [provider: string]; result: void };
 
   // [editor-upgrade additive] Local image import — copies image bytes (base64)
   // into <vault>/assets/, returns the VAULT-RELATIVE path. (The legacy srcPath

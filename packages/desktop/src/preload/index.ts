@@ -52,6 +52,11 @@ const ALLOWED_CHANNELS = new Set<string>([
   'settings:get',
   'settings:set',
   'ai:list-models',       // AI model dropdown — list models for the provider
+  // T4: write-only key IPC — renderer can SET/CHECK/CLEAR a key, never READ it back.
+  // A compromised renderer must not be able to exfiltrate the plaintext key.
+  'ai:set-secret',   // {provider, key} → void  (stores via SecretStore)
+  'ai:has-secret',   // provider → boolean       (existence check only)
+  'ai:clear-secret', // provider → void          (removes key)
   'vault:import-asset', // [editor-upgrade additive] local image → vault assets/
   // T3-7 Publish (read-only local server) + T3-4 web clipper endpoint
   'publish:start',

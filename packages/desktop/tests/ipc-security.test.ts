@@ -84,4 +84,11 @@ describe('Desktop IPC Security', () => {
     expect(allowedChannels).toContain('core:search');
     expect(allowedChannels).toContain('core:get-stats');
   });
+
+  it('exposes write-only secret channels, no secret-returning channel', () => {
+    expect(allowedChannels).toContain('ai:set-secret');
+    expect(allowedChannels).toContain('ai:has-secret');
+    expect(allowedChannels).toContain('ai:clear-secret');
+    expect(allowedChannels.some((c: string) => /get-secret|read-secret/.test(c))).toBe(false);
+  });
 });
