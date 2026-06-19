@@ -513,6 +513,17 @@ export const messages = {
   'settings.general.switchVault.title': { en: 'Switch vault', ko: '볼트 전환' },
   'settings.general.switchVault.message': { en: 'Switch to "{name}"? Stellavault needs to restart to load it.', ko: '"{name}" 볼트로 전환할까요? 불러오려면 재시작이 필요합니다.' },
   'settings.general.switchVault.confirm': { en: 'Restart now', ko: '지금 재시작' },
+
+  // ── AI tab key UX (T6) ──
+  'settings.ai.apiKey.save':              { en: 'Save key',  ko: '키 저장' },
+  'settings.ai.apiKey.save.aria':         { en: 'Save API key', ko: 'API 키 저장' },
+  'settings.ai.apiKey.saving':            { en: 'Saving…',   ko: '저장 중…' },
+  'settings.ai.apiKey.saved':             { en: '✓ Key saved', ko: '✓ 키 저장됨' },
+  'settings.ai.apiKey.clear':             { en: 'Clear',     ko: '삭제' },
+  'settings.ai.apiKey.clear.aria':        { en: 'Clear saved API key', ko: '저장된 API 키 삭제' },
+  'settings.ai.apiKey.hint.secure':       { en: 'Stored in OS keychain (safeStorage). Never logged.', ko: 'OS 키체인(safeStorage)에 저장됩니다. 기록되지 않습니다.' },
+  'settings.ai.apiKey.hint.session':      { en: 'OS keychain unavailable — key kept for this session only.', ko: 'OS 키체인을 사용할 수 없습니다 — 이번 세션에서만 유지됩니다.' },
+  'settings.ai.apiKey.warning.keychain':  { en: '⚠ OS keychain unavailable — key kept for this session only', ko: '⚠ OS 키체인을 사용할 수 없습니다 — 이번 세션에서만 유지됩니다' },
 } satisfies Record<string, Entry>;
 
 export type MsgKey = keyof typeof messages;

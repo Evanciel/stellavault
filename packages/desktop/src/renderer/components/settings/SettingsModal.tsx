@@ -271,30 +271,42 @@ function AppearanceTab() {
   );
 }
 
-// ─── AI (T3-2) ───
+// ─── AI (T3-2 / T6) ───
 // Provider + API key for LLM synthesis (Ask panel + Wiki Synthesis). The key is
 // stored in SecretStore (safeStorage-backed) in the main process — it is NEVER
 // sent back to the renderer via settings:get. Provider 'none' (or no key) →
-// extractive fallback. keyDraft is local write-only state: the rendered value is
-// always a placeholder/bullet mask showing whether a key exists (ai.hasKey).
-// Full write-only UX (T6) wires 'secret:set-key'; for now the draft is passed
-// inline to ai:list-models so live model fetching still works.
+// extractive fallback.
+//
+// T6 write-only UX:
+//  - When ai.hasKey → show "✓ Key saved" + [Clear] (no input field shown).
+//  - When !ai.hasKey → show the key input + [Save key] button.
+//  - On provider switch → query ai:has-secret for the newly-selected provider
+//    (settings.ai.hasKey only reflects the persisted active provider).
+//  - If ai.keychainAvailable === false → show a session-only warning banner.
 
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const t = useT();
   const ai = settings.ai ?? { provider: 'none' as const, model: '', baseURL: '' };
-  // keyDraft: local state for the key input — write-only, never populated from
-  // settings (the renderer never receives the raw key). Placeholder shows whether
-  // a key is already stored (ai.hasKey). Full T6 UX will wire 'secret:set-key'.
+
+  // T6: local key-state override — used when the provider dropdown changes (the
+  // settings store's ai.hasKey only reflects the PERSISTED active provider, so we
+  // query ai:has-secret whenever the user picks a different provider in the dropdown
+  // before saving).  null = use ai.hasKey from store (initial / after save/clear).
+  const [localHasKey, setLocalHasKey] = useState<boolean | null>(null);
+  // keyDraft: write-only local state for the key input field. Never populated from
+  // settings (the renderer never receives the raw key back).
   const [keyDraft, setKeyDraft] = useState('');
   const [showKey, setShowKey] = useState(false);
-  // AI model dropdown: live-fetched model ids + UI state. The list auto-loads from
-  // the provider over the internet as soon as the key/base URL are sufficient, so it
-  // shows ONLY models the account can actually use; the hardcoded list is just an
-  // offline fallback (shown before the fetch / when it fails). "Custom…" still lets
-  // the user type an id not in the list.
+  const [savingKey, setSavingKey] = useState(false);
+
+  // Effective hasKey: prefer local override (set after provider switch / save / clear)
+  // over the store value (set on mount via settings:get).
+  const hasKey = localHasKey !== null ? localHasKey : (ai.hasKey ?? false);
+  const keychainAvailable = ai.keychainAvailable !== false; // treat undefined as true
+
+  // AI model dropdown: live-fetched model ids + UI state.
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -307,19 +319,52 @@ function AITab() {
   const isCustom = customModel || (!!ai.model && !modelOptions.includes(ai.model));
 
   // patchAi: send only the safe non-secret fields to settings:set.
-  // apiKey is intentionally absent — keys travel via secret:set-key (T4/T6).
+  // apiKey is intentionally absent — keys travel via ai:set-secret (T4/T6).
   const patchAi = (patch: Partial<NonNullable<AppSettings['ai']>>) =>
     void update({ ai: { provider: ai.provider, model: ai.model, baseURL: ai.baseURL ?? '', ...patch } });
 
-  // Switching provider resets the model to that provider's default, prefills the
-  // local base URL for openai-compatible, and clears fetched/custom state.
+  // Switching provider: reset model/base URL, clear fetched models, and query
+  // ai:has-secret for the new provider (the store's ai.hasKey is for the old one).
   const onProvider = (provider: NonNullable<AppSettings['ai']>['provider']) => {
     setFetchedModels([]); setModelError(null); setCustomModel(false);
+    setKeyDraft(''); setLocalHasKey(null);
     patchAi({
       provider,
       model: DEFAULT_MODELS[provider],
       baseURL: provider === 'openai-compatible' ? (ai.baseURL || OLLAMA_BASE_URL) : (ai.baseURL ?? ''),
     });
+    if (provider !== 'none') {
+      void ipc('ai:has-secret', provider).then((has) => setLocalHasKey(has)).catch(() => {});
+    }
+  };
+
+  // Save key: call ai:set-secret, then confirm with ai:has-secret, clear draft.
+  const saveKey = async () => {
+    if (!keyDraft.trim()) return;
+    setSavingKey(true);
+    try {
+      await ipc('ai:set-secret', ai.provider, keyDraft.trim());
+      setKeyDraft('');
+      setShowKey(false);
+      setLocalHasKey(true);
+      // Re-fetch models now that a key is saved (silent — don't show error).
+      void loadModels(true);
+    } catch (err) {
+      console.error('[AITab] ai:set-secret failed:', err);
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  // Clear key: call ai:clear-secret and update local state.
+  const clearKey = async () => {
+    try {
+      await ipc('ai:clear-secret', ai.provider);
+      setLocalHasKey(false);
+      setFetchedModels([]);
+    } catch (err) {
+      console.error('[AITab] ai:clear-secret failed:', err);
+    }
   };
 
   // Fetch the provider's models (main-side: the renderer can't hit the provider
@@ -342,19 +387,17 @@ function AITab() {
   }, [ai.provider, ai.baseURL, t]);
 
   // Auto-load the real list as soon as the provider is selected and a key is known to
-  // be stored (ai.hasKey) or the provider is keyless (openai-compatible with a baseURL).
-  // T5: we no longer guard on keyDraft — the stored key is what matters.
+  // be stored (hasKey) or the provider is keyless (openai-compatible with a baseURL).
+  // T5/T6: we guard on the effective hasKey (local override or store value).
   // Failures fall back to the hardcoded list silently (no error spam before key saved).
   useEffect(() => {
     if (ai.provider === 'none') { setFetchedModels([]); return; }
     const isKeyless = ai.provider === 'openai-compatible';
-    // For cloud providers, only auto-load when a key is already saved.
-    if (!isKeyless && !ai.hasKey) return;
-    // For openai-compatible, require a baseURL.
+    if (!isKeyless && !hasKey) return;
     if (isKeyless && !ai.baseURL) return;
     const timer = setTimeout(() => { void loadModels(true); }, 600);
     return () => clearTimeout(timer);
-  }, [ai.provider, ai.hasKey, ai.baseURL, loadModels]);
+  }, [ai.provider, hasKey, ai.baseURL, loadModels]);
 
   return (
     <div>
@@ -387,30 +430,85 @@ function AITab() {
             </Field>
           )}
 
-          <Field label={meta.needsKey ? t('settings.ai.apiKey.label') : t('settings.ai.apiKey.label.optional')} hint={`${t('settings.ai.apiKey.hint.prefix')}${meta.keyHint} ${t('settings.ai.apiKey.hint.suffix')}`}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={keyDraft}
-                aria-label="AI API key"
-                placeholder={ai.hasKey ? '••••••••••••••••' : meta.keyPlaceholder}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setKeyDraft(e.target.value)}
-                style={{ ...textInputStyle, flex: 1 }}
-              />
-              <button
-                onClick={() => setShowKey((v) => !v)}
-                aria-label={showKey ? t('settings.ai.apiKey.button.hide.aria') : t('settings.ai.apiKey.button.show.aria')}
-                style={{
-                  padding: '7px 10px', fontSize: 11, cursor: 'pointer',
-                  background: 'var(--hover)', border: '1px solid var(--border)',
-                  borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
-                }}
-              >
-                {showKey ? t('settings.ai.apiKey.button.hide') : t('settings.ai.apiKey.button.show')}
-              </button>
-            </div>
+          {/* T6: key-state indicator — show saved state OR the input field */}
+          <Field
+            label={meta.needsKey ? t('settings.ai.apiKey.label') : t('settings.ai.apiKey.label.optional')}
+            hint={keychainAvailable ? t('settings.ai.apiKey.hint.secure') : t('settings.ai.apiKey.hint.session')}
+          >
+            {hasKey ? (
+              /* Saved state: show "✓ Key saved" pill + Clear button */
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{
+                  fontSize: 12, color: '#10b981', fontWeight: 600,
+                  padding: '4px 10px', background: 'rgba(16,185,129,0.1)',
+                  border: '1px solid rgba(16,185,129,0.3)', borderRadius: 4,
+                }}>
+                  {t('settings.ai.apiKey.saved')}
+                </span>
+                <button
+                  onClick={() => void clearKey()}
+                  aria-label={t('settings.ai.apiKey.clear.aria')}
+                  style={{
+                    padding: '4px 10px', fontSize: 11, cursor: 'pointer',
+                    background: 'var(--hover)', border: '1px solid var(--border)',
+                    borderRadius: 4, color: 'var(--ink-dim)',
+                  }}
+                >
+                  {t('settings.ai.apiKey.clear')}
+                </button>
+              </div>
+            ) : (
+              /* Input state: text field + Show/Hide + Save button */
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  value={keyDraft}
+                  aria-label={t('settings.ai.apiKey.label')}
+                  placeholder={meta.keyPlaceholder}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => setKeyDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && keyDraft.trim()) void saveKey(); }}
+                  style={{ ...textInputStyle, flex: 1 }}
+                />
+                <button
+                  onClick={() => setShowKey((v) => !v)}
+                  aria-label={showKey ? t('settings.ai.apiKey.button.hide.aria') : t('settings.ai.apiKey.button.show.aria')}
+                  style={{
+                    padding: '7px 10px', fontSize: 11, cursor: 'pointer',
+                    background: 'var(--hover)', border: '1px solid var(--border)',
+                    borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {showKey ? t('settings.ai.apiKey.button.hide') : t('settings.ai.apiKey.button.show')}
+                </button>
+                <button
+                  onClick={() => void saveKey()}
+                  disabled={savingKey || !keyDraft.trim()}
+                  aria-label={t('settings.ai.apiKey.save.aria')}
+                  style={{
+                    padding: '7px 12px', fontSize: 11, cursor: (savingKey || !keyDraft.trim()) ? 'default' : 'pointer',
+                    background: 'var(--accent)', border: 'none',
+                    borderRadius: 4, color: '#fff', whiteSpace: 'nowrap',
+                    opacity: (savingKey || !keyDraft.trim()) ? 0.5 : 1,
+                    fontWeight: 600,
+                  }}
+                >
+                  {savingKey ? t('settings.ai.apiKey.saving') : t('settings.ai.apiKey.save')}
+                </button>
+              </div>
+            )}
+
+            {/* T6: keychain warning banner when safeStorage is not persistent */}
+            {!keychainAvailable && (
+              <div style={{
+                marginTop: 8, fontSize: 11, color: '#f59e0b',
+                padding: '6px 10px', background: 'rgba(245,158,11,0.08)',
+                border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4,
+              }}>
+                {t('settings.ai.apiKey.warning.keychain')}
+              </div>
+            )}
           </Field>
 
           <Field label={t('settings.ai.model.label')} hint={meta.modelHint}>
