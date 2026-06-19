@@ -21,6 +21,8 @@ export function migrateLegacyApiKey(
   const provider = typeof aiSettings.provider === 'string' ? aiSettings.provider : 'anthropic';
   store.setSecret(provider, aiSettings.apiKey.trim());
   // Return a settings patch that strips apiKey from the ai sub-object.
+  // deepMerge treats null as an explicit delete, so apiKey: null removes the key
+  // from the persisted file (apiKey: undefined would be silently skipped).
   const { apiKey: _removed, ...rest } = aiSettings;
-  return { ai: { ...rest, apiKey: undefined } };
+  return { ai: { ...rest, apiKey: null } };
 }

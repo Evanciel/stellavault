@@ -54,7 +54,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function deepMerge<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
+    if (value === undefined) continue;                // undefined → skip (normal partial patch)
+    if (value === null) { delete out[key]; continue } // null → explicit delete
     if (isPlainObject(value) && isPlainObject(out[key])) {
       out[key] = deepMerge(out[key] as Record<string, unknown>, value);
     } else {

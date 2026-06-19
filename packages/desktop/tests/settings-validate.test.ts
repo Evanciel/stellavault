@@ -123,4 +123,40 @@ describe('SettingsStore deepMerge + clamp integration', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // deepMerge null-deletes semantic (migration correctness gate)
+  it('null in a patch explicitly deletes the key (vs undefined which is skipped)', () => {
+    const { store, dir } = freshStore();
+    const file = join(dir, 'desktop-settings.json');
+    try {
+      // Seed an ai sub-object containing a plaintext apiKey (legacy state).
+      store.set({ ai: { provider: 'anthropic', apiKey: 'sk-ant-legacy', model: 'claude-opus-4-5' } } as never);
+      expect((store.get() as never as Record<string, unknown> & { ai: Record<string, unknown> }).ai.apiKey).toBe('sk-ant-legacy');
+
+      // Apply the migration patch: null should DELETE apiKey from the object.
+      store.set({ ai: { apiKey: null } } as never);
+      const after = store.get() as never as Record<string, unknown> & { ai?: Record<string, unknown> };
+      expect(after.ai?.apiKey).toBeUndefined();
+
+      // Verify the key is ABSENT from the reloaded store (disk was updated).
+      const reloaded = new SettingsStore(file);
+      const reloadedAi = (reloaded.get() as never as Record<string, unknown> & { ai?: Record<string, unknown> }).ai;
+      expect(reloadedAi?.apiKey).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('undefined in a patch is skipped — existing key survives (normal partial update)', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set({ ai: { provider: 'anthropic', apiKey: 'sk-ant-keep', model: 'claude-opus-4-5' } } as never);
+      // Setting apiKey: undefined must NOT remove it (partial patch semantics).
+      store.set({ ai: { apiKey: undefined } } as never);
+      const after = store.get() as never as Record<string, unknown> & { ai?: Record<string, unknown> };
+      expect(after.ai?.apiKey).toBe('sk-ant-keep');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
