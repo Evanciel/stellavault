@@ -275,6 +275,7 @@ export function GraphPanel() {
   const [mode, setMode] = useState<'global' | 'local'>('global');
   const [depth, setDepth] = useState(1);
   const [fitSignal, setFitSignal] = useState(0);
+  const [indexing, setIndexing] = useState(false);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const t = useT();
@@ -375,7 +376,29 @@ export function GraphPanel() {
   if (allNodes.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
-        {t('panel.graph.noDocuments')}
+        <div style={{ marginBottom: 12 }}>{t('panel.graph.noDocuments')}</div>
+        <button
+          disabled={indexing}
+          onClick={async () => {
+            setIndexing(true);
+            try {
+              await ipc('core:index');
+              const data = await ipc('graph:build', 'semantic') as unknown as { nodes: CoreGraphNode[]; edges: GraphEdge[] };
+              setAllNodes(mapCoreNodes(data.nodes ?? []));
+              setAllEdges((data.edges ?? []) as GraphEdge[]);
+            } catch (err) {
+              console.error('[graph] index failed:', err);
+            } finally {
+              setIndexing(false);
+            }
+          }}
+          style={{
+            padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 12, cursor: indexing ? 'default' : 'pointer', opacity: indexing ? 0.6 : 1,
+          }}
+        >
+          {indexing ? t('panel.graph.indexing') : t('panel.graph.runIndex')}
+        </button>
       </div>
     );
   }

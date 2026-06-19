@@ -60,6 +60,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   // T3-9 multi-vault switcher + cross-vault search
   'vault:list-registry',
   'vault:add-to-registry',
+  'vault:pick-folder',          // pick a folder inside the vault (daily/templates settings)
   'vault:remove-from-registry',
   'vault:switch',
   'search:all-vaults',

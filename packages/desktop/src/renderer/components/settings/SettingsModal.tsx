@@ -2,13 +2,14 @@
 // Reads/writes through the settings store; main persists + broadcasts.
 
 import { useState, useEffect, useCallback } from 'react';
-import type { AppSettings, McpStatus } from '../../../shared/ipc-types.js';
+import type { AppSettings, McpStatus, VaultRegistryEntry } from '../../../shared/ipc-types.js';
 import { ipc, onIpc } from '../../lib/ipc-client.js'; // T3-3: Agent Memory tab
+import { showToast } from '../../lib/toast.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
-import { Modal } from '../ui/Modal.js';
+import { Modal, ConfirmModal } from '../ui/Modal.js';
 import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META, modelsListRequest } from '../../../shared/ai-providers.js';
 import { useT, type MsgKey } from '../../lib/i18n.js';
 
@@ -84,6 +85,11 @@ const textInputStyle: React.CSSProperties = {
   fontSize: 12, color: 'var(--ink)', outline: 'none',
 };
 
+const pickBtnStyle: React.CSSProperties = {
+  padding: '7px 10px', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+  background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)',
+};
+
 // ─── General ───
 
 function GeneralTab() {
@@ -91,6 +97,22 @@ function GeneralTab() {
   const update = useSettingsStore((s) => s.update);
   const vaultPath = useAppStore((s) => s.vaultPath);
   const t = useT();
+  const [pendingVault, setPendingVault] = useState<VaultRegistryEntry | null>(null);
+
+  // "Change…" on the vault path: pick a folder → register it → confirm a restart-switch
+  // (a vault swap re-inits the whole core, so it routes through the same restart path
+  // as the titlebar vault switcher).
+  const onChangeVault = async () => {
+    const added = await ipc('vault:add-to-registry');
+    if (added && !added.active) setPendingVault(added);
+  };
+  // Folder picker for daily-notes / templates — returns a vault-relative path.
+  const pickFolder = async (apply: (rel: string) => void) => {
+    const r = await ipc('vault:pick-folder');
+    if (!r) return;
+    if (r.outside) { showToast(t('settings.general.folderOutsideVault'), 'error'); return; }
+    if (r.rel != null) apply(r.rel);
+  };
 
   return (
     <div>
@@ -106,16 +128,22 @@ function GeneralTab() {
         </select>
       </Field>
       <Field label={t('settings.general.vaultPath.label')} hint={t('settings.general.vaultPath.hint')}>
-        <input type="text" value={vaultPath} readOnly aria-label={t('settings.general.vaultPath.label')} style={{ ...textInputStyle, color: 'var(--ink-dim)' }} />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input type="text" value={vaultPath} readOnly aria-label={t('settings.general.vaultPath.label')} style={{ ...textInputStyle, color: 'var(--ink-dim)', flex: 1 }} />
+          <button onClick={() => void onChangeVault()} style={pickBtnStyle}>{t('settings.general.changeVault')}</button>
+        </div>
       </Field>
       <Field label={t('settings.general.dailyNotes.folder.label')} hint={t('settings.general.relativeToVaultHint')}>
-        <input
-          type="text"
-          value={settings.dailyNotes.folder}
-          aria-label={t('settings.general.dailyNotes.folder.label')}
-          onChange={(e) => void update({ dailyNotes: { ...settings.dailyNotes, folder: e.target.value } })}
-          style={textInputStyle}
-        />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            value={settings.dailyNotes.folder}
+            aria-label={t('settings.general.dailyNotes.folder.label')}
+            onChange={(e) => void update({ dailyNotes: { ...settings.dailyNotes, folder: e.target.value } })}
+            style={{ ...textInputStyle, flex: 1 }}
+          />
+          <button onClick={() => void pickFolder((rel) => void update({ dailyNotes: { ...settings.dailyNotes, folder: rel } }))} title={t('settings.general.pickFolder')} style={pickBtnStyle}>📁</button>
+        </div>
       </Field>
       <Field label={t('settings.general.dailyNotes.format.label')} hint={t('settings.general.dailyNotes.format.hint')}>
         <input
@@ -127,14 +155,26 @@ function GeneralTab() {
         />
       </Field>
       <Field label={t('settings.general.templatesFolder.label')} hint={t('settings.general.relativeToVaultHint')}>
-        <input
-          type="text"
-          value={settings.templatesFolder}
-          aria-label={t('settings.general.templatesFolder.label')}
-          onChange={(e) => void update({ templatesFolder: e.target.value })}
-          style={textInputStyle}
-        />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            value={settings.templatesFolder}
+            aria-label={t('settings.general.templatesFolder.label')}
+            onChange={(e) => void update({ templatesFolder: e.target.value })}
+            style={{ ...textInputStyle, flex: 1 }}
+          />
+          <button onClick={() => void pickFolder((rel) => void update({ templatesFolder: rel }))} title={t('settings.general.pickFolder')} style={pickBtnStyle}>📁</button>
+        </div>
       </Field>
+
+      <ConfirmModal
+        open={!!pendingVault}
+        onClose={() => setPendingVault(null)}
+        onConfirm={() => { if (pendingVault) void ipc('vault:switch', pendingVault.id); }}
+        title={t('settings.general.switchVault.title')}
+        message={pendingVault ? t('settings.general.switchVault.message', { name: pendingVault.name }) : ''}
+        confirmLabel={t('settings.general.switchVault.confirm')}
+      />
     </div>
   );
 }

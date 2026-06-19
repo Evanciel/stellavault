@@ -462,6 +462,7 @@ export interface IpcChannelMap {
   // drops a non-active entry. 'search:all-vaults' runs core searchAllVaults.
   'vault:list-registry':      { args: []; result: VaultRegistryEntry[] };
   'vault:add-to-registry':    { args: []; result: VaultRegistryEntry | null };
+  'vault:pick-folder':        { args: []; result: { rel: string | null; outside?: boolean } | null };
   'vault:remove-from-registry': { args: [id: string]; result: VaultRegistryEntry[] };
   'vault:switch':             { args: [id: string]; result: { restartRequired: boolean } };
   'search:all-vaults':        { args: [query: string, limit?: number]; result: CrossVaultResult[] };

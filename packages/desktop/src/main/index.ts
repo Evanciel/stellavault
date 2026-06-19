@@ -1862,6 +1862,18 @@ function registerPublishVaultClip(config: AppConfig): void {
     return entry;
   });
 
+  // Pick a folder INSIDE the active vault → return its vault-relative path (for the
+  // daily-notes / templates folder pickers in Settings). Rejects folders outside.
+  ipcMain.handle('vault:pick-folder', async (): Promise<{ rel: string | null; outside?: boolean } | null> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const opts = { title: 'Select a folder inside your vault', defaultPath: vp, properties: ['openDirectory'] as Array<'openDirectory'> };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const rel = relative(vp, result.filePaths[0]).replace(/\\/g, '/');
+    if (rel.startsWith('..') || /^[a-zA-Z]:/.test(rel)) return { rel: null, outside: true };
+    return { rel: rel || '.' };
+  });
+
   ipcMain.handle('vault:remove-from-registry', (_e, id: string): VaultRegistryEntry[] => {
     if (!settingsStore) settingsStore = new SettingsStore();
     const list = settingsStore.get().vaults ?? [];
