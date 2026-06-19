@@ -10,6 +10,8 @@ import { homedir, tmpdir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
+import { SecretStore } from './secret-store.js';
+import { migrateLegacyApiKey } from './migrate-legacy-api-key.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
 import { OrchestrationEngine } from './orchestration/engine.js';
 import { createQueueDao } from './orchestration/queue-dao.js';
@@ -74,6 +76,10 @@ function loadAppConfig(): AppConfig {
 // lifecycle from the vault bootstrap config above (§4-B). Created in whenReady.
 
 let settingsStore: SettingsStore | null = null;
+// T2-Task2: API keys are read from SecretStore (safeStorage-backed), NEVER from
+// desktop-settings.json at runtime. secretStore is null until app.whenReady()
+// (safeStorage is only valid after the app is ready).
+let secretStore: SecretStore | null = null;
 
 // T2-18: windows whose dirty-close round-trip has been confirmed (renderer said
 // proceed). The 'close' handler lets these through instead of re-prompting.
@@ -92,13 +98,18 @@ function broadcastSettingsChanged(settings: AppSettings): void {
   }
 }
 
-// T3-2 / multi-provider: read the persisted AI provider/key from desktop-settings.
+// T3-2 / multi-provider: read the persisted AI provider/model/baseURL from
+// desktop-settings, but the apiKey from SecretStore (safeStorage-backed).
 // NEVER log the result — the key is only ever handed to makeSynthesizer (which sends
 // it to the selected provider's endpoint).
 function getAiConfig(): LlmConfig | undefined {
   try {
     if (!settingsStore) settingsStore = new SettingsStore();
-    return settingsStore.get().ai as LlmConfig | undefined;
+    const ai = settingsStore.get().ai as Omit<LlmConfig, 'apiKey'> & { apiKey?: string } | undefined;
+    if (!ai) return undefined;
+    const provider = ai.provider;
+    const apiKey = provider ? (secretStore?.getSecret(provider) ?? '') : '';
+    return { ...ai, apiKey } as LlmConfig;
   } catch {
     return undefined;
   }
@@ -2346,6 +2357,21 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--smoke-core')) {
     await runSmokeCore();
     return;
+  }
+
+  // T2-Task2: SecretStore requires safeStorage, which is only available after
+  // app ready. Instantiate here, then run the one-time plaintext-key migration.
+  try {
+    secretStore = new SecretStore();
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const legacyAi = settingsStore.get().ai as Record<string, unknown> | undefined;
+    const patch = migrateLegacyApiKey(legacyAi, secretStore);
+    if (patch) {
+      settingsStore.set(patch as Parameters<typeof settingsStore.set>[0]);
+      console.log('[main] migrated legacy plaintext API key into SecretStore');
+    }
+  } catch (err) {
+    console.error('[main] SecretStore init or migration failed:', err);
   }
 
   const config = loadAppConfig();
