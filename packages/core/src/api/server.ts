@@ -14,6 +14,7 @@ import { createIngestRouter } from './routes/ingest.js';
 import { createProfileCardRouter } from './routes/profile-card.js';
 import { createHealthRouter } from './routes/health.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
+import { assertPublicUrl } from './ssrf-guard.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 // detectDuplicates + detectKnowledgeGaps: lazy imported in /api/health only
 
@@ -105,26 +106,8 @@ export function createApiServer(options: ApiServerOptions) {
     res.json({ token: authToken });
   });
 
-  // HIGH-01: Shared SSRF protection — blocks private/internal IPs
-  function assertNotPrivateUrl(url: string): void {
-    const parsed = new URL(url);
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http/https URLs allowed');
-    const host = parsed.hostname.toLowerCase();
-    if (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '::1' ||
-      host.endsWith('.local') ||
-      host.startsWith('192.168.') ||
-      host.startsWith('10.') ||
-      // Fix: 172.16.0.0/12 covers 172.16.* through 172.31.*
-      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-      host.startsWith('169.254.') ||
-      host === '0.0.0.0'
-    ) {
-      throw new Error('Internal URLs not allowed');
-    }
-  }
+  // HIGH-01: Shared SSRF protection — resolve-then-check-IP guard.
+  // See ./ssrf-guard.ts (assertPublicUrl): DNS rebinding/encoding/IPv6 우회 방어.
 
   // Serve bundled graph UI when present (installed-from-npm path).
   // In dev mode graphUiPath is undefined and CLI spawns Vite instead.
@@ -424,7 +407,7 @@ export function createApiServer(options: ApiServerOptions) {
 
   // ───── Ingest + Clip ─────────────────────────────────────
   // Design Ref: §3 — Extracted to routes/ingest.ts
-  app.use('/api', createIngestRouter({ store, vaultPath, requireAuth, assertNotPrivateUrl }));
+  app.use('/api', createIngestRouter({ store, vaultPath, requireAuth, assertPublicUrl }));
 
   // GET /api/recent — 최근 저장된 노트 목록
   app.get('/api/recent', async (_req, res) => {

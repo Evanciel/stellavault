@@ -10,11 +10,11 @@ interface IngestRouterOptions {
   store: VectorStore;
   vaultPath: string;
   requireAuth: (req: express.Request, res: express.Response, next: express.NextFunction) => void;
-  assertNotPrivateUrl: (url: string) => void;
+  assertPublicUrl: (url: string) => Promise<void>;
 }
 
 export function createIngestRouter(opts: IngestRouterOptions): Router {
-  const { store, vaultPath, requireAuth, assertNotPrivateUrl } = opts;
+  const { store, vaultPath, requireAuth, assertPublicUrl } = opts;
   const router = Router();
 
   // POST /ingest — 웹 UI에서 URL/텍스트 인제스트
@@ -57,7 +57,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
         }
       } else if (input.startsWith('http')) {
         // HIGH-01: SSRF protection
-        try { assertNotPrivateUrl(input); } catch (e: unknown) {
+        try { await assertPublicUrl(input); } catch (e: unknown) {
           res.status(400).json({ error: (e as Error).message }); return;
         }
         try {
@@ -247,7 +247,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
       const { url } = req.body;
       if (!url) { res.status(400).json({ error: 'url required' }); return; }
 
-      try { assertNotPrivateUrl(url); } catch (e: unknown) {
+      try { await assertPublicUrl(url); } catch (e: unknown) {
         res.status(400).json({ error: (e as Error).message }); return;
       }
 
