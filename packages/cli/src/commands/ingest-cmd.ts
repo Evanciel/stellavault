@@ -1,7 +1,7 @@
 // stellavault ingest — 통합 인제스트 (URL, 텍스트, 파일 → 자동 분류 저장)
 
 import chalk from 'chalk';
-import { loadConfig, ingest, promoteNote } from '@stellavault/core';
+import { loadConfig, ingest, promoteNote, assertPublicUrl } from '@stellavault/core';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { extname, resolve, join } from 'node:path';
 import type { IngestInput } from '@stellavault/core';
@@ -67,15 +67,14 @@ async function ingestSingleFile(input: string, options: { tags?: string; stage?:
     // URL
     const isYouTube = /youtube\.com\/watch|youtu\.be\//.test(input);
 
-    // SSRF 방지: private IP 차단
+    // SSRF 방지: resolve-then-check-IP (core assertPublicUrl) — rebinding/encoding/IPv6/메타데이터(169.254) 방어.
+    // 기존 문자열 차단리스트는 169.254/16(클라우드 메타데이터)을 누락해 youtube 경로로 우회 가능했음.
     try {
-      const url = new URL(input);
-      const host = url.hostname;
-      if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|localhost|::1)/i.test(host)) {
-        console.error(chalk.yellow('Private/local URLs are not allowed for security.'));
-        process.exit(1);
-      }
-    } catch { /* invalid URL, will fail at fetch */ }
+      await assertPublicUrl(input);
+    } catch {
+      console.error(chalk.yellow('Private/local or non-public URLs are not allowed for security.'));
+      process.exit(1);
+    }
 
     if (isYouTube) {
       // YouTube: 전용 추출기 사용 (메타데이터 + 자막 + 타임스탬프)

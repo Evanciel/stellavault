@@ -3,7 +3,7 @@
 import chalk from 'chalk';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadConfig } from '@stellavault/core';
+import { loadConfig, assertPublicUrl } from '@stellavault/core';
 
 export async function clipCommand(url: string, options: { folder?: string }) {
   if (!url) {
@@ -23,6 +23,15 @@ export async function clipCommand(url: string, options: { folder?: string }) {
   mkdirSync(targetDir, { recursive: true });
 
   console.error(chalk.dim(`📎 Clipping: ${url}`));
+
+  // SSRF 방지: resolve-then-check-IP (core assertPublicUrl) — clip도 ingest-by-URL 클래스(임의 사용자 URL fetch).
+  // rebinding/encoding/IPv6/메타데이터(169.254) 방어. clip은 기존에 가드가 전혀 없었음.
+  try {
+    await assertPublicUrl(url);
+  } catch {
+    console.error(chalk.yellow('Private/local or non-public URLs are not allowed for security.'));
+    process.exit(1);
+  }
 
   try {
     // URL 유형 감지
