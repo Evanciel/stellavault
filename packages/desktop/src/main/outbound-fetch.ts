@@ -7,11 +7,14 @@
 //  ① 시작 URL을 core assertPublicUrl(resolve-then-check-IP)로 검증 — http/https만,
 //     도메인이면 모든 A/AAAA를 해석해 사설/loopback/link-local/169.254.169.254/IPv6
 //     매핑/decimal·hex 인코딩을 차단(fail-closed).
-//  ② 매 홉 재검증: redirect:'manual'이라 electron이 'redirect'를 발생시키고, 우리가
-//     followRedirect()를 호출해야 진행된다. 리다이렉트 타깃을 assertPublicUrl로 다시
-//     검증(DNS rebinding/리다이렉트 우회 방어) + maxRedirects 초과 시 거부.
+//  ② 매 홉 재검증: redirect:'manual'이라 electron이 'redirect'를 발생시키면, 우리는
+//     followRedirect()로 같은 요청을 잇지 않고 현재 요청을 abort한 뒤, 검증된 리다이렉트
+//     타깃으로 '새 net.request'를 발행한다(abort-and-reissue). 모든 홉의 URL이 동일한 async
+//     assertPublicUrl을 통과하므로 DNS rebinding/리다이렉트 우회를 방어하면서도, electron 35의
+//     "followRedirect는 'redirect' 핸들러 안에서 동기로 호출해야 한다"는 제약을 건드리지 않는다.
+//     (async 검증과 동기 followRedirect는 양립 불가 → 절대 followRedirect를 쓰지 않음.)
 //  ③ content-length 헤더 또는 누적 수신 바이트가 maxBytes 초과 시 abort.
-//  ④ 전체 timeout 초과 시 abort.
+//  ④ 전체 timeout 초과 시 abort(전 홉 합산 deadline).
 //  ⑤ content-type이 화이트리스트 밖이면 거부(allowedContentTypes 지정 시).
 //
 // 에러 메시지는 generic하게 유지(resolve된 내부 IP를 호출자에 노출하지 않음).
@@ -21,7 +24,7 @@ import { assertPublicUrl } from '@stellavault/core';
 export interface SafeFetchOptions {
   /** 누적 응답 바이트 상한. 기본 8MiB. */
   maxBytes?: number;
-  /** 전체 요청 타임아웃(ms). 기본 10s. */
+  /** 전체 요청 타임아웃(ms). 기본 10s. 모든 리다이렉트 홉을 합산한 단일 deadline. */
   timeoutMs?: number;
   /** 허용 리다이렉트 홉 수. 기본 2. */
   maxRedirects?: number;
@@ -64,30 +67,39 @@ function headerValue(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : value;
 }
 
+// 단일 홉(net.request 1회)의 결과. 리다이렉트면 다음 Location만 반환하고 바디는 받지 않는다.
+type HopResult =
+  | { kind: 'redirect'; location: string }
+  | { kind: 'response'; buffer: Buffer; contentType: string; status: number };
+
+interface RequestOnceOptions {
+  maxBytes: number;
+  /** 이 홉에 남은 시간(ms). 전체 deadline에서 차감한 값. */
+  timeoutMs: number;
+  allowedContentTypes?: string[];
+}
+
 /**
- * 공개 대상에서만, size/timeout/content-type 캡과 매 홉 SSRF 재검증을 적용해 fetch.
- * 사설/내부 대상이거나 캡 초과 시 throw(generic 메시지).
+ * 단일 net.request를 발행해 한 홉만 처리한다.
+ *  - redirect:'manual'이라 'redirect' 발생 시 즉시 abort하고 { kind:'redirect', location } resolve
+ *    (followRedirect를 호출하지 않음 — 상위 루프가 검증 후 새 요청을 발행).
+ *  - 'response' 발생 시 content-type 게이트 + content-length 선검사 + 누적 바이트 캡을 적용,
+ *    'end'에서 { kind:'response', buffer, contentType, status } resolve.
+ *  - 이 홉 timeout 초과 시 abort + reject. 'error' 시 reject.
+ * settled 플래그로 이중 settle을 방지하고, reject/redirect/timeout 경로 모두에서 abort한다.
  */
-export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  const allowedContentTypes = opts.allowedContentTypes;
+function requestOnce(url: string, opts: RequestOnceOptions): Promise<HopResult> {
+  const { maxBytes, timeoutMs, allowedContentTypes } = opts;
 
-  // ① 시작 URL 검증 — net.request 이전에 fail-closed.
-  await assertPublicUrl(url);
-
-  return new Promise<SafeFetchResult>((resolve, reject) => {
+  return new Promise<HopResult>((resolve, reject) => {
     const request = net.request({ method: 'GET', url, redirect: 'manual' });
 
     const chunks: Buffer[] = [];
     let received = 0;
-    let redirects = 0;
-    let currentUrl = url; // 매 홉마다 갱신해 finalUrl/상대경로 해석 기준으로 사용
     let settled = false;
 
     const timer = setTimeout(() => {
-      // ④ 전체 타임아웃: abort + reject.
+      // ④ 이 홉 타임아웃(= 남은 전체 deadline): abort + reject.
       fail(new Error('Outbound fetch timed out'));
     }, timeoutMs);
 
@@ -95,6 +107,7 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
       clearTimeout(timer);
     }
 
+    // reject 경로: 현재 요청을 abort하고 거부. abort 자체 실패는 무시.
     function fail(err: Error) {
       if (settled) return;
       settled = true;
@@ -102,12 +115,25 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
       try {
         request.abort();
       } catch {
-        // abort 자체 실패는 무시(이미 종료된 요청 등).
+        // 이미 종료된 요청 등 — 무시.
       }
       reject(err);
     }
 
-    function succeed(result: SafeFetchResult) {
+    // 리다이렉트 경로: 바디를 받지 않고 현재 요청을 abort한 뒤 Location만 반환.
+    function redirectTo(location: string) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        request.abort();
+      } catch {
+        // 무시.
+      }
+      resolve({ kind: 'redirect', location });
+    }
+
+    function succeed(result: HopResult) {
       if (settled) return;
       settled = true;
       cleanup();
@@ -115,6 +141,7 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
     }
 
     request.on('response', (response: Electron.IncomingMessage) => {
+      if (settled) return;
       const status = response.statusCode;
       const contentType = headerValue(response.headers['content-type']);
 
@@ -147,9 +174,9 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
 
       response.on('end', () => {
         succeed({
+          kind: 'response',
           buffer: Buffer.concat(chunks),
           contentType,
-          finalUrl: currentUrl,
           status,
         });
       });
@@ -159,46 +186,15 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
       });
     });
 
-    // ② 매 홉 재검증 — redirect:'manual'이라 발생. 검증 통과 시에만 followRedirect().
+    // ② redirect:'manual' → 'redirect' 발생. followRedirect를 쓰지 않고 abort + Location 반환.
+    //    상대 Location의 절대화/재검증은 상위 루프(safeFetch)가 수행한다.
     request.on('redirect', (
       _statusCode: number,
       _method: string,
       redirectUrl: string,
       _responseHeaders: Record<string, string[]>,
     ) => {
-      if (settled) return;
-
-      redirects += 1;
-      if (redirects > maxRedirects) {
-        fail(new Error('Too many redirects'));
-        return;
-      }
-
-      // 상대 Location은 현재 URL 기준으로 절대화. 파싱 불가 시 거부.
-      let nextUrl: string;
-      try {
-        nextUrl = new URL(redirectUrl, currentUrl).toString();
-      } catch {
-        fail(new Error('Invalid redirect target'));
-        return;
-      }
-
-      // 새 홉을 assertPublicUrl로 재검증(rebinding/사설 타깃 차단). async라 then/catch.
-      assertPublicUrl(nextUrl).then(
-        () => {
-          if (settled) return; // 검증 중 타임아웃/취소되었을 수 있음
-          currentUrl = nextUrl;
-          try {
-            request.followRedirect();
-          } catch (err) {
-            fail(err instanceof Error ? err : new Error('followRedirect failed'));
-          }
-        },
-        () => {
-          // 사설/내부 타깃 → 거부 + abort.
-          fail(new Error('Redirect to a non-public target'));
-        },
-      );
+      redirectTo(redirectUrl);
     });
 
     request.on('error', (err: Error) => {
@@ -207,4 +203,62 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
 
     request.end();
   });
+}
+
+/**
+ * 공개 대상에서만, size/timeout/content-type 캡과 매 홉 SSRF 재검증을 적용해 fetch.
+ * 사설/내부 대상이거나 캡 초과 시 throw(generic 메시지).
+ *
+ * abort-and-reissue 루프: 각 홉 직전에 assertPublicUrl로 현재 URL을 검증한 뒤 새 요청을
+ * 발행하고, 'redirect'면 그 요청을 버리고 검증된 다음 타깃으로 재발행한다. 따라서 시작 URL과
+ * 모든 리다이렉트 타깃이 동일한 가드를 통과하며, electron의 동기 followRedirect 제약을 피한다.
+ */
+export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  const allowedContentTypes = opts.allowedContentTypes;
+
+  // 전 홉을 합산한 단일 deadline(개별 홉이 아니라 전체 요청에 대한 타임아웃).
+  const deadline = Date.now() + timeoutMs;
+  let currentUrl = url;
+
+  for (let hop = 0; ; hop++) {
+    // ① + ② 시작 URL 및 매 리다이렉트 타깃을 새 요청 발행 전에 fail-closed로 검증.
+    await assertPublicUrl(currentUrl);
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error('Outbound fetch timed out');
+    }
+
+    const hopResult = await requestOnce(currentUrl, {
+      maxBytes,
+      timeoutMs: remaining,
+      allowedContentTypes,
+    });
+
+    if (hopResult.kind === 'redirect') {
+      // 홉 0이 첫 리다이렉트(redirects=1) → hop >= maxRedirects면 초과.
+      if (hop >= maxRedirects) {
+        throw new Error('Too many redirects');
+      }
+      // 상대 Location은 현재 URL 기준으로 절대화. 파싱 불가 시 거부.
+      let nextUrl: string;
+      try {
+        nextUrl = new URL(hopResult.location, currentUrl).toString();
+      } catch {
+        throw new Error('Invalid redirect target');
+      }
+      currentUrl = nextUrl; // 다음 루프에서 assertPublicUrl 재검증 후 새 요청 발행
+      continue;
+    }
+
+    return {
+      buffer: hopResult.buffer,
+      contentType: hopResult.contentType,
+      finalUrl: currentUrl,
+      status: hopResult.status,
+    };
+  }
 }
