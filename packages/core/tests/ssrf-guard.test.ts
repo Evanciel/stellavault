@@ -78,6 +78,14 @@ describe('assertPublicUrl', () => {
   it('REJECT: http://localhost', async () => {
     await expect(assertPublicUrl('http://localhost', publicResolver)).rejects.toThrow();
   });
+  // 후행 점 우회 차단 — publicResolver를 써서 "이름 denylist"가 거부 원인임을 증명
+  // (IP 검사가 아니라 special-name 검사가 막아야 함).
+  it('REJECT: http://localhost. (후행 점 우회)', async () => {
+    await expect(assertPublicUrl('http://localhost.', publicResolver)).rejects.toThrow();
+  });
+  it('REJECT: http://foo.local. (후행 점 우회)', async () => {
+    await expect(assertPublicUrl('http://foo.local.', publicResolver)).rejects.toThrow();
+  });
   it('REJECT: http://127.0.0.1', async () => {
     await expect(assertPublicUrl('http://127.0.0.1', publicResolver)).rejects.toThrow();
   });

@@ -35,6 +35,16 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
       let autoTitle = title;
       let autoTags = tags ?? [];
       let autoStage = stage ?? 'fleeting';
+
+      // HIGH-01: SSRF protection — http 입력은 ANY fetch 경로 이전에 1회 검증.
+      // (isYouTube는 입력 전체를 substring 매칭하므로 http://169.254.169.254/youtu.be/
+      //  같은 내부 타깃이 YouTube 분기로 새어 들어가는 우회를 막는다.)
+      // NOTE: check-time only — fetch() re-resolves DNS; per-hop revalidation is deferred to outbound-fetch (SP0 Task 2).
+      if (input.startsWith('http')) {
+        try { await assertPublicUrl(input); } catch (e: unknown) {
+          res.status(400).json({ error: (e as Error).message }); return;
+        }
+      }
       const isYouTube = /youtube\.com\/watch|youtu\.be\//.test(input);
 
       if (isYouTube) {
@@ -56,10 +66,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
           } catch (e) { console.error('[ingest] YouTube HTML fallback failed:', e instanceof Error ? e.message : e); }
         }
       } else if (input.startsWith('http')) {
-        // HIGH-01: SSRF protection
-        try { await assertPublicUrl(input); } catch (e: unknown) {
-          res.status(400).json({ error: (e as Error).message }); return;
-        }
+        // SSRF guard already ran above (hoisted before the youtube/else split).
         try {
           const resp = await fetch(input, { signal: AbortSignal.timeout(8000) });
           const html = await resp.text();
@@ -247,6 +254,7 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
       const { url } = req.body;
       if (!url) { res.status(400).json({ error: 'url required' }); return; }
 
+      // NOTE: check-time only — fetch() re-resolves DNS; per-hop revalidation is deferred to outbound-fetch (SP0 Task 2).
       try { await assertPublicUrl(url); } catch (e: unknown) {
         res.status(400).json({ error: (e as Error).message }); return;
       }

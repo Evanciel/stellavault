@@ -110,6 +110,10 @@ export function isPrivateIp(ip: string): boolean {
  * ① http/https만 허용 ② IP 리터럴이면 그대로, 도메인이면 resolver로 전체 주소 해석
  * ③ 각 IP 정규화 후 isPrivateIp ④ 하나라도 사설이거나 0개면 throw(fail-closed).
  * 에러 메시지는 generic하게 유지(resolve된 IP를 클라이언트에 노출하지 않음).
+ *
+ * NOTE: check-time only — 이후 fetch()는 DNS를 독립적으로 재해석하므로
+ *       resolve-then-fetch 사이 rebinding 잔여 윈도우가 존재한다.
+ *       매 홉 재검증은 outbound-fetch(SP0 Task 2)로 이연.
  */
 export async function assertPublicUrl(url: string, resolver: Resolver = defaultResolver): Promise<void> {
   let parsed: URL;
@@ -128,10 +132,13 @@ export async function assertPublicUrl(url: string, resolver: Resolver = defaultR
     host = host.slice(1, -1);
   }
   const lowerHost = host.toLowerCase();
+  // 후행 점(FQDN root label) 1개 제거 후 비교: localhost. / foo.local. 우회 차단.
+  // (이 denylist는 DNS 비의존 backstop이라 한 글자로 무력화되면 안 된다.)
+  const h = lowerHost.replace(/\.$/, '');
 
   // 특수 호스트명은 DNS 결과와 무관하게 항상 차단(RFC 6761).
   // localhost는 hosts 파일로 루프백에 매핑되며, .local(mDNS)도 내부 전용.
-  if (lowerHost === 'localhost' || lowerHost.endsWith('.localhost') || lowerHost.endsWith('.local')) {
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) {
     throw new Error('Internal or non-public URL not allowed');
   }
 
