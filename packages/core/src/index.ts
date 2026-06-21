@@ -42,6 +42,9 @@ export type { KnowledgePack, PackChunk, PackInfo, CreatePackOptions, ImportResul
 // API (Phase 2)
 export { createApiServer } from './api/server.js';
 export type { ApiServerOptions } from './api/server.js';
+// SSRF guard — resolve-then-check-IP. desktop main/outbound-fetch.ts re-validates every hop.
+export { assertPublicUrl, isPrivateIp } from './api/ssrf-guard.js';
+export type { Resolver } from './api/ssrf-guard.js';
 export type { GraphNode, GraphEdge, Cluster, GraphData, GraphResponse } from './types/graph.js';
 // Wave 1 cluster-first LOD tiered types (docs/02-design/graph-scale-lod-redesign.md).
 export type { ClusterSuperNode, MetaEdge, ClusterLevelGraph, ClusterMembersGraph } from './types/graph.js';
