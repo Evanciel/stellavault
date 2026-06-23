@@ -104,6 +104,10 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   const distillStreamRef = useRef<Set<string>>(new Set());
   // Auto-reveal the graph the FIRST time a write lands (then leave it to the user).
   const autoOpenedGraphRef = useRef(false);
+  // Hermes-style rotating intro copy — one warm headline/body per mount.
+  const [introIdx] = useState(() => Math.floor(Math.random() * 4));
+  // Hermes-style disclosure: the tool-activity strip collapses to a summary row.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [input, setInput] = useState('');
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
@@ -457,11 +461,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       >
         {messages.length === 0 ? (
           isMain ? (
-            // Main view: a centered hero empty-state (ChatGPT/agent style).
-            <div style={{ maxWidth: MAIN_COL, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', textAlign: 'center', gap: 10 }}>
-              <div style={{ fontSize: 40, lineHeight: 1 }} aria-hidden>💬</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{t('panel.ai.chatMainTitle')}</div>
-              <div style={{ fontSize: 13.5, color: 'var(--ink-dim)', maxWidth: 460, lineHeight: 1.6 }}>{t('panel.ai.chatEmptyHint')}</div>
+            // Main view: a text-forward, warm hero (Hermes intro style) — a rotating
+            // second-person headline + body, left-aligned to the composer column.
+            <div style={{ maxWidth: MAIN_COL, margin: '0 auto', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '52vh', gap: 12 }}>
+              <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--ink)', lineHeight: 1.15 }}>
+                {t(`panel.ai.intro.${introIdx}.title` as never)}
+              </div>
+              <div style={{ fontSize: 15, color: 'var(--ink-dim)', maxWidth: 540, lineHeight: 1.6 }}>
+                {t(`panel.ai.intro.${introIdx}.body` as never)}
+              </div>
             </div>
           ) : (
             <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 24 }}>
@@ -509,20 +517,36 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         )}
       </div>
 
-      {/* Agent tool-activity strip (SP-E) — what the agent is doing, live. */}
-      {agentOn && toolLog.length > 0 && (
-        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px' }}>
-          <div style={{ maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined, display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {toolLog.slice(-6).map((tlog) => (
-              <div key={tlog.id} style={{ fontSize: 11, color: 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
-                <span aria-hidden>{tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : '✓'}</span>
-                <span style={{ fontWeight: 600 }}>{tlog.name}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
+      {/* Agent tool-activity (SP-E) — Hermes-style disclosure: a tertiary summary row that
+          shows the latest step + a step count, expanding to the full trace on click. */}
+      {agentOn && toolLog.length > 0 && (() => {
+        const latest = toolLog[toolLog.length - 1];
+        const steps = toolLog.filter((l) => l.kind === 'call').length;
+        const rows = toolsOpen ? toolLog.slice(-8) : [latest];
+        return (
+          <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px' }}>
+            <div style={{ maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined }}>
+              <button
+                onClick={() => setToolsOpen((v) => !v)}
+                aria-expanded={toolsOpen}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--ink-faint)', fontSize: 10.5, fontWeight: 600 }}
+              >
+                <span aria-hidden style={{ display: 'inline-block', transform: toolsOpen ? 'rotate(90deg)' : 'none', transition: 'transform 120ms', opacity: 0.7 }}>▸</span>
+                {steps > 0 ? t('panel.ai.agentSteps').replace('{n}', String(steps)) : t('panel.ai.agentWorking')}
+              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
+                {rows.map((tlog) => (
+                  <div key={tlog.id} style={{ fontSize: 11, color: 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span aria-hidden style={{ opacity: 0.8 }}>{tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : '✓'}</span>
+                    <span style={{ fontWeight: 600 }}>{tlog.name}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Write-approval card (SP-E) — the agent proposed a vault WRITE; it runs only on Approve. */}
       {confirm && (
