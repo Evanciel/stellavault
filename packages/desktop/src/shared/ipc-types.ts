@@ -557,6 +557,8 @@ export interface IpcChannelMap {
   'chat:abort': { args: [streamId: string]; result: void };
   // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
   'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
+  // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
+  'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
   // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
   'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };
@@ -612,6 +614,8 @@ export interface IpcEventMap {
   'chat:tool-call':    { streamId: string; name: string; detailRedacted: string };
   'chat:tool-result':  { streamId: string; name: string; ok: boolean; summary: string };
   'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
+  // Agent (SP-I): a distillation pass finished — summary of what was folded into the wiki.
+  'chat:distill-done': { streamId: string; summary: string };
 }
 
 // Helper types for typed invoke/on

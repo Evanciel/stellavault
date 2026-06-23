@@ -90,6 +90,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   const [agentOn, setAgentOn] = useState(false);
   const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean }>>([]);
   const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
+  // Auto-distill (SP-I, Karpathy ingest): after each answer, fold the conversation into the
+  // wiki. autoDistillRef/messagesRef are read inside the mount-once chat:done handler.
+  const [autoDistill, setAutoDistill] = useState(false);
+  const [distilling, setDistilling] = useState(false);
+  const [distillSummary, setDistillSummary] = useState<string | null>(null);
+  const autoDistillRef = useRef(autoDistill);
+  autoDistillRef.current = autoDistill;
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const distillStreamRef = useRef<Set<string>>(new Set());
   const [input, setInput] = useState('');
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
@@ -158,6 +167,16 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       // The session was persisted by main on chat:done — let the parent refresh
       // its session list (new title / updated time / first-save row).
       onSavedRef.current?.();
+      // Auto-distill (SP-I): fold the just-finished conversation into the wiki. Fires per
+      // answer; the ingest prompt de-dups (search → append/link over create) to avoid spam.
+      if (autoDistillRef.current) {
+        const distillId = crypto.randomUUID();
+        distillStreamRef.current.add(distillId);
+        setDistilling(true);
+        setDistillSummary(null);
+        void ipc('chat:distill', { messages: messagesRef.current, streamId: distillId, sessionId })
+          .catch(() => { distillStreamRef.current.delete(distillId); setDistilling(false); });
+      }
     });
 
     const offError = onIpc('chat:error', (p: unknown) => {
@@ -173,21 +192,29 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       syncActiveCount();
     });
 
-    // Agent (SP-E) — tool activity + write-confirm, routed by streamId.
+    // Agent (SP-E/I) — tool activity routed by streamId (chat stream OR distill stream).
+    const ownsStream = (sid: string) => streamMapRef.current.has(sid) || distillStreamRef.current.has(sid);
     const offToolCall = onIpc('chat:tool-call', (p: unknown) => {
       const e = p as { streamId: string; name: string; detailRedacted: string };
-      if (!streamMapRef.current.has(e.streamId)) return;
+      if (!ownsStream(e.streamId)) return;
       setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'call', name: e.name, text: e.detailRedacted }]);
     });
     const offToolResult = onIpc('chat:tool-result', (p: unknown) => {
       const e = p as { streamId: string; name: string; ok: boolean; summary: string };
-      if (!streamMapRef.current.has(e.streamId)) return;
+      if (!ownsStream(e.streamId)) return;
       setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'result', name: e.name, text: e.summary, ok: e.ok }]);
     });
     const offToolConfirm = onIpc('chat:tool-confirm', (p: unknown) => {
       const e = p as { streamId: string; name: string; argsPreview: string };
-      if (!streamMapRef.current.has(e.streamId)) return;
+      if (!streamMapRef.current.has(e.streamId)) return; // distill writes auto-apply (never confirm)
       setConfirm(e);
+    });
+    const offDistillDone = onIpc('chat:distill-done', (p: unknown) => {
+      const e = p as { streamId: string; summary: string };
+      if (!distillStreamRef.current.has(e.streamId)) return;
+      distillStreamRef.current.delete(e.streamId);
+      setDistilling(false);
+      setDistillSummary(e.summary || null);
     });
 
     return () => {
@@ -197,8 +224,12 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       offToolCall();
       offToolResult();
       offToolConfirm();
+      offDistillDone();
     };
-  }, [syncActiveCount]);
+  }, [syncActiveCount, sessionId]);
+
+  // Keep messagesRef current so the mount-once chat:done handler distills the latest turns.
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Approve/deny a write tool the agent requested.
   const respondConfirm = useCallback((approve: boolean) => {
@@ -473,6 +504,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         </div>
       )}
 
+      {/* Auto-distill indicator (SP-I) — the wiki is being compiled from this conversation. */}
+      {(distilling || distillSummary) && (
+        <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 10.5, color: 'var(--accent-2)', textAlign: isMain ? 'center' : 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {distilling ? `🗂 ${t('panel.ai.distilling')}` : `🗂 ${t('panel.ai.distilled')}${distillSummary ? `: ${distillSummary}` : ''}`}
+        </div>
+      )}
+
       {/* Plaintext-at-rest disclosure (Decision 1) */}
       <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 9, color: 'var(--ink-faint)', textAlign: isMain ? 'center' : 'left' }}>
         {t('panel.ai.sessionError')}
@@ -487,6 +525,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         onRagToggle={setRagOn}
         agentOn={agentOn}
         onAgentToggle={setAgentOn}
+        autoDistill={autoDistill}
+        onAutoDistillToggle={setAutoDistill}
         variant={variant}
       />
     </div>

@@ -46,10 +46,12 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:rename-session',
   'chat:delete-session',
   'chat:tool-approve', // agent SP-D: renderer approves/denies a write tool
+  'chat:distill',      // agent SP-I: auto-distill a finished conversation into the wiki
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
   'chat:tool-call', 'chat:tool-result', 'chat:tool-confirm', // agent SP-D transparency/confirm
+  'chat:distill-done', // agent SP-I: distillation summary
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {

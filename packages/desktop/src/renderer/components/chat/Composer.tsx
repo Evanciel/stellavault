@@ -20,11 +20,14 @@ export interface ComposerProps {
   /** Agent mode (SP-E): let the model call vault tools + propose confirm-gated writes. */
   agentOn?: boolean;
   onAgentToggle?: (on: boolean) => void;
+  /** Auto-distill (SP-I): after each answer, fold the conversation into the wiki. */
+  autoDistill?: boolean;
+  onAutoDistillToggle?: (on: boolean) => void;
   /** 'panel' = narrow right-panel sizing; 'main' = roomy centered main-view sizing. */
   variant?: 'panel' | 'main';
 }
 
-export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, variant = 'panel' }: ComposerProps) {
+export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, variant = 'panel' }: ComposerProps) {
   const t = useT();
   const canSend = value.trim().length > 0 && !atCap;
   const isMain = variant === 'main';
@@ -111,6 +114,20 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
             >
               <input type="checkbox" checked={!!agentOn} onChange={(e) => onAgentToggle(e.target.checked)} style={{ cursor: 'pointer' }} />
               🤖 {t('panel.ai.agentLabel')}
+            </label>
+          )}
+          {onAutoDistillToggle && (
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                fontSize: isMain ? 12 : 10.5,
+                color: autoDistill ? 'var(--accent-2)' : 'var(--ink-dim)',
+                cursor: 'pointer', userSelect: 'none', fontWeight: autoDistill ? 600 : 400,
+              }}
+              title={t('panel.ai.autoDistillHint')}
+            >
+              <input type="checkbox" checked={!!autoDistill} onChange={(e) => onAutoDistillToggle(e.target.checked)} style={{ cursor: 'pointer' }} />
+              🗂 {t('panel.ai.autoDistillLabel')}
             </label>
           )}
           <button

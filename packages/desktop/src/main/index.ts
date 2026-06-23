@@ -1113,6 +1113,70 @@ function registerIpcHandlers(config: AppConfig) {
     pa.resolve(payload?.approve === true);
   });
 
+  // Karpathy auto-distillation (SP-I): after a chat turn, the renderer (when auto-distill is
+  // on) sends the just-finished conversation here. We run the SAME agent loop but with the
+  // INGEST system prompt — the agent folds the conversation's durable knowledge into the
+  // wiki (atomic notes, [[links]], log). Writes auto-apply; no chat bubble is produced (the
+  // distillation prose is discarded — only the tool activity + a short summary surface).
+  ipcMain.handle('chat:distill', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
+    const wcId = e.sender.id;
+    if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
+    if (typeof req.streamId !== 'string' || !req.streamId) return;
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
+    // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
+    if (!cfg || cfg.provider !== 'openai-compatible') { safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }); return; }
+
+    const transcript = req.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
+      .join('\n\n')
+      .slice(0, 12_000);
+    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}`, ts: Date.now() };
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    chatStreamRegistry.set(req.streamId, entry);
+
+    const afterWrite = async (saved: string) => {
+      const safe = assertInsideVault(currentVaultPath, saved);
+      noteSelfWrite(safe);
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).indexFiles === 'function') {
+        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+      }
+      bumpVaultFsVersion();
+      bumpGraphCacheVersion();
+    };
+    const executeTool = buildExecuteAgentTool({
+      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
+    });
+
+    try {
+      await chatStream({
+        cfg,
+        messages: [ingestTurn],
+        ragOn: false,            // distillation does its own search; no RAG pre-injection
+        signal: controller.signal,
+        searchEngine,
+        agentOn: true,
+        distill: true,           // → agent loop uses the Karpathy INGEST prompt
+        toolset: buildAgentToolset(),
+        executeTool,             // writes auto-apply (no onToolConfirm)
+        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name, ok, summary) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary }),
+        onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
+        onDone: (_citations, fullText) => safeSend('chat:distill-done', { streamId: req.streamId, summary: fullText.slice(0, 300) }),
+        onError: () => safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }),
+      });
+    } catch (err) {
+      console.error('[main] chat:distill failed:', err);
+      safeSend('chat:distill-done', { streamId: req.streamId, summary: '' });
+    } finally {
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
   // Abort an in-flight stream. Only the OWNING webContents may abort its own stream.
   ipcMain.handle('chat:abort', (e, streamId: string): void => {
     const entry = chatStreamRegistry.get(streamId);

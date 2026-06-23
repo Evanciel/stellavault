@@ -423,6 +423,21 @@ export function buildSystemPrompt(ragBlock: string): string {
   ].join('\n');
 }
 
+// Karpathy self-compiling-KB INGEST prompt (auto-distillation, §Karpathy LLM-Wiki).
+// Used by the distillation pass that runs when a conversation ends: the agent reads the
+// just-finished conversation as a "source" and folds its durable knowledge into the wiki —
+// atomic Zettelkasten notes, typed (concept/entity), densely [[linked]], index + log updated,
+// de-duplicated (search first; append/link instead of creating a duplicate).
+export const KARPATHY_INGEST_PROMPT = [
+  "You maintain the user's Stellavault vault as a Karpathy-style self-compiling wiki. A conversation just finished. INGEST its durable knowledge into the wiki — do the bookkeeping the user won't.",
+  'PROCEDURE (use your tools; writes auto-apply):',
+  '1. Identify the 1–4 DURABLE, reusable ideas/entities from the conversation (skip chit-chat, transient Q&A, and anything already obvious).',
+  '2. For EACH: search_vault for an existing note on it. If one exists → append_note (add the new insight) and/or link_note; do NOT create a duplicate. If none → create_note as an ATOMIC note (ONE idea), in a sensible folder, with frontmatter tags and `type: concept` or `type: entity`.',
+  '3. CONNECT: link related notes to each other with link_note ([[Title]] = a graph edge). Dense cross-linking is the point.',
+  '4. LOG: append_note to "log.md" one line: `## [YYYY-MM-DD] ingest | <topic>` (create log.md if missing).',
+  'RULES: atomic notes (one concept each); reuse + link over duplicate; keep titles short and stable; never invent facts not in the conversation; answer the user in their language with a 1–2 sentence summary of what you saved/linked (do NOT dump the notes).',
+].join('\n');
+
 // ── chatStream — the streaming loop over net.request ──────────────────────────
 export interface ChatStreamOptions {
   cfg: LlmConfig;
@@ -443,6 +458,9 @@ export interface ChatStreamOptions {
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string) => void;
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
+  // INGEST prompt — fold the conversation's durable knowledge into the wiki. Implies agent.
+  distill?: boolean;
 }
 
 export async function chatStream(opts: ChatStreamOptions): Promise<void> {
@@ -498,18 +516,21 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     // Agent-specific system prompt (E2E finding): without these rules gemma4:e4b sometimes
     // (a) stops with an empty message after a tool returns, (b) answers in English regardless
     // of the user's language, or (c) loops the same search. Keep the RAG/<untrusted> guard.
-    const agentSystem = [
-      system,
-      '',
-      "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
-      'RULES (follow exactly):',
-      '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
-      "- Always answer in the SAME LANGUAGE as the user's latest message.",
-      '- Cite the notes you used as [[Note Title]].',
-      '- If a search returns nothing useful, say so briefly and answer from general knowledge.',
-      '- Never call the same tool with the same arguments twice.',
-      '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
-    ].join('\n');
+    // In DISTILL mode the system prompt is the Karpathy INGEST prompt instead.
+    const agentSystem = opts.distill
+      ? [system, '', KARPATHY_INGEST_PROMPT].join('\n')
+      : [
+          system,
+          '',
+          "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
+          'RULES (follow exactly):',
+          '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
+          "- Always answer in the SAME LANGUAGE as the user's latest message.",
+          '- Cite the notes you used as [[Note Title]].',
+          '- If a search returns nothing useful, say so briefly and answer from general knowledge.',
+          '- Never call the same tool with the same arguments twice.',
+          '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
+        ].join('\n');
     await runAgentLoop({
       turns: messages,
       toolset,

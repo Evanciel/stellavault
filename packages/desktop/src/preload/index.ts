@@ -102,6 +102,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   // Agent (SP-D): approve/deny a write tool the MAIN model requested (renderer can ONLY
   // approve/deny — it can never name a tool to run).
   'chat:tool-approve',
+  // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
+  'chat:distill',
   // Local model server (Ollama) lifecycle — "Start Ollama" affordance
   'ollama:status',
   'ollama:start',
@@ -130,6 +132,8 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:tool-call',
   'chat:tool-result',
   'chat:tool-confirm',
+  // Agent (SP-I): distillation pass finished (summary of what was folded into the wiki)
+  'chat:distill-done',
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);
