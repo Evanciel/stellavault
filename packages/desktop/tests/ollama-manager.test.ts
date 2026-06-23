@@ -12,9 +12,10 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('electron', () => ({ net: { request: vi.fn(), fetch: vi.fn() } }));
 
+import { net } from 'electron';
 import { isLocalProviderUrl } from '../src/shared/ai-providers.js';
 import { isUnreachableErr } from '../src/main/chat-engine.js';
-import { compareVersions, isGitHubHost, MIN_OLLAMA_VERSION } from '../src/main/ollama-manager.js';
+import { compareVersions, isGitHubHost, MIN_OLLAMA_VERSION, modelSupportsTools } from '../src/main/ollama-manager.js';
 
 describe('isLocalProviderUrl — only loopback offers a local start', () => {
   it('treats blank baseURL as local (defaults to the Ollama loopback URL)', () => {
@@ -105,5 +106,24 @@ describe('isGitHubHost — download URL must be GitHub-hosted (SSRF/redirect gua
     'not-a-url',
   ])('rejects %s', (url) => {
     expect(isGitHubHost(url)).toBe(false);
+  });
+});
+
+describe('modelSupportsTools — /api/show capability gate (agent SP-A)', () => {
+  // distinct model names per case → distinct cache keys (cache is module-private).
+  it('true when capabilities include "tools"', async () => {
+    (net.fetch as any).mockResolvedValueOnce({ ok: true, json: async () => ({ capabilities: ['completion', 'vision', 'tools', 'thinking'] }) });
+    expect(await modelSupportsTools('http://localhost:11434/v1', 'gemma4:e4b')).toBe(true);
+  });
+  it('false when capabilities lack "tools" (e.g. gemma2 → would 400 on tools[])', async () => {
+    (net.fetch as any).mockResolvedValueOnce({ ok: true, json: async () => ({ capabilities: ['completion'] }) });
+    expect(await modelSupportsTools('http://localhost:11434/v1', 'gemma2:9b')).toBe(false);
+  });
+  it('fail-closed: ANY fetch error → false (never sends tools[] on a probe failure)', async () => {
+    (net.fetch as any).mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    expect(await modelSupportsTools('http://localhost:11434/v1', 'unreachable-model')).toBe(false);
+  });
+  it('empty model name → false without any probe', async () => {
+    expect(await modelSupportsTools('http://localhost:11434/v1', '')).toBe(false);
   });
 });

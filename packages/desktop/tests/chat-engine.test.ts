@@ -240,6 +240,74 @@ describe('buildChatBody', () => {
   });
 });
 
+// ── Native Ollama /api/chat (agent SP-A) ─────────────────────────────────────
+describe('buildOllamaChatBody', () => {
+  it('prepends system as a role:system message and passes tools + think flag', async () => {
+    const { buildOllamaChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'gemma4:e4b', baseURL: 'http://localhost:11434/v1' };
+    const tools = [{ type: 'function', function: { name: 'search_vault', parameters: {} } }];
+    const b: any = buildOllamaChatBody(cfg, 'SYS', [{ role: 'user', content: 'hi' }], tools, false);
+    expect(b.model).toBe('gemma4:e4b');
+    expect(b.stream).toBe(true);
+    expect(b.think).toBe(false);
+    expect(b.messages[0]).toEqual({ role: 'system', content: 'SYS' });
+    expect(b.messages[1]).toEqual({ role: 'user', content: 'hi' });
+    expect(b.tools).toBe(tools);
+  });
+  it('carries assistant tool_calls + role:tool result turns through verbatim', async () => {
+    const { buildOllamaChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'm', baseURL: '' };
+    const turns = [
+      { role: 'user' as const, content: 'q' },
+      { role: 'assistant' as const, content: '', tool_calls: [{ function: { name: 'search_vault', arguments: { query: 'x' } } }] },
+      { role: 'tool' as const, content: '{"hits":1}', tool_name: 'search_vault' },
+    ];
+    const b: any = buildOllamaChatBody(cfg, 'SYS', turns, [], true);
+    expect(b.think).toBe(true);
+    expect(b.messages[2].tool_calls[0].function.name).toBe('search_vault');
+    expect(b.messages[3]).toEqual({ role: 'tool', content: '{"hits":1}', tool_name: 'search_vault' });
+  });
+});
+
+describe('parseOllamaChatChunk — native NDJSON', () => {
+  it('extracts a text content delta', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    const r = parseOllamaChatChunk(JSON.stringify({ message: { role: 'assistant', content: '안녕' }, done: false }));
+    expect(r.deltas).toEqual(['안녕']);
+    expect(r.toolCalls).toEqual([]);
+    expect(r.done).toBe(false);
+  });
+  it('collects WHOLE tool_calls (pre-parsed object arguments, no fragmentation)', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    const r = parseOllamaChatChunk(JSON.stringify({
+      message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'search_vault', arguments: { query: 'MCP' } } }] },
+      done: false,
+    }));
+    expect(r.toolCalls).toHaveLength(1);
+    expect(r.toolCalls[0].function.name).toBe('search_vault');
+    expect(r.toolCalls[0].function.arguments).toEqual({ query: 'MCP' });
+  });
+  it('flags done:true terminal frame', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    expect(parseOllamaChatChunk(JSON.stringify({ message: { content: '' }, done: true })).done).toBe(true);
+  });
+  it('coerces a dict/list content to a string, drops thinking, guards bad args', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    const r = parseOllamaChatChunk(JSON.stringify({ message: { content: { a: 1 }, thinking: 'ignored', tool_calls: [{ function: { name: 'x', arguments: 'not-an-object' } }] }, done: false }));
+    expect(r.deltas[0]).toContain('"a":1');
+    expect(r.toolCalls[0].function.arguments).toEqual({}); // non-object args → {}
+  });
+  it('returns empty on blank/garbled lines (never throws — caller buffers whole lines)', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    expect(parseOllamaChatChunk('').deltas).toEqual([]);
+    expect(parseOllamaChatChunk('{"message":{"content":"par').deltas).toEqual([]); // truncated JSON
+  });
+  it('throws ChatStreamError on an error frame', async () => {
+    const { parseOllamaChatChunk } = await import('../src/main/chat-engine.js');
+    expect(() => parseOllamaChatChunk(JSON.stringify({ error: 'model not found' }))).toThrow();
+  });
+});
+
 // ── capToBudget ─────────────────────────────────────────────────────────────
 describe('capToBudget', () => {
   it('drops lowest-score tail entries beyond budget', async () => {

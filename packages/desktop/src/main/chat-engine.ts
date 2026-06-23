@@ -264,6 +264,91 @@ export function parseGeminiSse(frame: string): FrameResult {
   return { deltas, done: false }; // gemini ends on socket end, not an explicit marker
 }
 
+// ─── Native Ollama /api/chat (agent SP-A, Design Ref: §3, §7 SP-A) ────────────
+// The agentic tool-calling loop uses Ollama's NATIVE /api/chat, not the OpenAI-compat
+// /v1 path: /v1 silently drops tool_calls under stream:true. Native returns tool_calls
+// WHOLE (pre-parsed argument objects, not fragmented), which removes the input_json_delta
+// concat the Anthropic/OpenAI tool paths need.
+
+export interface OllamaToolCall {
+  function: { name: string; arguments: Record<string, unknown> };
+}
+
+/** One running-conversation turn for /api/chat. `tool_calls` rides an assistant turn;
+ *  `tool_name` correlates a role:'tool' result turn (native uses name+order, no id). */
+export interface OllamaMsg {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: OllamaToolCall[];
+  tool_name?: string;
+}
+
+/** Native /api/chat request body. `system` is prepended as a role:'system' message;
+ *  `messages` carry the running conversation (no system). `tools` is the OpenAI
+ *  function-format array. think=false skips gemma4's default chain-of-thought on
+ *  tool-selection steps (≈24 vs 283 tokens). URL is `${base}/api/chat` (caller). */
+export function buildOllamaChatBody(
+  cfg: LlmConfig,
+  system: string,
+  messages: OllamaMsg[],
+  tools: unknown[],
+  think: boolean,
+) {
+  return {
+    model: cfg.model || DEFAULT_MODELS[cfg.provider],
+    stream: true,
+    think,
+    messages: [{ role: 'system', content: system } as OllamaMsg, ...messages],
+    tools,
+  };
+}
+
+export interface OllamaFrameResult {
+  deltas: string[];
+  toolCalls: OllamaToolCall[];
+  done: boolean;
+}
+
+/** Parse ONE native /api/chat NDJSON line — one JSON object per line, '\n'-delimited
+ *  (NOT SSE '\n\n'). `message.content` → text delta (coerced to a string if the model
+ *  emits a dict/list); `message.tool_calls` arrive WHOLE → collected; `message.thinking`
+ *  is ignored (absent when think:false); `done===true` → terminal. An `error` field
+ *  throws ChatStreamError; malformed/blank lines yield an empty result (never throw). */
+export function parseOllamaChatChunk(line: string): OllamaFrameResult {
+  const empty: OllamaFrameResult = { deltas: [], toolCalls: [], done: false };
+  const raw = line.trim();
+  if (!raw) return empty;
+  let obj: any;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return empty; // partial/garbled NDJSON line — caller buffers whole lines
+  }
+  if (obj?.error) throw new ChatStreamError(String(obj.error), 'generic');
+  const msg = obj?.message ?? {};
+  const deltas: string[] = [];
+  const c = msg.content;
+  if (typeof c === 'string') {
+    if (c.length > 0) deltas.push(c);
+  } else if (c != null) {
+    const s = typeof c === 'object' ? JSON.stringify(c) : String(c);
+    if (s.length > 0) deltas.push(s);
+  }
+  const toolCalls: OllamaToolCall[] = Array.isArray(msg.tool_calls)
+    ? msg.tool_calls
+        .filter((tc: any) => tc?.function?.name)
+        .map((tc: any) => ({
+          function: {
+            name: String(tc.function.name),
+            // Native args are already an OBJECT — never JSON.parse (that path is only
+            // for a future /v1/cloud fallback, §6.6). Guard non-objects to {}.
+            arguments: tc.function.arguments && typeof tc.function.arguments === 'object' ? tc.function.arguments : {},
+          },
+        }))
+    : [];
+  return { deltas, toolCalls, done: obj?.done === true };
+}
+
 function parserFor(provider: LlmConfig['provider']): (frame: string) => FrameResult {
   switch (provider) {
     case 'anthropic': return parseAnthropicSse;

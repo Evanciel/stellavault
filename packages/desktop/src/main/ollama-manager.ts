@@ -199,6 +199,45 @@ export async function checkCompat(): Promise<OllamaCompat> {
   return { installed, version, minVersion: MIN_OLLAMA_VERSION, outdated };
 }
 
+// ─── Tool-calling capability (agent SP-A, Design Ref: §2.1) ──────────────────
+// The agent loop only engages when the configured local model advertises the 'tools'
+// capability. gemma4:e4b → ['completion','vision','audio','tools','thinking']; gemma2:9b
+// has none and 400s if sent a tools[] array — this gate prevents that.
+
+/** Strip the OpenAI-compat `/v1` suffix → the native API root (where /api/show lives). */
+function nativeBase(baseURL: string): string {
+  return (baseURL || OLLAMA_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
+const toolsCapCache = new Map<string, boolean>();
+
+/** Does this local model advertise the 'tools' capability? Queries POST /api/show and
+ *  checks `capabilities`. Cached per (base, model). Fail-closed: ANY error → false (so a
+ *  probe failure never silently sends tools[] to a model that 400s on it). */
+export async function modelSupportsTools(baseURL: string, model: string): Promise<boolean> {
+  if (!model) return false;
+  const base = nativeBase(baseURL);
+  const key = `${base}::${model}`;
+  const cached = toolsCapCache.get(key);
+  if (cached !== undefined) return cached;
+  let supported = false;
+  try {
+    const res = await net.fetch(`${base}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: model }),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { capabilities?: unknown };
+      supported = Array.isArray(json.capabilities) && json.capabilities.includes('tools');
+    }
+  } catch {
+    supported = false;
+  }
+  toolsCapCache.set(key, supported);
+  return supported;
+}
+
 // ─── Auto-download (feature: "download latest Ollama when missing") ─────────────
 //
 // SECURITY: the download is fully self-determined — the renderer triggers it but supplies
