@@ -797,7 +797,7 @@ export function GraphView() {
   // session, so we fetch+map ONCE instead of re-serialising up to 3000 nodes over IPC
   // and re-running mapCoreNodes/BFS on every note click.
   const fullGraphRef = useRef<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
-  const loadExplore = useCallback(async (filePath: string, title: string) => {
+  const loadExplore = useCallback(async (filePath: string, title: string, pulseAgainst?: Set<string>) => {
     if (!coreReady) return;
     lastViewRef.current = { kind: 'explore', filePath, title };
     // NB: no setLoading() here — blanking to the full-screen "Building graph..."
@@ -816,7 +816,13 @@ export function GraphView() {
         const rel = n.filePath.replace(/\\/g, '/').toLowerCase();
         return abs === rel || abs.endsWith('/' + rel);
       });
-      if (!center) return;
+      if (!center) {
+        // The focused note vanished from the graph (deleted/renamed). On a file:changed
+        // reload, don't strand the view pinned to a missing note — fall back to the galaxy
+        // (which resets lastViewRef + clears the stale pulse). Normal explore just returns.
+        if (pulseAgainst) { setPulse(null); void loadGalaxy(); }
+        return;
+      }
       const sub = bfsFilter(full.nodes, full.edges, center.id, 2);
       expandedRef.current.clear();
       setAllNodes(sub.nodes);
@@ -824,12 +830,31 @@ export function GraphView() {
       setDrillCluster({ id: -2, label: `⚡ ${title}` }); // explore view (id -2 = not a real cluster)
       setFitSignal((s) => s + 1);
       setReheatSignal((s) => s + 1);
-      // Pulse the connections: BFS order → node indices within the sub-graph.
-      const order = bfsVisitOrder(center.id, sub.edges);
-      const idToIdx = new Map(sub.nodes.map((n, i) => [n.id, i] as [string, number]));
-      const visitIdx = order.map((id) => idToIdx.get(id)).filter((i): i is number => i != null);
-      pulseRunIdRef.current += 1;
-      setPulse({ visitIdx, runId: pulseRunIdRef.current });
+      if (pulseAgainst) {
+        // SP-H pulse-new: a file:changed reload — light up ONLY the nodes that are genuinely
+        // new (absent from pulseAgainst = the previous FULL-vault id set), walked in BFS order
+        // from the center so the comet follows real edges. Empty baseline → no pulse (we can't
+        // tell what's new). No new nodes → no pulse (silent refresh).
+        if (pulseAgainst.size > 0) {
+          const order = bfsVisitOrder(center.id, sub.edges);
+          const idToIdx = new Map(sub.nodes.map((n, i) => [n.id, i] as [string, number]));
+          const centerIdx = idToIdx.get(center.id);
+          const newSeq = order.filter((id) => !pulseAgainst.has(id) && id !== center.id);
+          const newIdx = (centerIdx != null ? [centerIdx] : [])
+            .concat(newSeq.map((id) => idToIdx.get(id)).filter((i): i is number => i != null));
+          if (newIdx.length > 1) {
+            pulseRunIdRef.current += 1;
+            setPulse({ visitIdx: newIdx, runId: pulseRunIdRef.current });
+          }
+        }
+      } else {
+        // Normal explore: pulse the whole connection sweep in BFS order.
+        const order = bfsVisitOrder(center.id, sub.edges);
+        const idToIdx = new Map(sub.nodes.map((n, i) => [n.id, i] as [string, number]));
+        const visitIdx = order.map((id) => idToIdx.get(id)).filter((i): i is number => i != null);
+        pulseRunIdRef.current += 1;
+        setPulse({ visitIdx, runId: pulseRunIdRef.current });
+      }
     } catch (err) {
       console.error('[graph] explore failed:', err);
     } finally {
@@ -861,10 +886,19 @@ export function GraphView() {
     const off = onIpc('file:changed', () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        fullGraphRef.current = null; // drop the stale cache so the new note is included
         const view = lastViewRef.current;
-        if (view.kind === 'explore') void loadExplore(view.filePath, view.title);
-        else void loadGalaxy();
+        if (view.kind === 'explore') {
+          // Diff against the previous FULL-vault node set (NOT the displayed depth-2
+          // sub-graph) so only genuinely-new notes pulse. Re-indexing reshuffles which
+          // nodes fall inside the BFS radius, so a sub-graph diff would false-pulse nodes
+          // that existed all along. Capture before dropping the cache.
+          const prevIds = new Set((fullGraphRef.current?.nodes ?? []).map((n) => n.id));
+          fullGraphRef.current = null; // drop stale cache AFTER capturing prev ids
+          void loadExplore(view.filePath, view.title, prevIds);
+        } else {
+          fullGraphRef.current = null;
+          void loadGalaxy();
+        }
       }, 600);
     });
     return () => { if (timer) clearTimeout(timer); off(); };

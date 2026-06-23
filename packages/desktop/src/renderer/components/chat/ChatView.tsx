@@ -33,7 +33,10 @@ import { ipc, onIpc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { useStickToBottom } from '../../lib/use-stick-to-bottom.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
+import { useAppStore } from '../../stores/app-store.js';
 import { isLocalProviderUrl } from '../../../shared/ai-providers.js';
+
+import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
 import type { ChatMessage, ChatCitation } from '../../../shared/ipc-types.js';
@@ -99,6 +102,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   autoDistillRef.current = autoDistill;
   const messagesRef = useRef<ChatMessage[]>(messages);
   const distillStreamRef = useRef<Set<string>>(new Set());
+  // Auto-reveal the graph the FIRST time a write lands (then leave it to the user).
+  const autoOpenedGraphRef = useRef(false);
   const [input, setInput] = useState('');
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
@@ -203,6 +208,20 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       const e = p as { streamId: string; name: string; ok: boolean; summary: string };
       if (!ownsStream(e.streamId)) return;
       setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'result', name: e.name, text: e.summary, ok: e.ok }]);
+      // Split-view: the first successful write reveals the graph so the user watches the
+      // vault grow (agent OR auto-distill writes — both are "the wiki compiling"). Guards:
+      //  • variant==='main' ONLY — the panel-variant chat LIVES in the right panel, so
+      //    flipping rightPanel→'graph' would unmount this very ChatView and abort its own
+      //    stream mid-write. The center-tab chat is independent of rightPanel, so it's safe.
+      //  • only when nothing else is open (rightPanel==='none') — never steal a panel the
+      //    user explicitly chose, and never re-grab one they deliberately closed.
+      if (e.ok && AGENT_WRITE_TOOLS.has(e.name) && !autoOpenedGraphRef.current && variant === 'main') {
+        autoOpenedGraphRef.current = true; // arm once per mount regardless of the panel check
+        const s = useAppStore.getState();
+        if (shouldAutoRevealGraph({ ok: e.ok, toolName: e.name, alreadyOpened: false, variant, rightPanel: s.rightPanel })) {
+          s.setRightPanel('graph');
+        }
+      }
     });
     const offToolConfirm = onIpc('chat:tool-confirm', (p: unknown) => {
       const e = p as { streamId: string; name: string; argsPreview: string };
@@ -226,7 +245,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       offToolConfirm();
       offDistillDone();
     };
-  }, [syncActiveCount, sessionId]);
+  }, [syncActiveCount, sessionId, variant]);
 
   // Keep messagesRef current so the mount-once chat:done handler distills the latest turns.
   useEffect(() => { messagesRef.current = messages; }, [messages]);
