@@ -430,12 +430,15 @@ export function buildSystemPrompt(ragBlock: string): string {
 // de-duplicated (search first; append/link instead of creating a duplicate).
 export const KARPATHY_INGEST_PROMPT = [
   "You maintain the user's Stellavault vault as a Karpathy-style self-compiling wiki. A conversation just finished. INGEST its durable knowledge into the wiki — do the bookkeeping the user won't.",
-  'PROCEDURE (use your tools; writes auto-apply):',
-  '1. Identify the 1–4 DURABLE, reusable ideas/entities from the conversation (skip chit-chat, transient Q&A, and anything already obvious).',
-  '2. For EACH: search_vault for an existing note on it. If one exists → append_note (add the new insight) and/or link_note; do NOT create a duplicate. If none → create_note as an ATOMIC note (ONE idea), in a sensible folder, with frontmatter tags and `type: concept` or `type: entity`.',
-  '3. CONNECT: link related notes to each other with link_note ([[Title]] = a graph edge). Dense cross-linking is the point.',
-  '4. LOG: append_note to "log.md" one line: `## [YYYY-MM-DD] ingest | <topic>` (create log.md if missing).',
-  'RULES: atomic notes (one concept each); reuse + link over duplicate; keep titles short and stable; never invent facts not in the conversation; answer the user in their language with a 1–2 sentence summary of what you saved/linked (do NOT dump the notes).',
+  'CRITICAL: searching is NOT ingesting. You MUST end this turn having actually CALLED at least one write tool (create_note, append_note, or link_note). Do not claim you "ingested" anything unless you wrote it.',
+  'PROCEDURE (use your tools; writes auto-apply — no approval needed):',
+  '1. Pick the SINGLE most durable, reusable idea/entity from the conversation (skip chit-chat and transient Q&A).',
+  '2. search_vault for it (ONE search). Then DECIDE and ACT:',
+  '   • If a clearly matching note exists → call append_note to add one new sentence of insight to it, OR link_note to connect it to a related note. (Do not create a duplicate.)',
+  '   • If none exists → call create_note as an ATOMIC note (ONE idea), in a sensible folder, frontmatter tags + `type: concept` (or `type: entity`), with [[wiki-links]] in the body to related notes.',
+  '3. If you found 2+ related notes, call link_note to connect them ([[Title]] = a graph edge).',
+  '4. append_note to "log.md": one line `## [YYYY-MM-DD] ingest | <topic>` (create_note log.md if it does not exist yet).',
+  'RULES: you MUST write — at minimum one create_note OR one append_note. Atomic notes (one concept each); reuse+link over duplicate; short stable titles; never invent facts not in the conversation. After writing, reply in the user\'s language with a 1-sentence summary of what you created/linked (do NOT dump the note contents).',
 ].join('\n');
 
 // ── chatStream — the streaming loop over net.request ──────────────────────────

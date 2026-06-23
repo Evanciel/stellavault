@@ -166,6 +166,11 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 const slugify = (title: string): string =>
   title.replace(/[^a-zA-Z가-힣0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 60) || 'note';
+// Models (gemma4:e4b) sometimes emit literal "\n"/"\t" in a note's content arg instead of
+// real newlines. For markdown notes that's almost always meant as a line break — normalize
+// so the saved note is properly formatted, not a single line of escape sequences.
+const normalizeNoteContent = (s: string): string =>
+  s.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
 /** Resolve an absolute-or-vault-relative path and assert it stays inside the vault. */
 function resolveInVault(vaultPath: string, filePath: string): string {
   const candidate = isAbsolute(filePath) ? filePath : join(vaultPath, filePath);
@@ -265,7 +270,7 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
       // ── Knowledge-building writes (SP-G, Living Knowledge Graph §9) — all confirm-gated ──
       case 'create_note': {
         const title = str(args.title);
-        const content = str(args.content);
+        const content = normalizeNoteContent(str(args.content));
         if (!title || !content) return { error: 'title and content are required' };
         const rel = join(str(args.folder) || 'Inbox', `${slugify(title)}.md`);
         let safe: string;
@@ -288,7 +293,7 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         return { ok: true, filePath: rel };
       }
       case 'append_note': {
-        const content = str(args.content);
+        const content = normalizeNoteContent(str(args.content));
         if (!str(args.filePath) || !content) return { error: 'filePath and content are required' };
         let safe: string;
         try { safe = resolveInVault(deps.vaultPath, str(args.filePath)); }

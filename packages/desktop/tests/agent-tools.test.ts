@@ -124,6 +124,14 @@ describe('agent-tools — knowledge-building writes (SP-G)', () => {
     expect(deps.afterWrite).toHaveBeenCalled();
   });
 
+  it('create_note normalizes literal \\n in content to real newlines', async () => {
+    const exec = buildExecuteAgentTool(makeDeps() as any);
+    await exec('create_note', { title: 'Escaped', content: 'line1\\nline2\\n\\n## Head', folder: 'Inbox' });
+    const written = readFileSync(join(vault, 'Inbox', 'Escaped.md'), 'utf-8');
+    expect(written).toContain('line1\nline2\n\n## Head'); // real newlines, not literal \n
+    expect(written).not.toContain('line1\\nline2'); // the escape sequence is gone
+  });
+
   it('create_note refuses to overwrite an existing title', async () => {
     const deps = makeDeps();
     const exec = buildExecuteAgentTool(deps as any);
