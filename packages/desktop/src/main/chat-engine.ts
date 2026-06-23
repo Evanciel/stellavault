@@ -21,7 +21,8 @@
 
 import { net } from 'electron';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
-import { DEFAULT_MODELS, OPENAI_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
+import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
+import { modelSupportsTools } from './ollama-manager.js';
 import type { ChatMessage, ChatCitation } from '../shared/ipc-types.js';
 
 // ── Constants (Plan §4) ──────────────────────────────────────────────────────
@@ -432,6 +433,16 @@ export interface ChatStreamOptions {
   onDelta: (delta: string) => void;
   onDone: (citations: ChatCitation[], fullText: string) => void;
   onError: (message: string, category?: ErrorCategory) => void;
+  // Agent (SP-B): when agentOn + the provider is a LOCAL ollama whose model advertises
+  // 'tools', chatStream runs the native tool-calling loop instead of single-shot. The
+  // toolset + executeTool + confirm/transparency callbacks are injected by the main
+  // handler (SP-D); when absent, the agent branch is never taken (zero behaviour change).
+  agentOn?: boolean;
+  toolset?: AgentToolset;
+  executeTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  onToolCall?: (name: string, detailRedacted: string) => void;
+  onToolResult?: (name: string, ok: boolean, summary: string) => void;
+  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
 }
 
 export async function chatStream(opts: ChatStreamOptions): Promise<void> {
@@ -470,6 +481,37 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
   }
 
   const system = buildSystemPrompt(ragOn ? ragBlock : '');
+
+  // ── Agent branch (SP-B, Design Ref §2.1, §3) ──
+  // Only when explicitly enabled AND the provider is a LOCAL ollama whose model advertises
+  // 'tools' (gemma2 → false → 400 avoided). Anything else falls through to single-shot →
+  // fable-5/openai/gemini/non-agent-local are untouched.
+  if (
+    opts.agentOn && opts.executeTool && opts.toolset &&
+    isLocalProviderUrl(cfg.baseURL ?? '') &&
+    await modelSupportsTools(cfg.baseURL ?? '', cfg.model || DEFAULT_MODELS[cfg.provider])
+  ) {
+    if (signal.aborted) { fail('aborted', 'aborted'); return; }
+    const nativeUrl = nativeChatUrl(cfg.baseURL ?? '');
+    const toolset = opts.toolset;
+    const executeTool = opts.executeTool;
+    await runAgentLoop({
+      turns: messages,
+      toolset,
+      executeTool,
+      streamStep: (msgs) =>
+        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, system, msgs, toolset.schemas, false), signal, onDelta),
+      signal,
+      onDelta,
+      onToolCall: opts.onToolCall,
+      onToolResult: opts.onToolResult,
+      onToolConfirm: opts.onToolConfirm,
+      succeed,
+      fail,
+      preloopCitations: citations,
+    });
+    return;
+  }
 
   let spec: ChatRequestSpec;
   try {
@@ -664,4 +706,295 @@ function cat0(status: number): ErrorCategory {
   // instead of a dead-end "Something went wrong".
   if (status === 404) return 'model-missing';
   return 'generic';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Agent (SP-B, Design Ref §2, §3) — native /api/chat tool-calling loop.
+//
+// SAFETY DEVIATION FROM PLAN (R1 mitigation): the plan said "extract the committed
+// single-shot net.request block into streamOnce and reuse it". That block is the #1
+// risk surface (single-settle/timer/abort). Instead we leave it UNTOUCHED and add an
+// ISOLATED `streamOnceNative` for the agent's NATIVE NDJSON framing (which differs from
+// the SSE '\n\n' path anyway). Zero regression risk to the committed streamer.
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface StreamOnceResult {
+  text: string;
+  toolCalls: OllamaToolCall[];
+  aborted: boolean;
+  refusal: boolean;
+}
+
+/** Native /api/chat URL from an openai-compat baseURL (strip a trailing /v1, add /api/chat). */
+export function nativeChatUrl(baseURL: string): string {
+  const base = (baseURL || OLLAMA_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
+  return `${base}/api/chat`;
+}
+
+/** ONE native /api/chat request. Streams content via onDelta, collects WHOLE tool_calls,
+ *  and RESOLVES with the assistant turn — it NEVER calls an outer succeed/fail (the loop
+ *  decides). Rejects (ChatStreamError) on HTTP/parse/connection error; resolves
+ *  {aborted:true} on signal abort. NDJSON framing ('\n'-delimited). Mirrors chatStream's
+ *  single-settle/timer/abort discipline with its OWN `finished` guard, armed per call. */
+export function streamOnceNative(
+  nativeUrl: string,
+  body: unknown,
+  signal: AbortSignal,
+  onDelta: (d: string) => void,
+): Promise<StreamOnceResult> {
+  return new Promise<StreamOnceResult>((resolve, reject) => {
+    let u: URL;
+    try { u = new URL(nativeUrl); } catch { reject(new ChatStreamError('invalid AI endpoint URL', 'generic')); return; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') { reject(new ChatStreamError('unsupported AI endpoint protocol', 'generic')); return; }
+    const protocol: 'http:' | 'https:' = u.protocol;
+
+    const request = net.request({
+      method: 'POST', protocol, hostname: u.hostname,
+      port: u.port ? Number(u.port) : undefined, path: u.pathname + u.search,
+    });
+    request.setHeader('content-type', 'application/json');
+
+    let connectTimer: NodeJS.Timeout | null = null;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let buffer = '';
+    let fullText = '';
+    const toolCalls: OllamaToolCall[] = [];
+    let finished = false;
+
+    const cleanup = () => {
+      if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      signal.removeEventListener('abort', onAbort);
+    };
+    const ok = (r: StreamOnceResult) => { if (finished) return; finished = true; cleanup(); resolve(r); };
+    const bad = (e: ChatStreamError) => { if (finished) return; finished = true; cleanup(); reject(e); };
+
+    function onAbort() {
+      try { request.abort(); } catch { /* already done */ }
+      ok({ text: fullText, toolCalls, aborted: true, refusal: false });
+    }
+    signal.addEventListener('abort', onAbort);
+
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        try { request.abort(); } catch { /* */ }
+        bad(new ChatStreamError('stream idle timeout', 'generic'));
+      }, IDLE_TIMEOUT_MS);
+    };
+    connectTimer = setTimeout(() => {
+      try { request.abort(); } catch { /* */ }
+      bad(new ChatStreamError('connection timeout', 'generic'));
+    }, CONNECT_TIMEOUT_MS);
+
+    // Drain complete '\n'-delimited NDJSON lines from the buffer. Returns true once the
+    // promise has settled (terminal frame / parse error) so the caller stops.
+    const drain = (flushTrailing: boolean): boolean => {
+      let nl = buffer.indexOf('\n');
+      while (nl !== -1) {
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        if (line.trim().length > 0) {
+          let res: OllamaFrameResult;
+          try {
+            res = parseOllamaChatChunk(line);
+          } catch (err) {
+            const cat = err instanceof ChatStreamError ? err.category : 'generic';
+            try { request.abort(); } catch { /* */ }
+            bad(new ChatStreamError(redactForLog(String((err as Error)?.message ?? 'stream error')), cat));
+            return true;
+          }
+          for (const d of res.deltas) { fullText += d; onDelta(d); }
+          for (const tc of res.toolCalls) toolCalls.push(tc);
+          if (res.done) { ok({ text: fullText, toolCalls, aborted: false, refusal: false }); return true; }
+        }
+        nl = buffer.indexOf('\n');
+      }
+      if (flushTrailing && buffer.trim().length > 0) {
+        // Review SP-B #2: a server can close with a newline-LESS trailing error frame
+        // (e.g. {"error":"model ... not found"}). parseOllamaChatChunk THROWS ChatStreamError
+        // on that. Don't let the tolerant catch swallow it — surface it like the main path;
+        // only genuinely malformed/truncated JSON (a thrown SyntaxError) is ignored.
+        let res: OllamaFrameResult;
+        try {
+          res = parseOllamaChatChunk(buffer);
+        } catch (err) {
+          if (err instanceof ChatStreamError) {
+            try { request.abort(); } catch { /* */ }
+            bad(new ChatStreamError(redactForLog(err.message), err.category));
+            return true;
+          }
+          return false; // truncated/partial trailing JSON on a dropped socket — ignore as before
+        }
+        buffer = '';
+        for (const d of res.deltas) { fullText += d; onDelta(d); }
+        for (const tc of res.toolCalls) toolCalls.push(tc);
+      }
+      return false;
+    };
+
+    request.on('response', (response) => {
+      if (finished) return;
+      if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+      const status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        const cat = cat0(status);
+        resetIdle();
+        response.on('data', () => { if (!finished) resetIdle(); /* drain — never logged */ });
+        response.on('end', () => { if (finished) return; console.error(`[chat-engine] ${endpointId(nativeUrl)} HTTP ${status}`); bad(new ChatStreamError(`provider HTTP ${status}`, cat)); });
+        response.on('error', () => { if (finished) return; bad(new ChatStreamError(`provider HTTP ${status}`, cat)); });
+        return;
+      }
+      resetIdle();
+      response.on('data', (chunk: Buffer) => {
+        if (finished) return;
+        resetIdle();
+        buffer += chunk.toString('utf-8');
+        drain(false);
+      });
+      response.on('end', () => {
+        if (finished) return;
+        drain(true);
+        ok({ text: fullText, toolCalls, aborted: false, refusal: false });
+      });
+      response.on('error', (err: Error) => {
+        if (finished) return;
+        console.error(`[chat-engine] ${endpointId(nativeUrl)} response error`, redactForLog(err.message));
+        bad(new ChatStreamError('stream connection error', 'generic'));
+      });
+    });
+
+    request.on('error', (err: Error) => {
+      if (finished) return;
+      console.error(`[chat-engine] ${endpointId(nativeUrl)} request error`, redactForLog(err.message));
+      bad(new ChatStreamError('request failed', isUnreachableErr(err.message) ? 'unreachable' : 'generic'));
+    });
+
+    if (signal.aborted) { onAbort(); return; }
+    request.write(JSON.stringify(body));
+    request.end();
+  });
+}
+
+// Small helpers for the loop.
+function safeStringify(v: unknown): string { try { return JSON.stringify(v) ?? String(v); } catch { return '[unserializable]'; } }
+function summarizeResult(v: unknown): string { const s = safeStringify(v); return s.length > 140 ? `${s.slice(0, 140)}…` : s; }
+function mergeCitations(into: ChatCitation[], add: ChatCitation[]): void {
+  for (const c of add) {
+    if (!into.some((x) => x.filePath === c.filePath && x.title === c.title)) into.push(c);
+  }
+}
+
+/** Toolset shape the loop needs — provided by SP-C (agent-tools.ts), injected via opts. */
+export interface AgentToolset {
+  schemas: unknown[];
+  validNames: Set<string>;
+  isWrite: (name: string) => boolean;
+  extractCitations?: (name: string, result: unknown) => ChatCitation[];
+}
+
+export interface AgentLoopCtx {
+  turns: ChatMessage[];
+  toolset: AgentToolset;
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  /** ONE model call given the running messages → assistant turn. Injected so the loop is
+   *  unit-testable without a network (prod = a streamOnceNative+buildOllamaChatBody thunk). */
+  streamStep: (messages: OllamaMsg[]) => Promise<StreamOnceResult>;
+  signal: AbortSignal;
+  onDelta: (d: string) => void;
+  onToolCall?: (name: string, detailRedacted: string) => void;
+  onToolResult?: (name: string, ok: boolean, summary: string) => void;
+  /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
+  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  succeed: (citations: ChatCitation[], fullText: string) => void;
+  fail: (message: string, category: ErrorCategory) => void;
+  preloopCitations: ChatCitation[];
+}
+
+export const AGENT_MAX_STEPS = 8;
+const AGENT_MAX_INVALID = 3;
+
+/** Flat plan-act loop (Hermes skeleton, Design Ref §3). Calls succeed/fail EXACTLY ONCE
+ *  (the loop owns the outer settle; streamStep owns each inner request's settle). Only the
+ *  terminal step (no tool_calls) succeeds; intermediate steps never settle. */
+export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
+  const messages: OllamaMsg[] = ctx.turns
+    .filter((t) => t.role === 'user' || t.role === 'assistant')
+    .map((t) => ({ role: t.role, content: t.text }));
+  const citations: ChatCitation[] = [...ctx.preloopCitations];
+  let fullText = '';
+  let invalidCount = 0;
+
+  for (let step = 0; step < AGENT_MAX_STEPS; step++) {
+    if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+
+    let res: StreamOnceResult;
+    try {
+      res = await ctx.streamStep(messages);
+    } catch (err) {
+      ctx.fail(
+        redactForLog(String((err as Error)?.message ?? 'stream error')),
+        err instanceof ChatStreamError ? err.category : 'generic',
+      );
+      return;
+    }
+    fullText += res.text;
+    if (res.aborted) { ctx.fail('aborted', 'aborted'); return; }
+    if (res.refusal) { ctx.fail('the model declined to answer', 'refused'); return; }
+
+    // STOP: a turn with no tool_calls is the final answer (or a clarify question).
+    if (res.toolCalls.length === 0) { ctx.succeed(citations, fullText); return; }
+
+    messages.push({ role: 'assistant', content: res.text, tool_calls: res.toolCalls });
+
+    // Review SP-B #3 (low, currently benign): the assistant tool_use turn above carries the
+    // WHOLE batch; the two mid-batch early exits below (MAX_INVALID, abort-during-confirm)
+    // are BOTH terminal (succeed/fail → loop returns, messages[] is never sent again), so a
+    // partially-answered tool_use turn cannot reach the model. If a future change ever loops
+    // back after a mid-batch exit, fill synthetic role:'tool' answers for the remaining
+    // tool_calls before returning to keep native role alternation valid.
+    for (const tc of res.toolCalls) {
+      const name = tc.function.name;
+      // allowlist — unknown → synthetic tool-error (role alternation preserved)
+      if (!ctx.toolset.validNames.has(name)) {
+        if (++invalidCount > AGENT_MAX_INVALID) { ctx.succeed(citations, fullText); return; }
+        messages.push({ role: 'tool', tool_name: name, content: 'Error: unknown tool' });
+        continue;
+      }
+      const args = (tc.function.arguments ?? {}) as Record<string, unknown>;
+
+      // write tool → human confirmation gate (loop pauses on the await)
+      if (ctx.toolset.isWrite(name)) {
+        const approved = ctx.onToolConfirm ? await ctx.onToolConfirm(name, args) : false;
+        if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+        if (!approved) {
+          messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
+          continue;
+        }
+      }
+
+      ctx.onToolCall?.(name, redactForLog(safeStringify(args)).slice(0, 80));
+      let result: unknown;
+      let toolOk = true;
+      try {
+        result = await ctx.executeTool(name, args);
+      } catch (err) {
+        toolOk = false;
+        result = { error: redactForLog(String((err as Error)?.message ?? 'tool failed')) };
+      }
+      ctx.onToolResult?.(name, toolOk, summarizeResult(result));
+      messages.push({ role: 'tool', tool_name: name, content: safeStringify(result) });
+      if (ctx.toolset.extractCitations) mergeCitations(citations, ctx.toolset.extractCitations(name, result));
+
+      // Review SP-B #1: honor an abort that arrived DURING this (possibly slow) tool
+      // execution. Without this re-check the loop would keep executing the REST of the
+      // batch before noticing at the next step's top — breaking the "Stop aborts
+      // immediately" guarantee. This bounds abort latency to a single in-flight tool.
+      if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+    }
+  }
+
+  // MAX_STEPS exhausted — DoS guard. Append a note and finish on what we have.
+  ctx.onDelta('\n\n_(에이전트가 최대 단계 수에 도달했습니다.)_');
+  ctx.succeed(citations, fullText);
 }

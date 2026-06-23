@@ -308,6 +308,209 @@ describe('parseOllamaChatChunk — native NDJSON', () => {
   });
 });
 
+// ── runAgentLoop (agent SP-B) — loop logic via an injected streamStep ─────────
+type Step = { text: string; toolCalls: any[]; aborted: boolean; refusal: boolean };
+const tc = (name: string, args: any = {}) => ({ function: { name, arguments: args } });
+const step = (over: Partial<Step> = {}): Step => ({ text: '', toolCalls: [], aborted: false, refusal: false, ...over });
+
+async function runLoop(steps: Step[], opts: any = {}) {
+  const { runAgentLoop } = await import('../src/main/chat-engine.js');
+  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [] };
+  let i = 0;
+  const ctx = {
+    turns: opts.turns ?? [{ id: 'u', role: 'user', text: 'q', ts: 1 }],
+    toolset: {
+      schemas: [],
+      validNames: new Set<string>(opts.valid ?? ['search_vault', 'log_decision']),
+      isWrite: (n: string) => n === 'log_decision',
+      extractCitations: opts.extractCitations,
+    },
+    executeTool: async (name: string, args: any) => {
+      calls.execute.push({ name, args });
+      opts.executeHook?.(calls.execute.length); // e.g. abort the signal mid-batch
+      if (opts.toolThrows) throw new Error('boom');
+      return opts.toolResult ?? { ok: true };
+    },
+    streamStep: async (msgs: any[]) => { calls.stepMsgs.push(msgs.length); return steps[i++] ?? step(); },
+    signal: opts.signal ?? new AbortController().signal,
+    onDelta: (d: string) => calls.deltas.push(d),
+    onToolCall: (n: string) => calls.toolCall.push(n),
+    onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
+    onToolConfirm: opts.onToolConfirm ?? (async () => true),
+    succeed: (c: any, t: string) => calls.succeed.push({ c, t }),
+    fail: (m: string, cat: string) => calls.fail.push({ m, cat }),
+    preloopCitations: opts.preloop ?? [],
+  };
+  await runAgentLoop(ctx as any);
+  return calls;
+}
+
+describe('runAgentLoop — agent loop invariants', () => {
+  it('terminal: a no-tool-calls turn succeeds ONCE with the streamed text', async () => {
+    const c = await runLoop([step({ text: 'final answer' })]);
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+    expect(c.succeed[0].t).toBe('final answer');
+    expect(c.execute).toHaveLength(0);
+  });
+
+  it('tool call → execute → next turn answers (one succeed, tool ran once)', async () => {
+    const c = await runLoop([
+      step({ text: '', toolCalls: [tc('search_vault', { query: 'x' })] }),
+      step({ text: 'grounded answer' }),
+    ]);
+    expect(c.execute).toEqual([{ name: 'search_vault', args: { query: 'x' } }]);
+    expect(c.toolCall).toEqual(['search_vault']);
+    expect(c.toolResult[0].ok).toBe(true);
+    expect(c.succeed).toHaveLength(1);
+    expect(c.succeed[0].t).toBe('grounded answer');
+  });
+
+  it('MAX_STEPS guard: a model that always emits a tool_call stops at 8 (succeed once)', async () => {
+    const always = Array.from({ length: 12 }, () => step({ toolCalls: [tc('search_vault')] }));
+    const c = await runLoop(always);
+    expect(c.execute).toHaveLength(8); // AGENT_MAX_STEPS
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+    expect(c.deltas.join('')).toContain('최대 단계'); // the cap note
+  });
+
+  it('unknown tool: synthetic error, and >3 invalid → succeed (no execute)', async () => {
+    const c = await runLoop(
+      Array.from({ length: 6 }, () => step({ toolCalls: [tc('hallucinated_tool')] })),
+      { valid: ['search_vault'] },
+    );
+    expect(c.execute).toHaveLength(0);
+    expect(c.succeed).toHaveLength(1); // bailed after MAX_INVALID
+  });
+
+  it('write tool APPROVED → executes; DENIED → not executed', async () => {
+    const approved = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'done' })],
+      { onToolConfirm: async () => true },
+    );
+    expect(approved.execute).toHaveLength(1);
+
+    const denied = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'ok, skipped' })],
+      { onToolConfirm: async () => false },
+    );
+    expect(denied.execute).toHaveLength(0);
+    expect(denied.succeed[0].t).toBe('ok, skipped');
+  });
+
+  it('aborted streamStep → fail("aborted") exactly once, no succeed', async () => {
+    const c = await runLoop([step({ aborted: true })]);
+    expect(c.fail).toHaveLength(1);
+    expect(c.fail[0].cat).toBe('aborted');
+    expect(c.succeed).toHaveLength(0);
+  });
+
+  it('pre-aborted signal → fail before any model call', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const c = await runLoop([step({ text: 'should not run' })], { signal: ac.signal });
+    expect(c.stepMsgs).toHaveLength(0); // streamStep never called
+    expect(c.fail[0].cat).toBe('aborted');
+  });
+
+  it('refusal → fail("refused")', async () => {
+    const c = await runLoop([step({ refusal: true })]);
+    expect(c.fail).toHaveLength(1);
+    expect(c.fail[0].cat).toBe('refused');
+  });
+
+  it('tool that throws → error result fed back (loop survives), still succeeds', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('search_vault')] }), step({ text: 'recovered' })],
+      { toolThrows: true },
+    );
+    expect(c.toolResult[0].ok).toBe(false);
+    expect(c.succeed).toHaveLength(1);
+    expect(c.succeed[0].t).toBe('recovered');
+  });
+
+  it('abort DURING a tool execution stops the rest of the batch (review #1)', async () => {
+    const ac = new AbortController();
+    const c = await runLoop(
+      [step({ toolCalls: [tc('search_vault', { q: 1 }), tc('search_vault', { q: 2 }), tc('search_vault', { q: 3 })] })],
+      { signal: ac.signal, executeHook: (n: number) => { if (n === 1) ac.abort(); } },
+    );
+    expect(c.execute).toHaveLength(1);   // only the first tool ran before the abort re-check
+    expect(c.fail).toHaveLength(1);
+    expect(c.fail[0].cat).toBe('aborted');
+    expect(c.succeed).toHaveLength(0);
+  });
+
+  it('citations: preloop seed + extractCitations merge, de-duped', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('search_vault')] }), step({ text: 'a' })],
+      {
+        preloop: [{ title: 'A', filePath: 'a.md' }],
+        extractCitations: () => [{ title: 'A', filePath: 'a.md' }, { title: 'B', filePath: 'b.md' }],
+      },
+    );
+    expect(c.succeed[0].c).toHaveLength(2); // A (deduped) + B
+  });
+});
+
+describe('streamOnceNative — native NDJSON stream (agent SP-B)', () => {
+  function start(onDelta: (d: string) => void = () => {}) {
+    const ac = new AbortController();
+    return { ac, run: async () => {
+      const { streamOnceNative } = await import('../src/main/chat-engine.js');
+      const p = streamOnceNative('http://127.0.0.1:11434/api/chat', {}, ac.signal, onDelta);
+      await tick();
+      const req = lastReq();
+      const res = new FakeResponse(200, {});
+      req.emit('response', res);
+      return { p, req, res };
+    } };
+  }
+
+  it('resolves with deltas + tool_calls on done:true', async () => {
+    const deltas: string[] = [];
+    const { run } = start((d) => deltas.push(d));
+    const { p, res } = await run();
+    res.emit('data', Buffer.from('{"message":{"content":"안"},"done":false}\n{"message":{"content":"녕"},"done":false}\n'));
+    res.emit('data', Buffer.from('{"message":{"content":"","tool_calls":[{"function":{"name":"search_vault","arguments":{"query":"x"}}}]},"done":true}\n'));
+    const r = await p;
+    expect(deltas.join('')).toBe('안녕');
+    expect(r.toolCalls).toHaveLength(1);
+    expect(r.toolCalls[0].function.name).toBe('search_vault');
+    expect(r.aborted).toBe(false);
+  });
+
+  it('surfaces a newline-LESS trailing error frame as a rejection (review #2)', async () => {
+    const { run } = start();
+    const { p, req, res } = await run();
+    res.emit('data', Buffer.from('{"error":"model gemma4 not found"}')); // no trailing newline
+    res.emit('end');
+    await expect(p).rejects.toThrow(/not found/);
+    expect(req.aborted).toBe(true);
+  });
+
+  it('resolves {aborted:true} when the signal aborts mid-stream', async () => {
+    const { ac, run } = start();
+    const { p, req } = await run();
+    ac.abort();
+    const r = await p;
+    expect(r.aborted).toBe(true);
+    expect(req.aborted).toBe(true);
+  });
+
+  it('buffers a JSON object split across two data chunks', async () => {
+    const deltas: string[] = [];
+    const { run } = start((d) => deltas.push(d));
+    const { p, res } = await run();
+    res.emit('data', Buffer.from('{"message":{"content":"hel')); // split mid-object
+    res.emit('data', Buffer.from('lo"},"done":false}\n{"message":{"content":""},"done":true}\n'));
+    const r = await p;
+    expect(deltas.join('')).toBe('hello');
+    expect(r.aborted).toBe(false);
+  });
+});
+
 // ── capToBudget ─────────────────────────────────────────────────────────────
 describe('capToBudget', () => {
   it('drops lowest-score tail entries beyond budget', async () => {
