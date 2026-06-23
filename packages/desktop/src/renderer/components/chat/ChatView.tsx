@@ -141,9 +141,33 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   const removeAttachment = useCallback((uid: string) => {
     setAttachments((prev) => prev.filter((a) => a.uid !== uid));
   }, []);
-  // Discard staged images if the provider/endpoint changes (the view isn't remounted on a
-  // settings change) — they may not be valid for the new model, and a cloud model can't see them.
-  useEffect(() => { setAttachments([]); }, [ai?.provider, ai?.baseURL]);
+  // Discard staged IMAGE attachments if the provider/endpoint changes (the view isn't remounted
+  // on a settings change) — a cloud model can't see them. Audio/video transcripts are plain text
+  // and stay valid across providers, so keep those.
+  useEffect(() => { setAttachments((prev) => prev.filter((a) => a.type !== 'image')); }, [ai?.provider, ai?.baseURL]);
+
+  // SP4: audio/video attach buttons are gated on the dedicated cloud key being set.
+  const [transcribeOn, setTranscribeOn] = useState(false);
+  const [videoOn, setVideoOn] = useState(false);
+  useEffect(() => {
+    void ipc('ai:has-secret', 'transcribeApiKey').then((v) => setTranscribeOn(!!v)).catch(() => {});
+    void ipc('ai:has-secret', 'videoApiKey').then((v) => setVideoOn(!!v)).catch(() => {});
+  }, []);
+  const [pickingMedia, setPickingMedia] = useState(false);
+  const [mediaNote, setMediaNote] = useState<string | null>(null);
+  const pickMedia = useCallback((kind: 'audio' | 'video') => {
+    setPickingMedia(true);
+    setMediaNote(null);
+    void ipc('chat:pick-media', kind)
+      .then((r) => {
+        const res = r as { attachments?: ChatAttachment[]; error?: string };
+        const picked = (res?.attachments ?? []).map((a) => ({ uid: crypto.randomUUID(), ...a }));
+        if (picked.length > 0) setAttachments((prev) => [...prev, ...picked].slice(0, 6));
+        else if (res?.error) setMediaNote(t(`panel.ai.mediaErr.${res.error}` as never) || res.error);
+      })
+      .catch(() => { /* dialog/transcribe failure → no-op */ })
+      .finally(() => setPickingMedia(false));
+  }, [t]);
 
   // onSaved is read from a ref inside the mount-once subscription so a changing
   // callback identity never re-subscribes (keeps the mount-once invariant).
@@ -294,10 +318,9 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
 
   const send = useCallback(() => {
     const text = input.trim();
-    // SP2: only ship images the active provider can actually SEE. visionOn is re-read here so a
-    // provider switch (which does NOT remount this view) can't smuggle staged images to a
-    // cloud/text model where buildChatBody would silently drop them.
-    const sendable = visionOn ? attachments : [];
+    // SP2/SP4: images only ship to a vision provider (re-read visionOn so a provider switch can't
+    // smuggle them to a cloud/text model); audio/video are plain-text transcripts, valid anywhere.
+    const sendable = attachments.filter((a) => (a.type === 'image' ? visionOn : true));
     if ((!text && sendable.length === 0) || atCap) return;
 
     const newStreamId = crypto.randomUUID();
@@ -560,6 +583,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         </div>
       )}
 
+      {/* SP4 media transcription status / error */}
+      {(pickingMedia || mediaNote) && (
+        <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 10.5, color: pickingMedia ? 'var(--accent-2)' : '#e5854d', textAlign: isMain ? 'center' : 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {pickingMedia ? `🎧 ${t('panel.ai.transcribing')}` : mediaNote}
+        </div>
+      )}
+
       {/* Plaintext-at-rest disclosure (Decision 1) */}
       <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 9, color: 'var(--ink-faint)', textAlign: isMain ? 'center' : 'left' }}>
         {t('panel.ai.sessionError')}
@@ -576,11 +606,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         onAgentToggle={setAgentOn}
         autoDistill={autoDistill}
         onAutoDistillToggle={setAutoDistill}
-        attachments={attachments.map((a) => ({ id: a.uid, fileName: a.fileName, dataUrl: a.dataUrl }))}
+        attachments={attachments.map((a) => ({ id: a.uid, type: a.type, fileName: a.fileName, dataUrl: a.dataUrl, transcript: a.transcript }))}
         onPickImages={pickImages}
         onRemoveAttachment={removeAttachment}
         visionOn={visionOn}
         pickingImages={pickingImages}
+        onPickMedia={pickMedia}
+        transcribeOn={transcribeOn}
+        videoOn={videoOn}
+        pickingMedia={pickingMedia}
         variant={variant}
       />
     </div>

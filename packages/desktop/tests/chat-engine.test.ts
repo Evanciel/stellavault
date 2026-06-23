@@ -211,6 +211,27 @@ describe('buildChatBody', () => {
     expect(res).toEqual({ text: '', toolCalls: [], aborted: true, refusal: false });
   });
 
+  it('foldAttachmentsIntoText: appends audio/video transcripts to user text, ignores images (SP4)', async () => {
+    const { foldAttachmentsIntoText } = await import('../src/main/chat-engine.js');
+    const m = {
+      id: 'u', role: 'user' as const, text: 'what did they say?', ts: 1,
+      attachments: [
+        { type: 'audio' as const, mimeType: 'audio/mpeg', fileName: 'note.mp3', size: 1, transcript: 'hello world' },
+        { type: 'image' as const, mimeType: 'image/png', dataUrl: 'data:image/png;base64,AA', fileName: 'p.png', size: 1 },
+        { type: 'video' as const, mimeType: 'video/mp4', fileName: 'clip.mp4', size: 1, transcript: 'a red car drives by' },
+      ],
+    };
+    const folded = foldAttachmentsIntoText(m);
+    expect(folded).toContain('what did they say?');
+    expect(folded).toContain('note.mp3');
+    expect(folded).toContain('hello world');
+    expect(folded).toContain('clip.mp4');
+    expect(folded).toContain('a red car drives by');
+    expect(folded).not.toContain('base64'); // the image is NOT folded into text
+    // no audio/video → unchanged text
+    expect(foldAttachmentsIntoText({ id: 'u', role: 'user', text: 'hi', ts: 1 })).toBe('hi');
+  });
+
   it('describeImages: no images or non-local provider → "" without a network call (SP3 guard)', async () => {
     const { describeImages } = await import('../src/main/chat-engine.js');
     const ac = new AbortController();

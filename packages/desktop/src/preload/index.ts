@@ -106,6 +106,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:distill',
   // SP2: pick image file(s) to attach to a chat turn (dialog → validated base64).
   'chat:pick-images',
+  // SP4: pick audio/video → cloud transcript (Whisper/Gemini) attachment.
+  'chat:pick-media',
   // Local model server (Ollama) lifecycle — "Start Ollama" affordance
   'ollama:status',
   'ollama:start',

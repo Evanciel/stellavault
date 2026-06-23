@@ -366,9 +366,10 @@ export interface ChatCitation {
 // and rides it back inside the user turn. chat-engine strips the prefix → Ollama
 // native `images:[<base64>]`. v1 = images only (local vision); audio/video later.
 export interface ChatAttachment {
-  type: 'image';
-  mimeType: string;     // e.g. 'image/png'
-  dataUrl: string;      // 'data:<mime>;base64,<…>'  (validated in main)
+  type: 'image' | 'audio' | 'video';
+  mimeType: string;     // e.g. 'image/png' | 'audio/mpeg' | 'video/mp4'
+  dataUrl?: string;     // images only — 'data:<mime>;base64,<…>' (validated in main)
+  transcript?: string;  // SP4 audio/video only — cloud-preprocessed text (Whisper/Gemini)
   fileName: string;
   size: number;         // decoded bytes
 }
@@ -574,6 +575,10 @@ export interface IpcChannelMap {
   // SP2: pick image file(s) for a chat attachment. Main runs the dialog, reads + validates
   // (ext/magic-byte/size) each file, and returns ready-to-display base64 attachments.
   'chat:pick-images': { args: []; result: { attachments: ChatAttachment[] } };
+  // SP4: pick audio/video file(s). Main reads + validates + PREPROCESSES to text (Whisper /
+  // Gemini) and returns attachments carrying a transcript (no media blob). `kind` picks the
+  // dialog filter + which cloud key/endpoint is used. May return an error string per pick.
+  'chat:pick-media': { args: [kind: 'audio' | 'video']; result: { attachments: ChatAttachment[]; error?: string } };
   // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
   'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };

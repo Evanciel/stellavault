@@ -59,6 +59,9 @@ export const ALLOWED_IMAGE_EXT = new Set([
 // Per-image cap (raw decoded bytes) for a chat attachment. Smaller than the 50MB
 // asset cap — these are inlined as base64 into a model request, so keep them tight.
 export const MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+// SP4 audio/video cap. Audio rides Whisper (25MB API limit); video is inlined as base64 to
+// Gemini (request must stay well under ~20MB). 20MB covers short clips / voice notes.
+export const MAX_CHAT_MEDIA_BYTES = 20 * 1024 * 1024; // 20MB
 
 // Expected family for each whitelisted image extension.
 const IMAGE_EXT_FAMILY: Record<string, MediaFamily> = {

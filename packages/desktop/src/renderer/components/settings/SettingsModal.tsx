@@ -284,6 +284,46 @@ function AppearanceTab() {
 //    (settings.ai.hasKey only reflects the persisted active provider).
 //  - If ai.keychainAvailable === false → show a session-only warning banner.
 
+// SP4: a self-contained optional-key field for a media-preprocessing secret (transcribe/video).
+// Write-only: the key travels via ai:set-secret and is never read back into the renderer.
+function MediaKeyField({ provider, label, hint, placeholder }: { provider: string; label: string; hint: string; placeholder: string }) {
+  const t = useT();
+  const [has, setHas] = useState<boolean | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { void ipc('ai:has-secret', provider).then(setHas).catch(() => setHas(false)); }, [provider]);
+  const save = async () => {
+    if (!draft.trim()) return;
+    setBusy(true);
+    try { await ipc('ai:set-secret', provider, draft.trim()); setDraft(''); setHas(await ipc('ai:has-secret', provider)); }
+    catch (err) { console.error('[MediaKeyField] set-secret failed', err); }
+    finally { setBusy(false); }
+  };
+  const clear = async () => {
+    setBusy(true);
+    try { await ipc('ai:clear-secret', provider); setHas(false); }
+    catch (err) { console.error('[MediaKeyField] clear-secret failed', err); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Field label={label} hint={hint}>
+      {has ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#10b981', fontWeight: 600, padding: '4px 10px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 4 }}>{t('settings.ai.apiKey.saved')}</span>
+          <button onClick={() => void clear()} disabled={busy} style={{ padding: '4px 10px', fontSize: 11, cursor: busy ? 'default' : 'pointer', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)' }}>{t('settings.ai.apiKey.clear')}</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input type="password" value={draft} placeholder={placeholder} autoComplete="off" spellCheck={false} aria-label={label}
+            onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) void save(); }}
+            style={{ ...textInputStyle, flex: 1 }} />
+          <button onClick={() => void save()} disabled={busy || !draft.trim()} style={{ padding: '7px 12px', fontSize: 11, cursor: (busy || !draft.trim()) ? 'default' : 'pointer', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#fff', opacity: (busy || !draft.trim()) ? 0.5 : 1, fontWeight: 600 }}>{t('settings.ai.apiKey.save')}</button>
+        </div>
+      )}
+    </Field>
+  );
+}
+
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
@@ -685,6 +725,11 @@ function AITab() {
               </div>
             )}
           </Field>
+
+          {/* SP4: optional dedicated keys for audio (OpenAI Whisper) + video (Gemini) chat
+              attachments — independent of the chat provider, enable the 🎤/🎬 buttons. */}
+          <MediaKeyField provider="transcribeApiKey" label={t('settings.ai.transcribeKey.label')} hint={t('settings.ai.transcribeKey.hint')} placeholder="sk-…" />
+          <MediaKeyField provider="videoApiKey" label={t('settings.ai.videoKey.label')} hint={t('settings.ai.videoKey.hint')} placeholder="AIza…" />
 
           <Field label={t('settings.ai.model.label')} hint={meta.modelHint}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

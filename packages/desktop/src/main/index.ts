@@ -12,7 +12,7 @@ import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { SecretStore } from './secret-store.js';
 import { migrateLegacyApiKey } from './migrate-legacy-api-key.js';
-import { assertInsideVault, sanitizeAssetName, assertAssetSize, ALLOWED_IMAGE_EXT, MAX_CHAT_IMAGE_BYTES, assertImageMatches, sniffMediaType } from './path-safety.js';
+import { assertInsideVault, sanitizeAssetName, assertAssetSize, ALLOWED_IMAGE_EXT, MAX_CHAT_IMAGE_BYTES, assertImageMatches, sniffMediaType, ALLOWED_MEDIA_EXT, MAX_CHAT_MEDIA_BYTES, assertMediaMatches } from './path-safety.js';
 import { OrchestrationEngine } from './orchestration/engine.js';
 import { createQueueDao } from './orchestration/queue-dao.js';
 import type { CaptureRequest } from '../shared/ipc-types.js';
@@ -26,7 +26,8 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 // SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) — streaming engine + plaintext
 // session store. chatStream calls the configured provider DIRECTLY (net.request), the
 // store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
-import { chatStream, describeImages, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { chatStream, describeImages, foldAttachmentsIntoText, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { transcribeAudio, describeVideo } from './media-transcribe.js';
 import { buildAgentToolset, buildExecuteAgentTool } from './agent-tools.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
@@ -183,6 +184,11 @@ const CHAT_MAX_ATTACHMENT_CHARS = 14_000_000; // ~10MB raw → base64 expansion 
 const CHAT_MAX_TOTAL_ATTACHMENT_CHARS = 40_000_000; // aggregate base64 across ALL turns (~30MB)
 const CHAT_ATTACHMENT_DATAURL_RE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
 const IMAGE_FAMILIES = new Set(['png', 'jpeg', 'gif', 'webp']);
+// SP4: ext → MIME for audio/video (Whisper Blob type + Gemini inlineData mimeType).
+const MEDIA_MIME: Record<string, string> = {
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.webm': 'video/webm', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+};
 
 // Validate + sanitise a renderer chat:send request. Returns the cleaned turns
 // (renderer-supplied 'system' roles DROPPED — main owns the system prompt) or a
@@ -222,7 +228,23 @@ function validateChatReq(
       }
       attachments = [];
       for (const a of m.attachments) {
-        if (!a || a.type !== 'image' || typeof a.dataUrl !== 'string') return { ok: false, msg: 'bad attachment' };
+        if (!a) return { ok: false, msg: 'bad attachment' };
+        // SP4 audio/video: carry a TEXT transcript (no media blob). The transcript is just
+        // text injected into the prompt (like user text) — cap its length, no decode needed.
+        if (a.type === 'audio' || a.type === 'video') {
+          const transcript = typeof a.transcript === 'string' ? a.transcript : '';
+          // An empty transcript carries no signal and folds to an empty turn (which some
+          // providers reject) — drop it, mirroring the picker's 'empty-transcript' skip.
+          if (transcript.trim().length === 0) return { ok: false, msg: 'empty transcript' };
+          if (transcript.length > CHAT_MAX_MSG_CHARS) return { ok: false, msg: 'transcript too long' };
+          total += transcript.length;
+          attachments.push({
+            type: a.type, mimeType: String(a.mimeType ?? ''), transcript,
+            fileName: String(a.fileName ?? a.type), size: Number(a.size) || 0,
+          });
+          continue;
+        }
+        if (a.type !== 'image' || typeof a.dataUrl !== 'string') return { ok: false, msg: 'bad attachment' };
         if (a.dataUrl.length > CHAT_MAX_ATTACHMENT_CHARS) return { ok: false, msg: 'attachment too large' };
         if (!CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl)) return { ok: false, msg: 'bad attachment data' };
         attachTotal += a.dataUrl.length;
@@ -1174,7 +1196,8 @@ function registerIpcHandlers(config: AppConfig) {
 
     const transcript = req.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
+      // SP4: fold audio/video transcripts in so the distiller files them too.
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
       .join('\n\n')
       .slice(0, 12_000);
 
@@ -1188,7 +1211,7 @@ function registerIpcHandlers(config: AppConfig) {
       .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
         && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
       .slice(0, 4)
-      .map((a) => a.dataUrl.replace(/^data:[^,]*,/, ''));
+      .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
     let imageBlock = '';
     if (images.length > 0) {
       // Cap the model-generated description (untrusted: a prompt-injected image could make it
@@ -1277,6 +1300,50 @@ function registerIpcHandlers(config: AppConfig) {
       }
     }
     return { attachments };
+  });
+
+  // SP4: pick audio/video → preprocess to TEXT in main (Whisper / Gemini) → return a transcript
+  // attachment (no media blob). The dedicated cloud key never leaves main. Per-file failures are
+  // skipped; if nothing succeeds, an error code is returned for the renderer to surface.
+  ipcMain.handle('chat:pick-media', async (_e, kind: 'audio' | 'video'): Promise<{ attachments: ChatAttachment[]; error?: string }> => {
+    const isAudio = kind === 'audio';
+    const key = secretStore?.getSecret(isAudio ? 'transcribeApiKey' : 'videoApiKey') ?? '';
+    if (!key) return { attachments: [], error: isAudio ? 'no-transcribe-key' : 'no-video-key' };
+    const exts = isAudio ? ['mp3', 'm4a', 'wav', 'ogg', 'webm'] : ['mp4', 'mov', 'webm'];
+    const opts = {
+      title: isAudio ? 'Attach audio' : 'Attach video',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      filters: [{ name: isAudio ? 'Audio' : 'Video', extensions: exts }],
+    };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { attachments: [] };
+    const attachments: ChatAttachment[] = [];
+    let lastError = '';
+    for (const filePath of result.filePaths.slice(0, 3)) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 130_000);
+      try {
+        const ext = extname(filePath).toLowerCase();
+        if (!ALLOWED_MEDIA_EXT.has(ext)) { lastError = 'unsupported'; continue; }
+        const bytes = readFileSync(filePath); // absolute path from the trusted dialog
+        if (bytes.length === 0 || bytes.length > MAX_CHAT_MEDIA_BYTES) { lastError = 'too-large'; continue; }
+        assertMediaMatches(ext, bytes); // magic-byte ↔ ext (throws on mismatch)
+        const mimeType = MEDIA_MIME[ext] ?? (isAudio ? 'audio/mpeg' : 'video/mp4');
+        const transcript = isAudio
+          ? await transcribeAudio(key, bytes, basename(filePath), mimeType, ac.signal)
+          : await describeVideo(key, bytes, mimeType, ac.signal);
+        if (!transcript) { lastError = 'empty-transcript'; continue; }
+        attachments.push({ type: kind, mimeType, transcript, fileName: basename(filePath), size: bytes.length });
+      } catch (err) {
+        lastError = 'transcribe-failed';
+        // err is a "whisper/gemini HTTP NNN" or network error — no secret in it.
+        console.error('[chat] pick-media transcription failed:', String((err as Error)?.message ?? 'error'));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return { attachments, ...(attachments.length === 0 && lastError ? { error: lastError } : {}) };
   });
 
   // Session CRUD (⑨) — delegate to the store. Filenames are UUIDs; the store's

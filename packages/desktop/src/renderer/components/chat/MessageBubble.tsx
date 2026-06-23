@@ -79,13 +79,19 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
             {message.attachments && message.attachments.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: message.text ? 6 : 0 }}>
                 {message.attachments.map((a, i) => (
-                  <img
-                    key={`${a.fileName}-${i}`}
-                    src={a.dataUrl}
-                    alt={a.fileName}
-                    title={a.fileName}
-                    style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'contain' }}
-                  />
+                  a.type === 'image' ? (
+                    <img key={`${a.fileName}-${i}`} src={a.dataUrl} alt={a.fileName} title={a.fileName}
+                      style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'contain' }} />
+                  ) : (
+                    <details key={`${a.fileName}-${i}`} style={{ maxWidth: 260, padding: '6px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--hover)', fontSize: 11.5 }}>
+                      <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                        {a.type === 'audio' ? '🎵' : '🎬'} {a.fileName}
+                      </summary>
+                      {a.transcript && (
+                        <div style={{ marginTop: 5, fontSize: 10.5, color: 'var(--ink-dim)', whiteSpace: 'pre-wrap', maxHeight: 140, overflow: 'auto' }}>{a.transcript}</div>
+                      )}
+                    </details>
+                  )
                 ))}
               </div>
             )}

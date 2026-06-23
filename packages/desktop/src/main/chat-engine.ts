@@ -92,9 +92,24 @@ export interface ChatRequestSpec {
 /** Bare base64 (data: prefix stripped) for each image attachment on a turn — the
  *  format Ollama's NATIVE /api/chat wants under `images`. undefined if none. */
 export function attachmentsToBase64(m: ChatMessage): string[] | undefined {
-  const imgs = (m.attachments ?? []).filter((a) => a.type === 'image' && a.dataUrl);
-  if (imgs.length === 0) return undefined;
-  return imgs.map((a) => a.dataUrl.replace(/^data:[^,]*,/, ''));
+  const urls = (m.attachments ?? [])
+    .filter((a) => a.type === 'image' && a.dataUrl)
+    .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
+  return urls.length > 0 ? urls : undefined;
+}
+
+/** SP4: fold audio/video transcripts into a user turn's text so EVERY provider (and the
+ *  distiller) sees them — they ride as plain text, not media. Images are untouched (they go
+ *  to vision models as image data). Returns the augmented text. */
+export function foldAttachmentsIntoText(m: ChatMessage): string {
+  let text = m.text || '';
+  for (const a of m.attachments ?? []) {
+    if ((a.type === 'audio' || a.type === 'video') && a.transcript) {
+      const label = a.type === 'audio' ? 'Audio' : 'Video';
+      text += `${text ? '\n\n' : ''}[${label} "${a.fileName}" — transcript/description:\n${a.transcript}]`;
+    }
+  }
+  return text;
 }
 
 /** OpenAI-compat message content for a turn — a multimodal [{text},{image_url}] array
@@ -107,7 +122,7 @@ function openaiMessageContent(m: ChatMessage): { role: string; content: unknown 
       role: m.role,
       content: [
         ...(m.text ? [{ type: 'text', text: m.text }] : []),
-        ...imgs.map((a) => ({ type: 'image_url', image_url: { url: a.dataUrl } })),
+        ...imgs.map((a) => ({ type: 'image_url', image_url: { url: a.dataUrl ?? '' } })),
       ],
     };
   }
@@ -117,7 +132,10 @@ function openaiMessageContent(m: ChatMessage): { role: string; content: unknown 
 export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[]): ChatRequestSpec {
   const model = cfg.model || DEFAULT_MODELS[cfg.provider];
   // belt + braces: a 'system' role must NEVER come from the renderer-supplied turns.
-  const conv = messages.filter((m) => m.role !== 'system');
+  // SP4: fold audio/video transcripts into each user turn's text so all providers see them.
+  const conv = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => (m.role === 'user' ? { ...m, text: foldAttachmentsIntoText(m) } : m));
   switch (cfg.provider) {
     case 'anthropic':
       return {
@@ -1043,8 +1061,9 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
   const messages: OllamaMsg[] = ctx.turns
     .filter((t) => t.role === 'user' || t.role === 'assistant')
     .map((t) => {
+      const content = t.role === 'user' ? foldAttachmentsIntoText(t) : t.text; // SP4 transcripts
       const images = attachmentsToBase64(t); // SP2: native vision rides bare base64 on the turn
-      return images ? { role: t.role, content: t.text, images } : { role: t.role, content: t.text };
+      return images ? { role: t.role, content, images } : { role: t.role, content };
     });
   const citations: ChatCitation[] = [...ctx.preloopCitations];
   let fullText = '';

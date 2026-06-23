@@ -48,6 +48,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:tool-approve', // agent SP-D: renderer approves/denies a write tool
   'chat:distill',      // agent SP-I: auto-distill a finished conversation into the wiki
   'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
+  'chat:pick-media',   // SP4: pick audio/video → cloud transcript attachment
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
