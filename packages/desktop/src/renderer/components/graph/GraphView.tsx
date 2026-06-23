@@ -14,7 +14,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
-import { ipc } from '../../lib/ipc-client.js';
+import { ipc, onIpc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { useAppStore } from '../../stores/app-store.js';
@@ -741,8 +741,13 @@ export function GraphView() {
 
   // Wave 1 cluster-first LOD: open at the galaxy (cluster super-nodes), NOT all 12k
   // notes. Clicking a super-node streams that cluster's members into the scene.
+  // SP-H Living Knowledge Graph: remember the active view so a file:changed (the agent
+  // writing a note) reloads THIS view — galaxy or the focused explore — not always galaxy.
+  const lastViewRef = useRef<{ kind: 'galaxy' } | { kind: 'explore'; filePath: string; title: string }>({ kind: 'galaxy' });
+
   const loadGalaxy = useCallback(async () => {
     if (!coreReady) return;
+    lastViewRef.current = { kind: 'galaxy' };
     setLoading(true);
     setDrillCluster(null);
     setPulse(null); // leaving the explore view → stop any running connection pulse (its node indices are stale here)
@@ -794,6 +799,7 @@ export function GraphView() {
   const fullGraphRef = useRef<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const loadExplore = useCallback(async (filePath: string, title: string) => {
     if (!coreReady) return;
+    lastViewRef.current = { kind: 'explore', filePath, title };
     // NB: no setLoading() here — blanking to the full-screen "Building graph..."
     // placeholder on every click made the explore feel like a jarring flash. The old
     // graph stays visible during the (now usually cached) swap.
@@ -843,6 +849,26 @@ export function GraphView() {
       useAppStore.getState().setExploreTarget(null);
     }
   }, [exploreTarget, coreReady, loadExplore]);
+
+  // ── Living Knowledge Graph (SP-H, Design Ref §9.2 B) ──
+  // When vault files change (the agent writing/linking a note, or any edit), refresh the
+  // graph so new nodes/edges appear — the second brain visibly GROWS as you chat. Debounced
+  // so a multi-note agent turn coalesces into ONE reload; the cached full-graph is dropped
+  // so the explore view re-fetches with the new note included.
+  useEffect(() => {
+    if (!coreReady) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = onIpc('file:changed', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        fullGraphRef.current = null; // drop the stale cache so the new note is included
+        const view = lastViewRef.current;
+        if (view.kind === 'explore') void loadExplore(view.filePath, view.title);
+        else void loadGalaxy();
+      }, 600);
+    });
+    return () => { if (timer) clearTimeout(timer); off(); };
+  }, [coreReady, loadGalaxy, loadExplore]);
 
   // Global safety cap — same policy as GraphPanel.
   const { visibleNodes, visibleEdges } = useMemo(() => {
