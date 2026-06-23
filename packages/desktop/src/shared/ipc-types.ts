@@ -553,8 +553,10 @@ export interface IpcChannelMap {
   // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
   // streamId). The API key NEVER appears in these args (main reads SecretStore).
   // sessionId routes the persisted assistant turn to the right session on done.
-  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean }]; result: void };
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean }]; result: void };
   'chat:abort': { args: [streamId: string]; result: void };
+  // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
+  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
   // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
   'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };
@@ -606,6 +608,10 @@ export interface IpcEventMap {
     message: string;
     category?: 'key-missing' | 'rate-limited' | 'refused' | 'too-large' | 'aborted' | 'unreachable' | 'model-missing' | 'generic';
   };
+  // Agent (SP-D) — tool-activity transparency + write-approval handshake (e.sender targeted).
+  'chat:tool-call':    { streamId: string; name: string; detailRedacted: string };
+  'chat:tool-result':  { streamId: string; name: string; ok: boolean; summary: string };
+  'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
 }
 
 // Helper types for typed invoke/on

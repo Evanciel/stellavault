@@ -27,6 +27,7 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 // session store. chatStream calls the configured provider DIRECTLY (net.request), the
 // store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
 import { chatStream, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { buildAgentToolset, buildExecuteAgentTool } from './agent-tools.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
   ollamaStatus,
@@ -167,6 +168,12 @@ let engine: OrchestrationEngine | null = null;
 // an identity guard. NEVER carries the API key.
 interface ChatStreamEntry { controller: AbortController; wcId: number; }
 const chatStreamRegistry = new Map<string, ChatStreamEntry>();
+
+// Agent (SP-D): a write tool pauses the loop on a per-stream approval promise; the
+// renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
+// Cleaned up on resolve / abort / chat:send finally so a blocked await never leaks the
+// cap-of-2 slot. Default on any teardown = DENY.
+const pendingApprovals = new Map<string, { resolve: (v: boolean) => void; wcId: number }>();
 const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAT_MAX_MESSAGES = 100;
 const CHAT_MAX_MSG_CHARS = 24_000;
@@ -1001,6 +1008,54 @@ function registerIpcHandlers(config: AppConfig) {
     // Register BEFORE any await so an in-flight RAG search is cancellable via
     // chat:abort / before-quit.
     chatStreamRegistry.set(req.streamId, entry);
+
+    // ─── Agent wiring (SP-D, Design Ref §5.3) ───
+    // When the renderer asks for agent mode, inject the in-process toolset + executeTool
+    // built from THIS process's vault singletons + a write-confirm broker. chat-engine
+    // only takes the agent branch when the provider is local-ollama-with-tools (it
+    // re-checks), so these are harmless to pass for a non-agent/non-local request.
+    let agentOpts: Record<string, unknown> = {};
+    if (req.agentOn) {
+      const afterWrite = async (saved: string) => {
+        const safe = assertInsideVault(currentVaultPath, saved); // re-assert (defence in depth)
+        noteSelfWrite(safe); // W1-15 echo guard
+        const core = await import('@stellavault/core');
+        if (typeof (core as any).indexFiles === 'function') {
+          await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+        }
+        bumpVaultFsVersion();
+        bumpGraphCacheVersion();
+      };
+      const executeTool = buildExecuteAgentTool({
+        searchEngine, store, decayEngine, vaultPath: currentVaultPath,
+        coreReady: () => coreReady, afterWrite,
+      });
+      agentOpts = {
+        agentOn: true,
+        toolset: buildAgentToolset(),
+        executeTool,
+        onToolCall: (name: string, detailRedacted: string) =>
+          safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name: string, ok: boolean, summary: string) =>
+          safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary }),
+        // Write tool → pause the loop on an approval promise. An abort while waiting
+        // resolves it to false (DENY) so the loop unblocks and fails cleanly — no slot leak.
+        onToolConfirm: (name: string, args: Record<string, unknown>) =>
+          new Promise<boolean>((resolve) => {
+            if (controller.signal.aborted) { resolve(false); return; }
+            const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
+            controller.signal.addEventListener('abort', onAbort, { once: true });
+            pendingApprovals.set(req.streamId, {
+              wcId,
+              resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
+            });
+            let argsPreview = '';
+            try { argsPreview = JSON.stringify(args).slice(0, 400); } catch { argsPreview = '{…}'; }
+            safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
+          }),
+      };
+    }
+
     try {
       await chatStream({
         cfg,
@@ -1008,6 +1063,7 @@ function registerIpcHandlers(config: AppConfig) {
         ragOn: !!req.ragOn,
         signal: controller.signal,
         searchEngine, // module-level; may be null → engine null-guards
+        ...agentOpts,
         onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
         onDone: (citations, fullText: string) => {
           safeSend('chat:done', { streamId: req.streamId, citations });
@@ -1034,7 +1090,22 @@ function registerIpcHandlers(config: AppConfig) {
       // Identity guard: only delete if this exact entry still owns the slot (a reused
       // streamId from a later send must not be clobbered).
       if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+      // Backstop: a still-pending write approval for this stream resolves DENY (no leak).
+      const pa = pendingApprovals.get(req.streamId);
+      if (pa) { pendingApprovals.delete(req.streamId); pa.resolve(false); }
     }
+  });
+
+  // Agent (SP-D): the renderer approves/denies a pending write tool. Owner-checked by
+  // wcId so another window can't approve someone else's write. The renderer can ONLY
+  // approve/deny — it never names a tool or its args (the model + main decide that).
+  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean }): void => {
+    const sid = typeof payload?.streamId === 'string' ? payload.streamId : '';
+    const pa = pendingApprovals.get(sid);
+    if (!pa) return; // unknown / already-resolved
+    if (pa.wcId !== e.sender.id) return; // not the owning window
+    pendingApprovals.delete(sid);
+    pa.resolve(payload?.approve === true);
   });
 
   // Abort an in-flight stream. Only the OWNING webContents may abort its own stream.

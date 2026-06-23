@@ -45,8 +45,12 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:load-session',
   'chat:rename-session',
   'chat:delete-session',
+  'chat:tool-approve', // agent SP-D: renderer approves/denies a write tool
 ];
-const CHAT_EVENTS = ['chat:chunk', 'chat:done', 'chat:error'];
+const CHAT_EVENTS = [
+  'chat:chunk', 'chat:done', 'chat:error',
+  'chat:tool-call', 'chat:tool-result', 'chat:tool-confirm', // agent SP-D transparency/confirm
+];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {
   it('all 6 chat invoke channels are in ALLOWED_CHANNELS', () => {
@@ -124,6 +128,21 @@ describe('SP1 chat IPC — security invariants (regression locks, Plan §9/§10)
     const validate = mainSrc.match(/function validateChatReq[\s\S]*?\n\}/);
     expect(validate).not.toBeNull();
     expect(validate![0]).not.toMatch(/role:\s*'system'/);
+  });
+
+  it('agent: chat:tool-approve is owner-checked (wcId) so another window cannot approve a write', () => {
+    const h = mainSrc.match(/ipcMain\.handle\('chat:tool-approve'[\s\S]*?\n  \}\);/);
+    expect(h).not.toBeNull();
+    expect(h![0]).toContain('e.sender.id');
+    expect(h![0]).toMatch(/wcId/);
+  });
+
+  it('agent: vault WRITES are a human gate — write tools pause on pendingApprovals (no auto-apply)', () => {
+    // The renderer can only approve/deny; a write tool cannot run without a chat:tool-confirm
+    // round-trip resolving the per-stream pendingApprovals promise.
+    expect(mainSrc).toContain('pendingApprovals');
+    expect(mainSrc).toContain("'chat:tool-confirm'");
+    expect(mainSrc).toContain('onToolConfirm');
   });
 
   it('a SEPARATE before-quit listener aborts in-flight chat streams (existing ones untouched)', () => {

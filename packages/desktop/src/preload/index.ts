@@ -99,6 +99,9 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:load-session',
   'chat:rename-session',
   'chat:delete-session',
+  // Agent (SP-D): approve/deny a write tool the MAIN model requested (renderer can ONLY
+  // approve/deny — it can never name a tool to run).
+  'chat:tool-approve',
   // Local model server (Ollama) lifecycle — "Start Ollama" affordance
   'ollama:status',
   'ollama:start',
@@ -123,6 +126,10 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:chunk',
   'chat:done',
   'chat:error',
+  // Agent (SP-D): tool-activity transparency + write-approval handshake
+  'chat:tool-call',
+  'chat:tool-result',
+  'chat:tool-confirm',
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);
