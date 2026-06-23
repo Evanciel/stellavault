@@ -85,6 +85,11 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [error, setError] = useState<ChatError | null>(null);
   const [ragOn, setRagOn] = useState(true);
+  // Agent mode (SP-E): the model can call vault tools (search/read/…) and propose a
+  // confirm-gated write. Tool activity streams into toolLog; a write pauses on `confirm`.
+  const [agentOn, setAgentOn] = useState(false);
+  const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean }>>([]);
+  const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
   const [input, setInput] = useState('');
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
@@ -168,12 +173,40 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       syncActiveCount();
     });
 
+    // Agent (SP-E) — tool activity + write-confirm, routed by streamId.
+    const offToolCall = onIpc('chat:tool-call', (p: unknown) => {
+      const e = p as { streamId: string; name: string; detailRedacted: string };
+      if (!streamMapRef.current.has(e.streamId)) return;
+      setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'call', name: e.name, text: e.detailRedacted }]);
+    });
+    const offToolResult = onIpc('chat:tool-result', (p: unknown) => {
+      const e = p as { streamId: string; name: string; ok: boolean; summary: string };
+      if (!streamMapRef.current.has(e.streamId)) return;
+      setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'result', name: e.name, text: e.summary, ok: e.ok }]);
+    });
+    const offToolConfirm = onIpc('chat:tool-confirm', (p: unknown) => {
+      const e = p as { streamId: string; name: string; argsPreview: string };
+      if (!streamMapRef.current.has(e.streamId)) return;
+      setConfirm(e);
+    });
+
     return () => {
       offChunk();
       offDone();
       offError();
+      offToolCall();
+      offToolResult();
+      offToolConfirm();
     };
   }, [syncActiveCount]);
+
+  // Approve/deny a write tool the agent requested.
+  const respondConfirm = useCallback((approve: boolean) => {
+    setConfirm((cur) => {
+      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve }).catch(() => {});
+      return null;
+    });
+  }, []);
 
   // ─── Abort ALL in-flight streams on unmount ───
   // Covers conversation switch too: switching remounts this view, firing this
@@ -211,6 +244,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
     setInput('');
     setError(null);
     setCapMessage(false);
+    setToolLog([]);   // fresh tool trace per turn
+    setConfirm(null);
     // Register the route BEFORE invoking chat:send. The mount-once subscription
     // is already attached, so any chunk for newStreamId resolves immediately.
     streamMapRef.current.set(newStreamId, assistantTurn.id);
@@ -221,6 +256,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       streamId: newStreamId,
       sessionId,
       ragOn,
+      agentOn,
     }).catch(() => {
       // The invoke promise rejects ONLY for the synchronous guards (cap reached /
       // duplicate / validation). Stream-time failures arrive as 'chat:error'.
@@ -370,6 +406,47 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         )}
       </div>
 
+      {/* Agent tool-activity strip (SP-E) — what the agent is doing, live. */}
+      {agentOn && toolLog.length > 0 && (
+        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px' }}>
+          <div style={{ maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {toolLog.slice(-6).map((tlog) => (
+              <div key={tlog.id} style={{ fontSize: 11, color: 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span aria-hidden>{tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : '✓'}</span>
+                <span style={{ fontWeight: 600 }}>{tlog.name}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Write-approval card (SP-E) — the agent proposed a vault WRITE; it runs only on Approve. */}
+      {confirm && (
+        <div style={{ padding: isMain ? '0 16px 8px' : '0 10px 8px' }}>
+          <div style={{
+            maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined,
+            padding: '10px 12px', borderRadius: 8,
+            background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
+          }}>
+            <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 6 }}>
+              ✍️ {t('panel.ai.agentWriteConfirm')} <span style={{ fontWeight: 700 }}>{confirm.name}</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-dim)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 8 }}>
+              {confirm.argsPreview}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => respondConfirm(true)} style={{ padding: '5px 16px', fontSize: 12, fontWeight: 600, background: 'var(--accent)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>
+                {t('panel.ai.agentApprove')}
+              </button>
+              <button onClick={() => respondConfirm(false)} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+                {t('panel.ai.agentDeny')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stop button while streaming */}
       {isStreaming && (
         <div style={{ padding: '0 10px 6px', display: 'flex', justifyContent: 'center' }}>
@@ -408,6 +485,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         atCap={atCap}
         ragOn={ragOn}
         onRagToggle={setRagOn}
+        agentOn={agentOn}
+        onAgentToggle={setAgentOn}
         variant={variant}
       />
     </div>

@@ -17,11 +17,14 @@ export interface ComposerProps {
   atCap: boolean;
   ragOn: boolean;
   onRagToggle: (on: boolean) => void;
+  /** Agent mode (SP-E): let the model call vault tools + propose confirm-gated writes. */
+  agentOn?: boolean;
+  onAgentToggle?: (on: boolean) => void;
   /** 'panel' = narrow right-panel sizing; 'main' = roomy centered main-view sizing. */
   variant?: 'panel' | 'main';
 }
 
-export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, variant = 'panel' }: ComposerProps) {
+export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, variant = 'panel' }: ComposerProps) {
   const t = useT();
   const canSend = value.trim().length > 0 && !atCap;
   const isMain = variant === 'main';
@@ -96,6 +99,20 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, v
             />
             {t('panel.ai.ragLabel')}
           </label>
+          {onAgentToggle && (
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                fontSize: isMain ? 12 : 10.5,
+                color: agentOn ? 'var(--accent-2)' : 'var(--ink-dim)',
+                cursor: 'pointer', userSelect: 'none', fontWeight: agentOn ? 600 : 400,
+              }}
+              title={t('panel.ai.agentHint')}
+            >
+              <input type="checkbox" checked={!!agentOn} onChange={(e) => onAgentToggle(e.target.checked)} style={{ cursor: 'pointer' }} />
+              🤖 {t('panel.ai.agentLabel')}
+            </label>
+          )}
           <button
             onClick={() => { if (canSend) onSend(); }}
             disabled={!canSend}
