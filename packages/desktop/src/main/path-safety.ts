@@ -48,6 +48,40 @@ export const ALLOWED_MEDIA_EXT = new Set([
   '.mp3', '.m4a', '.wav', '.ogg', '.webm', '.mp4', '.mov',
 ]);
 
+// ─── SP2 image attachment (local vision) — image whitelist + magic-byte sniff ──
+// Images that may be attached to a chat turn and passed to a vision model
+// (Ollama gemma4:e4b native /api/chat `images:[base64]`). SVG is EXCLUDED (XML +
+// <script> risk) — only raster formats the magic-byte sniffer can verify.
+export const ALLOWED_IMAGE_EXT = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp',
+]);
+
+// Per-image cap (raw decoded bytes) for a chat attachment. Smaller than the 50MB
+// asset cap — these are inlined as base64 into a model request, so keep them tight.
+export const MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+
+// Expected family for each whitelisted image extension.
+const IMAGE_EXT_FAMILY: Record<string, MediaFamily> = {
+  '.png': 'png',
+  '.jpg': 'jpeg',
+  '.jpeg': 'jpeg',
+  '.gif': 'gif',
+  '.webp': 'webp',
+};
+
+/** Throw unless `bytes` look like the image family implied by `ext`. Fail-closed:
+ *  an unsupported ext or unrecognized/mismatched bytes both throw. The ext↔content
+ *  integrity gate for SP2 image attachments. */
+export function assertImageMatches(ext: string, bytes: Uint8Array | Buffer): void {
+  const e = ext.toLowerCase();
+  const expected = IMAGE_EXT_FAMILY[e];
+  if (!expected) throw new Error(`unsupported image type "${e}"`);
+  const actual = sniffMediaType(bytes);
+  if (actual === null || actual !== expected) {
+    throw new Error(`image content does not match extension "${e}"`);
+  }
+}
+
 /** Canonical magic-byte family of the supplied bytes, or null if unrecognized.
  *  Pure & synchronous so it can be unit-tested and reused by SP2 handlers.
  *  Recognizes the media families plus PNG/JPEG (so the same sniffer can later
@@ -63,6 +97,16 @@ export function sniffMediaType(bytes: Uint8Array | Buffer): MediaFamily | null {
     if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'webm';
     // OGG: 4F 67 67 53 ('OggS')
     if (b[0] === 0x4f && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53) return 'ogg';
+    // GIF: 47 49 46 38 ('GIF8' — covers GIF87a/GIF89a)
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'gif';
+  }
+  // WebP: 'RIFF' at 0 AND 'WEBP' at offset 8 (RIFF alone could be WAV/AVI).
+  if (
+    len >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    return 'webp';
   }
   // JPEG: FF D8 FF
   if (len >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpeg';
@@ -100,7 +144,7 @@ export function assertMediaMatches(ext: string, bytes: Uint8Array | Buffer): voi
 }
 
 /** Canonical magic-byte families recognized by sniffMediaType. */
-export type MediaFamily = 'png' | 'jpeg' | 'isobmff' | 'webm' | 'wav' | 'ogg' | 'mp3';
+export type MediaFamily = 'png' | 'jpeg' | 'gif' | 'webp' | 'isobmff' | 'webm' | 'wav' | 'ogg' | 'mp3';
 
 // Expected family for each whitelisted media extension. .mp4/.m4a/.mov all ride
 // the ISO base media file format ('ftyp' box), so they map to 'isobmff'.

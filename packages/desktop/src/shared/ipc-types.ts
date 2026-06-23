@@ -361,6 +361,17 @@ export interface ChatCitation {
   filePath: string;     // absolute; '' if not resolvable
   snippet?: string;     // live display only; NOT persisted (Decision 2)
 }
+// SP2 image attachment. Main reads+validates the picked file and returns a base64
+// `dataUrl` (data:image/png;base64,…); the renderer displays it (CSP img-src data:)
+// and rides it back inside the user turn. chat-engine strips the prefix → Ollama
+// native `images:[<base64>]`. v1 = images only (local vision); audio/video later.
+export interface ChatAttachment {
+  type: 'image';
+  mimeType: string;     // e.g. 'image/png'
+  dataUrl: string;      // 'data:<mime>;base64,<…>'  (validated in main)
+  fileName: string;
+  size: number;         // decoded bytes
+}
 export interface ChatMessage {
   id: string;           // renderer-generated (crypto.randomUUID) per turn
   role: ChatRole;
@@ -368,6 +379,7 @@ export interface ChatMessage {
   ts: number;           // epoch ms
   incomplete?: boolean; // partial / aborted / refused turn (§7)
   citations?: ChatCitation[]; // assistant turns only
+  attachments?: ChatAttachment[]; // user turns only (SP2)
 }
 // Session list row (⑨). `id` is the UUID filename; `title` is a metadata field
 // (rename writes this, NEVER the filename); `updated` is last-saved epoch ms.
@@ -559,6 +571,9 @@ export interface IpcChannelMap {
   'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
+  // SP2: pick image file(s) for a chat attachment. Main runs the dialog, reads + validates
+  // (ext/magic-byte/size) each file, and returns ready-to-display base64 attachments.
+  'chat:pick-images': { args: []; result: { attachments: ChatAttachment[] } };
   // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
   'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };

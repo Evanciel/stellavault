@@ -23,13 +23,21 @@ export interface ComposerProps {
   /** Auto-distill (SP-I): after each answer, fold the conversation into the wiki. */
   autoDistill?: boolean;
   onAutoDistillToggle?: (on: boolean) => void;
+  /** SP2 image attachments staged for the next send. */
+  attachments?: Array<{ id: string; fileName: string; dataUrl: string }>;
+  onPickImages?: () => void;
+  onRemoveAttachment?: (id: string) => void;
+  /** The active model advertises 'vision' — gates the 📎 attach affordance. */
+  visionOn?: boolean;
+  pickingImages?: boolean;
   /** 'panel' = narrow right-panel sizing; 'main' = roomy centered main-view sizing. */
   variant?: 'panel' | 'main';
 }
 
-export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, variant = 'panel' }: ComposerProps) {
+export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, attachments, onPickImages, onRemoveAttachment, visionOn, pickingImages, variant = 'panel' }: ComposerProps) {
   const t = useT();
-  const canSend = value.trim().length > 0 && !atCap;
+  const atts = attachments ?? [];
+  const canSend = (value.trim().length > 0 || atts.length > 0) && !atCap;
   const isMain = variant === 'main';
 
   const handleKeyDown = useCallback(
@@ -37,10 +45,10 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
       // Enter sends; Shift+Enter inserts a newline.
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (value.trim().length > 0 && !atCap) onSend();
+        if ((value.trim().length > 0 || atts.length > 0) && !atCap) onSend();
       }
     },
-    [value, atCap, onSend],
+    [value, atCap, onSend, atts.length],
   );
 
   return (
@@ -56,6 +64,20 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
       }}
     >
       <div style={{ width: '100%', maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {atts.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {atts.map((a) => (
+              <div key={a.id} title={a.fileName} style={{ position: 'relative', width: 52, height: 52, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', flexShrink: 0 }}>
+                <img src={a.dataUrl} alt={a.fileName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <button
+                  onClick={() => onRemoveAttachment?.(a.id)}
+                  aria-label={t('panel.ai.attachRemove')}
+                  style={{ position: 'absolute', top: 1, right: 1, width: 16, height: 16, lineHeight: '14px', padding: 0, borderRadius: 8, border: 'none', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, cursor: 'pointer' }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -129,6 +151,23 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
               <input type="checkbox" checked={!!autoDistill} onChange={(e) => onAutoDistillToggle(e.target.checked)} style={{ cursor: 'pointer' }} />
               🗂 {t('panel.ai.autoDistillLabel')}
             </label>
+          )}
+          {visionOn && onPickImages && (
+            <button
+              onClick={() => { if (!pickingImages) onPickImages(); }}
+              disabled={pickingImages}
+              title={t('panel.ai.attachHint')}
+              aria-label={t('panel.ai.attachLabel')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: isMain ? '5px 10px' : '4px 8px',
+                background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                color: 'var(--ink-dim)', fontSize: isMain ? 12 : 10.5,
+                cursor: pickingImages ? 'default' : 'pointer', opacity: pickingImages ? 0.5 : 1,
+              }}
+            >
+              📎 {t('panel.ai.attachLabel')}
+            </button>
           )}
           <button
             onClick={() => { if (canSend) onSend(); }}

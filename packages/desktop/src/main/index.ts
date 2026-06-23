@@ -12,7 +12,7 @@ import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { SecretStore } from './secret-store.js';
 import { migrateLegacyApiKey } from './migrate-legacy-api-key.js';
-import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
+import { assertInsideVault, sanitizeAssetName, assertAssetSize, ALLOWED_IMAGE_EXT, MAX_CHAT_IMAGE_BYTES, assertImageMatches, sniffMediaType } from './path-safety.js';
 import { OrchestrationEngine } from './orchestration/engine.js';
 import { createQueueDao } from './orchestration/queue-dao.js';
 import type { CaptureRequest } from '../shared/ipc-types.js';
@@ -44,7 +44,7 @@ import {
   deleteSession as chatDeleteSession,
   isUuid as chatIsUuid,
 } from './chat-session-store.js';
-import type { ChatMessage } from '../shared/ipc-types.js';
+import type { ChatMessage, ChatAttachment } from '../shared/ipc-types.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -178,6 +178,11 @@ const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const CHAT_MAX_MESSAGES = 100;
 const CHAT_MAX_MSG_CHARS = 24_000;
 const CHAT_MAX_TOTAL_CHARS = 120_000;
+const CHAT_MAX_IMAGES_PER_MSG = 6;
+const CHAT_MAX_ATTACHMENT_CHARS = 14_000_000; // ~10MB raw → base64 expansion headroom
+const CHAT_MAX_TOTAL_ATTACHMENT_CHARS = 40_000_000; // aggregate base64 across ALL turns (~30MB)
+const CHAT_ATTACHMENT_DATAURL_RE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+const IMAGE_FAMILIES = new Set(['png', 'jpeg', 'gif', 'webp']);
 
 // Validate + sanitise a renderer chat:send request. Returns the cleaned turns
 // (renderer-supplied 'system' roles DROPPED — main owns the system prompt) or a
@@ -196,6 +201,7 @@ function validateChatReq(
     return { ok: false, msg: 'bad messages' };
   }
   let total = 0;
+  let attachTotal = 0; // aggregate base64 chars across ALL turns (DoS bound)
   const clean: ChatMessage[] = [];
   for (const m of req.messages) {
     if (!m || typeof m.text !== 'string') return { ok: false, msg: 'bad message text' };
@@ -203,7 +209,42 @@ function validateChatReq(
     if (m.role !== 'user' && m.role !== 'assistant') return { ok: false, msg: 'bad role' };
     if (m.text.length > CHAT_MAX_MSG_CHARS) return { ok: false, msg: 'message too long' };
     total += m.text.length;
-    clean.push({ id: String(m.id ?? ''), role: m.role, text: m.text, ts: Number(m.ts) || Date.now() });
+    // SP2: image attachments. The chat:send path is RENDERER-controlled (unlike the trusted
+    // dialog), so re-validate at the CONTENT level — not just the lexical data-URL shape: a
+    // compromised renderer could forge `data:image/png;base64,<non-image bytes>` past a regex.
+    // Decode → magic-byte sniff → the declared mime MUST match the sniffed family; derive the
+    // stored mimeType from the SNIFF (never the attacker label); enforce per-image + aggregate
+    // byte caps (DoS bound).
+    let attachments: ChatAttachment[] | undefined;
+    if (m.attachments !== undefined) {
+      if (!Array.isArray(m.attachments) || m.attachments.length > CHAT_MAX_IMAGES_PER_MSG) {
+        return { ok: false, msg: 'bad attachments' };
+      }
+      attachments = [];
+      for (const a of m.attachments) {
+        if (!a || a.type !== 'image' || typeof a.dataUrl !== 'string') return { ok: false, msg: 'bad attachment' };
+        if (a.dataUrl.length > CHAT_MAX_ATTACHMENT_CHARS) return { ok: false, msg: 'attachment too large' };
+        if (!CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl)) return { ok: false, msg: 'bad attachment data' };
+        attachTotal += a.dataUrl.length;
+        if (attachTotal > CHAT_MAX_TOTAL_ATTACHMENT_CHARS) return { ok: false, msg: 'attachments too large' };
+        let decoded: Buffer;
+        try { decoded = Buffer.from(a.dataUrl.replace(/^data:[^,]*,/, ''), 'base64'); }
+        catch { return { ok: false, msg: 'bad attachment data' }; }
+        if (decoded.length === 0 || decoded.length > MAX_CHAT_IMAGE_BYTES) return { ok: false, msg: 'attachment too large' };
+        const family = sniffMediaType(decoded); // 'png' | 'jpeg' | 'gif' | 'webp' | … | null
+        if (!family || !IMAGE_FAMILIES.has(family)) return { ok: false, msg: 'bad attachment data' };
+        const mimeType = `image/${family}`;
+        if (!a.dataUrl.startsWith(`data:${mimeType};base64,`)) return { ok: false, msg: 'attachment type mismatch' };
+        attachments.push({
+          type: 'image', mimeType, dataUrl: a.dataUrl, // mimeType from the SNIFF, not a.mimeType
+          fileName: String(a.fileName ?? 'image'), size: decoded.length,
+        });
+      }
+    }
+    clean.push({
+      id: String(m.id ?? ''), role: m.role, text: m.text, ts: Number(m.ts) || Date.now(),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    });
   }
   if (total > CHAT_MAX_TOTAL_CHARS) return { ok: false, msg: 'conversation too long' };
   return { ok: true, clean };
@@ -1184,6 +1225,39 @@ function registerIpcHandlers(config: AppConfig) {
     if (entry.wcId !== e.sender.id) return; // not your stream
     entry.controller.abort();
     chatStreamRegistry.delete(streamId);
+  });
+
+  // SP2: pick image file(s) to attach to a chat turn. The DIALOG is the only path to a file
+  // (renderer supplies nothing) — so an absolute path here is user-chosen, not renderer-forged.
+  // Each file is read, size-capped, and magic-byte ↔ ext verified BEFORE base64; a bad file is
+  // skipped (never sent to the model). Returns ready-to-display data: URLs.
+  ipcMain.handle('chat:pick-images', async (): Promise<{ attachments: ChatAttachment[] }> => {
+    const opts = {
+      title: 'Attach image(s)',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+    };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { attachments: [] };
+    const attachments: ChatAttachment[] = [];
+    for (const filePath of result.filePaths.slice(0, CHAT_MAX_IMAGES_PER_MSG)) {
+      try {
+        const ext = extname(filePath).toLowerCase();
+        if (!ALLOWED_IMAGE_EXT.has(ext)) continue;
+        const bytes = readFileSync(filePath); // absolute path from the trusted dialog
+        if (bytes.length === 0 || bytes.length > MAX_CHAT_IMAGE_BYTES) continue;
+        assertImageMatches(ext, bytes); // throws if the magic bytes don't match the ext
+        const family = sniffMediaType(bytes); // 'png' | 'jpeg' | 'gif' | 'webp'
+        const mimeType = `image/${family}`;
+        const dataUrl = `data:${mimeType};base64,${bytes.toString('base64')}`;
+        attachments.push({ type: 'image', mimeType, dataUrl, fileName: basename(filePath), size: bytes.length });
+      } catch {
+        // bad/oversized/mismatched file → skip it (don't fail the whole pick)
+        console.error('[chat] pick-images: skipped an invalid file');
+      }
+    }
+    return { attachments };
   });
 
   // Session CRUD (⑨) — delegate to the store. Filenames are UUIDs; the store's

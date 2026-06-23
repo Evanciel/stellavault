@@ -47,6 +47,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:delete-session',
   'chat:tool-approve', // agent SP-D: renderer approves/denies a write tool
   'chat:distill',      // agent SP-I: auto-distill a finished conversation into the wiki
+  'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
@@ -130,6 +131,19 @@ describe('SP1 chat IPC — security invariants (regression locks, Plan §9/§10)
     const validate = mainSrc.match(/function validateChatReq[\s\S]*?\n\}/);
     expect(validate).not.toBeNull();
     expect(validate![0]).not.toMatch(/role:\s*'system'/);
+  });
+
+  it('SP2: the chat:send attachment path CONTENT-verifies images (magic-byte), not just the data-URL regex', () => {
+    // The forge path (renderer-controlled chat:send, unlike the trusted dialog) must decode +
+    // sniff the bytes and reject a declared image/* whose magic bytes don't match — a lexical
+    // regex alone would let a compromised renderer smuggle non-image bytes. Lock the content gate.
+    const validate = mainSrc.match(/function validateChatReq[\s\S]*?\n\}/);
+    expect(validate).not.toBeNull();
+    expect(validate![0]).toContain('sniffMediaType');          // decodes + magic-byte sniffs
+    expect(validate![0]).toContain('Buffer.from(');            // actually decodes the payload
+    expect(validate![0]).toContain("'base64'");                // …as base64
+    expect(validate![0]).toContain('attachment type mismatch'); // declared mime must match sniff
+    expect(validate![0]).toContain('CHAT_MAX_TOTAL_ATTACHMENT_CHARS'); // aggregate DoS bound
   });
 
   it('agent: chat:tool-approve is owner-checked (wcId) so another window cannot approve a write', () => {

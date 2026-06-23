@@ -39,7 +39,7 @@ import { isLocalProviderUrl } from '../../../shared/ai-providers.js';
 import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
-import type { ChatMessage, ChatCitation } from '../../../shared/ipc-types.js';
+import type { ChatMessage, ChatCitation, ChatAttachment } from '../../../shared/ipc-types.js';
 
 const MAX_CONCURRENT = 2;
 
@@ -121,6 +121,29 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   const ai = useSettingsStore((s) => s.settings.ai);
   const canStartOllama =
     ai?.provider === 'openai-compatible' && isLocalProviderUrl(ai?.baseURL ?? '');
+  // SP2: show the 📎 attach affordance only for a local vision-capable setup (gemma4:e4b).
+  // Same local-provider gate as Start-Ollama — local models we ship are vision-capable.
+  const visionOn = canStartOllama;
+  // Staged image attachments for the NEXT user turn (cleared on send / session switch).
+  const [attachments, setAttachments] = useState<Array<{ uid: string } & ChatAttachment>>([]);
+  const [pickingImages, setPickingImages] = useState(false);
+  const pickImages = useCallback(() => {
+    setPickingImages(true);
+    void ipc('chat:pick-images')
+      .then((r) => {
+        const picked = ((r as { attachments?: ChatAttachment[] })?.attachments ?? [])
+          .map((a) => ({ uid: crypto.randomUUID(), ...a }));
+        if (picked.length > 0) setAttachments((prev) => [...prev, ...picked].slice(0, 6));
+      })
+      .catch(() => { /* dialog/read failure → no-op */ })
+      .finally(() => setPickingImages(false));
+  }, []);
+  const removeAttachment = useCallback((uid: string) => {
+    setAttachments((prev) => prev.filter((a) => a.uid !== uid));
+  }, []);
+  // Discard staged images if the provider/endpoint changes (the view isn't remounted on a
+  // settings change) — they may not be valid for the new model, and a cloud model can't see them.
+  useEffect(() => { setAttachments([]); }, [ai?.provider, ai?.baseURL]);
 
   // onSaved is read from a ref inside the mount-once subscription so a changing
   // callback identity never re-subscribes (keeps the mount-once invariant).
@@ -271,7 +294,11 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
 
   const send = useCallback(() => {
     const text = input.trim();
-    if (!text || atCap) return;
+    // SP2: only ship images the active provider can actually SEE. visionOn is re-read here so a
+    // provider switch (which does NOT remount this view) can't smuggle staged images to a
+    // cloud/text model where buildChatBody would silently drop them.
+    const sendable = visionOn ? attachments : [];
+    if ((!text && sendable.length === 0) || atCap) return;
 
     const newStreamId = crypto.randomUUID();
     const userTurn: ChatMessage = {
@@ -279,6 +306,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       role: 'user',
       text,
       ts: Date.now(),
+      // strip the renderer-only uid; main re-validates the data URLs at the content level.
+      ...(sendable.length > 0 ? { attachments: sendable.map(({ uid, ...a }) => a) } : {}),
     };
     const assistantTurn: ChatMessage = {
       id: crypto.randomUUID(),
@@ -292,6 +321,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
 
     setMessages([...outbound, assistantTurn]);
     setInput('');
+    setAttachments([]);   // staged images consumed by this turn
     setError(null);
     setCapMessage(false);
     setToolLog([]);   // fresh tool trace per turn
@@ -316,7 +346,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       syncActiveCount();
       setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
     });
-  }, [input, atCap, messages, ragOn, sessionId, syncActiveCount]);
+  }, [input, atCap, messages, ragOn, agentOn, attachments, visionOn, sessionId, syncActiveCount]);
 
   // Stop the most-recently-started stream (the last live assistant bubble).
   const stop = useCallback(() => {
@@ -546,6 +576,11 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         onAgentToggle={setAgentOn}
         autoDistill={autoDistill}
         onAutoDistillToggle={setAutoDistill}
+        attachments={attachments.map((a) => ({ id: a.uid, fileName: a.fileName, dataUrl: a.dataUrl }))}
+        onPickImages={pickImages}
+        onRemoveAttachment={removeAttachment}
+        visionOn={visionOn}
+        pickingImages={pickingImages}
         variant={variant}
       />
     </div>

@@ -10,6 +10,8 @@ import {
   MAX_ASSET_BYTES,
   sniffMediaType,
   assertMediaMatches,
+  assertImageMatches,
+  ALLOWED_IMAGE_EXT,
 } from '../src/main/path-safety.js';
 
 // T1-3: real unit tests for the security boundary. Imports the SAME pure helpers
@@ -187,6 +189,9 @@ const WAV = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57
 const OGG = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00]);
 const MP3_ID3 = new Uint8Array([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00]);
 const MP3_SYNC = new Uint8Array([0xff, 0xfb, 0x90, 0x00]);
+// GIF: 'GIF8' (87a/89a). WebP: 'RIFF' …… 'WEBP' at offset 8.
+const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x10, 0x00]);
+const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
 
 describe('sniffMediaType', () => {
   it('recognizes PNG', () => {
@@ -237,6 +242,35 @@ describe('sniffMediaType', () => {
     // RIFF container that is not WAVE (e.g. AVI/WEBP) — must not be sniffed as wav.
     const riffOther = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20]);
     expect(sniffMediaType(riffOther)).toBeNull();
+  });
+
+  it('recognizes GIF and WebP (SP2 images)', () => {
+    expect(sniffMediaType(GIF)).toBe('gif');
+    expect(sniffMediaType(WEBP)).toBe('webp');
+  });
+});
+
+describe('assertImageMatches (SP2)', () => {
+  it('passes for each image ext matching its bytes', () => {
+    expect(() => assertImageMatches('.png', PNG)).not.toThrow();
+    expect(() => assertImageMatches('.jpg', JPEG)).not.toThrow();
+    expect(() => assertImageMatches('.jpeg', JPEG)).not.toThrow();
+    expect(() => assertImageMatches('.gif', GIF)).not.toThrow();
+    expect(() => assertImageMatches('.webp', WEBP)).not.toThrow();
+  });
+
+  it('throws on ext↔content mismatch (a .png that is really JPEG)', () => {
+    expect(() => assertImageMatches('.png', JPEG)).toThrow(/does not match/);
+  });
+
+  it('rejects non-image / unsupported ext (incl. .svg)', () => {
+    expect(() => assertImageMatches('.svg', PNG)).toThrow(/unsupported image/);
+    expect(() => assertImageMatches('.mp4', FTYP)).toThrow(/unsupported image/);
+  });
+
+  it('ALLOWED_IMAGE_EXT excludes .svg', () => {
+    expect(ALLOWED_IMAGE_EXT.has('.svg')).toBe(false);
+    expect(ALLOWED_IMAGE_EXT.has('.png')).toBe(true);
   });
 });
 

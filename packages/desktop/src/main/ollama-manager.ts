@@ -209,16 +209,16 @@ function nativeBase(baseURL: string): string {
   return (baseURL || OLLAMA_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
 }
 
-const toolsCapCache = new Map<string, boolean>();
+const capCache = new Map<string, boolean>();
 
-/** Does this local model advertise the 'tools' capability? Queries POST /api/show and
- *  checks `capabilities`. Cached per (base, model). Fail-closed: ANY error → false (so a
- *  probe failure never silently sends tools[] to a model that 400s on it). */
-export async function modelSupportsTools(baseURL: string, model: string): Promise<boolean> {
+/** Does this local model advertise `capability` (e.g. 'tools', 'vision')? Queries POST
+ *  /api/show and checks `capabilities`. Cached per (base, model, capability). Fail-closed:
+ *  ANY error → false (so a probe failure never silently sends an unsupported payload). */
+async function modelHasCapability(baseURL: string, model: string, capability: string): Promise<boolean> {
   if (!model) return false;
   const base = nativeBase(baseURL);
-  const key = `${base}::${model}`;
-  const cached = toolsCapCache.get(key);
+  const key = `${base}::${model}::${capability}`;
+  const cached = capCache.get(key);
   if (cached !== undefined) return cached;
   let supported = false;
   try {
@@ -229,13 +229,25 @@ export async function modelSupportsTools(baseURL: string, model: string): Promis
     });
     if (res.ok) {
       const json = (await res.json()) as { capabilities?: unknown };
-      supported = Array.isArray(json.capabilities) && json.capabilities.includes('tools');
+      supported = Array.isArray(json.capabilities) && json.capabilities.includes(capability);
     }
   } catch {
     supported = false;
   }
-  toolsCapCache.set(key, supported);
+  capCache.set(key, supported);
   return supported;
+}
+
+/** Does this local model advertise the 'tools' capability? (agent loop gate — gemma2:9b 400s
+ *  on a tools[] array, so this prevents sending one.) */
+export function modelSupportsTools(baseURL: string, model: string): Promise<boolean> {
+  return modelHasCapability(baseURL, model, 'tools');
+}
+
+/** Does this local model advertise the 'vision' capability? (SP2 image-attachment gate — only
+ *  send `images:[]` to a vision model; a text-only model would error or ignore them.) */
+export function modelSupportsVision(baseURL: string, model: string): Promise<boolean> {
+  return modelHasCapability(baseURL, model, 'vision');
 }
 
 // ─── Auto-download (feature: "download latest Ollama when missing") ─────────────

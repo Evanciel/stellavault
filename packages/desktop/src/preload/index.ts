@@ -104,6 +104,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:tool-approve',
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill',
+  // SP2: pick image file(s) to attach to a chat turn (dialog → validated base64).
+  'chat:pick-images',
   // Local model server (Ollama) lifecycle — "Start Ollama" affordance
   'ollama:status',
   'ollama:start',

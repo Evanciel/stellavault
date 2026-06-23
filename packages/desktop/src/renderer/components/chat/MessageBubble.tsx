@@ -75,7 +75,22 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
         {isUser ? (
           // USER turns: plain text, never markdown-parsed. whiteSpace preserves
           // newlines the user typed without enabling any markup.
-          <div style={{ whiteSpace: 'pre-wrap' }}>{message.text}</div>
+          <>
+            {message.attachments && message.attachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: message.text ? 6 : 0 }}>
+                {message.attachments.map((a, i) => (
+                  <img
+                    key={`${a.fileName}-${i}`}
+                    src={a.dataUrl}
+                    alt={a.fileName}
+                    title={a.fileName}
+                    style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'contain' }}
+                  />
+                ))}
+              </div>
+            )}
+            {message.text && <div style={{ whiteSpace: 'pre-wrap' }}>{message.text}</div>}
+          </>
         ) : state === 'error' ? (
           <div style={{ color: 'var(--ink-dim)' }}>
             {errorLabel ?? t('panel.ai.errorGeneric')}

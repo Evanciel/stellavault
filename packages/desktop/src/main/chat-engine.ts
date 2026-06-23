@@ -88,6 +88,32 @@ export interface ChatRequestSpec {
   body: unknown;
 }
 
+// ── SP2 image attachments ─────────────────────────────────────────────────────
+/** Bare base64 (data: prefix stripped) for each image attachment on a turn — the
+ *  format Ollama's NATIVE /api/chat wants under `images`. undefined if none. */
+export function attachmentsToBase64(m: ChatMessage): string[] | undefined {
+  const imgs = (m.attachments ?? []).filter((a) => a.type === 'image' && a.dataUrl);
+  if (imgs.length === 0) return undefined;
+  return imgs.map((a) => a.dataUrl.replace(/^data:[^,]*,/, ''));
+}
+
+/** OpenAI-compat message content for a turn — a multimodal [{text},{image_url}] array
+ *  when a user turn has image attachments (verified against Ollama /v1), else the plain
+ *  string. image_url carries the data: URL directly. */
+function openaiMessageContent(m: ChatMessage): { role: string; content: unknown } {
+  const imgs = (m.attachments ?? []).filter((a) => a.type === 'image' && a.dataUrl);
+  if (m.role === 'user' && imgs.length > 0) {
+    return {
+      role: m.role,
+      content: [
+        ...(m.text ? [{ type: 'text', text: m.text }] : []),
+        ...imgs.map((a) => ({ type: 'image_url', image_url: { url: a.dataUrl } })),
+      ],
+    };
+  }
+  return { role: m.role, content: m.text };
+}
+
 export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[]): ChatRequestSpec {
   const model = cfg.model || DEFAULT_MODELS[cfg.provider];
   // belt + braces: a 'system' role must NEVER come from the renderer-supplied turns.
@@ -126,7 +152,7 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
           max_tokens: CHAT_MAX_TOKENS,
           stream: true,
           ...(skipThinking ? { reasoning_effort: 'none' } : {}),
-          messages: [{ role: 'system', content: system }, ...conv.map((m) => ({ role: m.role, content: m.text }))],
+          messages: [{ role: 'system', content: system }, ...conv.map(openaiMessageContent)],
         },
       };
     }
@@ -282,6 +308,7 @@ export interface OllamaMsg {
   content: string;
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
+  images?: string[]; // SP2: raw base64 (NO data: prefix) — Ollama native vision format
 }
 
 /** Native /api/chat request body. `system` is prepended as a role:'system' message;
@@ -959,7 +986,10 @@ const AGENT_MAX_INVALID = 3;
 export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
   const messages: OllamaMsg[] = ctx.turns
     .filter((t) => t.role === 'user' || t.role === 'assistant')
-    .map((t) => ({ role: t.role, content: t.text }));
+    .map((t) => {
+      const images = attachmentsToBase64(t); // SP2: native vision rides bare base64 on the turn
+      return images ? { role: t.role, content: t.text, images } : { role: t.role, content: t.text };
+    });
   const citations: ChatCitation[] = [...ctx.preloopCitations];
   let fullText = '';
   let invalidCount = 0;

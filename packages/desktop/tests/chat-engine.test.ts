@@ -169,6 +169,33 @@ describe('buildChatBody', () => {
     expect(b.stream).toBe(true);
   });
 
+  it('openai-compat: a user turn with image attachments → multimodal content array (SP2)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const msg = [{
+      id: 'u', role: 'user' as const, text: 'what is this?', ts: 1,
+      attachments: [{ type: 'image' as const, mimeType: 'image/png', dataUrl: 'data:image/png;base64,AAAB', fileName: 'a.png', size: 3 }],
+    }];
+    const b: any = buildChatBody(OPENAI_CFG, 'SYS', msg).body;
+    const userContent = b.messages[1].content;
+    expect(Array.isArray(userContent)).toBe(true);
+    expect(userContent[0]).toEqual({ type: 'text', text: 'what is this?' });
+    expect(userContent[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAB' } });
+  });
+
+  it('openai-compat: a text-only turn stays a plain string (no multimodal array)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const b: any = buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi')).body;
+    expect(b.messages[1]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('attachmentsToBase64 strips the data: prefix → bare base64 (Ollama native vision)', async () => {
+    const { attachmentsToBase64 } = await import('../src/main/chat-engine.js');
+    const m = { id: 'u', role: 'user' as const, text: '', ts: 1,
+      attachments: [{ type: 'image' as const, mimeType: 'image/png', dataUrl: 'data:image/png;base64,ZZZ9', fileName: 'a.png', size: 3 }] };
+    expect(attachmentsToBase64(m)).toEqual(['ZZZ9']);
+    expect(attachmentsToBase64({ id: 'u', role: 'user', text: 'hi', ts: 1 })).toBeUndefined();
+  });
+
   it('google: ?alt=sse URL + key in x-goog-api-key header (NOT url)', async () => {
     const { buildChatBody } = await import('../src/main/chat-engine.js');
     const spec = buildChatBody(GEMINI_CFG, 'SYS', userMsg('hi'));
