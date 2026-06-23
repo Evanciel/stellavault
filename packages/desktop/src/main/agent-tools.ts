@@ -17,8 +17,8 @@
 //  - v1 scope: 4 read + 1 confirm-gated write. get_related (id-based core API) and the other
 //    16 MCP tools are deferred — keeping the toolset small avoids overwhelming gemma4:e4b.
 
-import { readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { readFileSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs';
+import { isAbsolute, join, dirname } from 'node:path';
 import { handleLogDecision, handleFindDecisions } from '@stellavault/core';
 import { assertInsideVault } from './path-safety.js';
 import type { ChatCitation } from '../shared/ipc-types.js';
@@ -102,10 +102,60 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'create_note',
+      description: "Create a NEW markdown note in the vault (the second brain). WRITES a file and requires the user to approve it. Use [[Other Note]] wiki-links in the content to connect it to existing notes.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          content: { type: 'string', description: 'markdown body (may contain [[wiki-links]])' },
+          folder: { type: 'string', description: 'vault subfolder (default Inbox)' },
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['title', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'append_note',
+      description: 'Append markdown content to the END of an existing note. WRITES the file and requires the user to approve it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'path of an existing note (from a search result)' },
+          content: { type: 'string' },
+        },
+        required: ['filePath', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'link_note',
+      description: 'Connect a note to another by inserting a [[Target Title]] wiki-link into it (creates a graph edge). WRITES the file and requires approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'the note to add the link to' },
+          targetTitle: { type: 'string', description: 'the exact title of the note to link to' },
+        },
+        required: ['filePath', 'targetTitle'],
+      },
+    },
+  },
 ];
 
-export const AGENT_VALID_NAMES = new Set<string>(['search_vault', 'read_note', 'list_topics', 'find_decisions', 'log_decision']);
-const AGENT_WRITE_NAMES = new Set<string>(['log_decision']);
+export const AGENT_VALID_NAMES = new Set<string>([
+  'search_vault', 'read_note', 'list_topics', 'find_decisions',
+  'log_decision', 'create_note', 'append_note', 'link_note',
+]);
+const AGENT_WRITE_NAMES = new Set<string>(['log_decision', 'create_note', 'append_note', 'link_note']);
 
 export function isAgentWriteTool(name: string): boolean {
   return AGENT_WRITE_NAMES.has(name);
@@ -114,6 +164,13 @@ export function isAgentWriteTool(name: string): boolean {
 const MAX_READ_BYTES = 256 * 1024; // a single note read is bounded (huge/binary → error)
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+const slugify = (title: string): string =>
+  title.replace(/[^a-zA-Z가-힣0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 60) || 'note';
+/** Resolve an absolute-or-vault-relative path and assert it stays inside the vault. */
+function resolveInVault(vaultPath: string, filePath: string): string {
+  const candidate = isAbsolute(filePath) ? filePath : join(vaultPath, filePath);
+  return assertInsideVault(vaultPath, candidate); // throws on traversal
+}
 
 function mapSearchHits(results: any[]): Array<{ title: string; filePath: string; snippet: string; score: number }> {
   return (results ?? []).map((r: any) => ({
@@ -204,6 +261,61 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         // index.ts bookkeeping: re-assert path + indexFiles + bump FS/graph caches.
         try { await deps.afterWrite(saved.saved); } catch { /* indexing best-effort */ }
         return { ok: true, fileName: saved.fileName };
+      }
+      // ── Knowledge-building writes (SP-G, Living Knowledge Graph §9) — all confirm-gated ──
+      case 'create_note': {
+        const title = str(args.title);
+        const content = str(args.content);
+        if (!title || !content) return { error: 'title and content are required' };
+        const rel = join(str(args.folder) || 'Inbox', `${slugify(title)}.md`);
+        let safe: string;
+        try { safe = assertInsideVault(deps.vaultPath, join(deps.vaultPath, rel)); }
+        catch { return { error: 'target folder is outside the vault' }; }
+        if (existsSync(safe)) return { error: 'a note with that title already exists' };
+        const tags = Array.isArray(args.tags) ? (args.tags as unknown[]).map(String) : [];
+        const md = [
+          '---',
+          `title: "${title.replace(/"/g, "'")}"`,
+          tags.length ? `tags: [${tags.join(', ')}]` : '',
+          `created: ${new Date().toISOString().slice(0, 10)}`,
+          '---', '', content,
+        ].filter(Boolean).join('\n');
+        try {
+          mkdirSync(dirname(safe), { recursive: true });
+          writeFileSync(safe, md, 'utf-8');
+        } catch (err) { return { error: (err as Error)?.message ?? 'failed to create note' }; }
+        try { await deps.afterWrite(safe); } catch { /* index best-effort */ }
+        return { ok: true, filePath: rel };
+      }
+      case 'append_note': {
+        const content = str(args.content);
+        if (!str(args.filePath) || !content) return { error: 'filePath and content are required' };
+        let safe: string;
+        try { safe = resolveInVault(deps.vaultPath, str(args.filePath)); }
+        catch { return { error: 'path is outside the vault' }; }
+        if (!existsSync(safe)) return { error: 'note not found' };
+        try {
+          const cur = readFileSync(safe, 'utf-8');
+          writeFileSync(safe, `${cur.replace(/\s*$/, '')}\n\n${content}\n`, 'utf-8');
+        } catch (err) { return { error: (err as Error)?.message ?? 'failed to append' }; }
+        try { await deps.afterWrite(safe); } catch { /* */ }
+        return { ok: true };
+      }
+      case 'link_note': {
+        const target = str(args.targetTitle);
+        if (!str(args.filePath) || !target) return { error: 'filePath and targetTitle are required' };
+        let safe: string;
+        try { safe = resolveInVault(deps.vaultPath, str(args.filePath)); }
+        catch { return { error: 'path is outside the vault' }; }
+        if (!existsSync(safe)) return { error: 'note not found' };
+        const wiki = `[[${target}]]`;
+        try {
+          const cur = readFileSync(safe, 'utf-8');
+          if (cur.includes(wiki)) return { ok: true, note: 'link already present' };
+          writeFileSync(safe, `${cur.replace(/\s*$/, '')}\n\n관련: ${wiki}\n`, 'utf-8');
+        } catch (err) { return { error: (err as Error)?.message ?? 'failed to link' }; }
+        try { await deps.afterWrite(safe); } catch { /* */ }
+        return { ok: true, linked: target };
       }
       default:
         return { error: `unknown tool: ${name}` };

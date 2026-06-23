@@ -2,7 +2,7 @@
 // mocked (avoid loading the heavy core barrel); path-safety + FS use a REAL temp vault
 // so the read_note traversal guard is exercised against the real assertInsideVault.
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,11 +37,14 @@ function makeDeps(over: any = {}) {
 }
 
 describe('agent-tools — toolset metadata', () => {
-  it('exposes exactly the 5 v1 tools and marks log_decision as the only write', () => {
-    expect([...AGENT_VALID_NAMES].sort()).toEqual(['find_decisions', 'list_topics', 'log_decision', 'read_note', 'search_vault']);
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(5);
-    expect(isAgentWriteTool('log_decision')).toBe(true);
-    expect(isAgentWriteTool('search_vault')).toBe(false);
+  it('exposes the 8 tools (4 read + 4 write) and marks the writes correctly', () => {
+    expect([...AGENT_VALID_NAMES].sort()).toEqual([
+      'append_note', 'create_note', 'find_decisions', 'link_note',
+      'list_topics', 'log_decision', 'read_note', 'search_vault',
+    ]);
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(8);
+    for (const w of ['log_decision', 'create_note', 'append_note', 'link_note']) expect(isAgentWriteTool(w)).toBe(true);
+    for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions']) expect(isAgentWriteTool(r)).toBe(false);
   });
 });
 
@@ -105,5 +108,53 @@ describe('agent-tools — dispatcher', () => {
     expect(r.error).toMatch(/required/);
     expect(logDecision).not.toHaveBeenCalled();
     expect(deps.afterWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent-tools — knowledge-building writes (SP-G)', () => {
+  it('create_note writes a new file (frontmatter + body) and runs afterWrite', async () => {
+    const deps = makeDeps();
+    const exec = buildExecuteAgentTool(deps as any);
+    const r: any = await exec('create_note', { title: 'Atomic Notes', content: 'one idea per note. [[Zettelkasten]]', folder: 'Inbox', tags: ['pkm'] });
+    expect(r.ok).toBe(true);
+    expect(r.filePath).toBe(join('Inbox', 'Atomic-Notes.md'));
+    const written = readFileSync(join(vault, 'Inbox', 'Atomic-Notes.md'), 'utf-8');
+    expect(written).toContain('title: "Atomic Notes"');
+    expect(written).toContain('[[Zettelkasten]]');
+    expect(deps.afterWrite).toHaveBeenCalled();
+  });
+
+  it('create_note refuses to overwrite an existing title', async () => {
+    const deps = makeDeps();
+    const exec = buildExecuteAgentTool(deps as any);
+    await exec('create_note', { title: 'Dup', content: 'x' });
+    const r: any = await exec('create_note', { title: 'Dup', content: 'y' });
+    expect(r.error).toMatch(/already exists/);
+  });
+
+  it('create_note: traversal folder is rejected', async () => {
+    const exec = buildExecuteAgentTool(makeDeps() as any);
+    const r: any = await exec('create_note', { title: 'Evil', content: 'x', folder: '../../../tmp' });
+    expect(r.error).toMatch(/outside the vault/);
+  });
+
+  it('append_note appends to an existing note; missing note → error', async () => {
+    const deps = makeDeps();
+    const exec = buildExecuteAgentTool(deps as any);
+    const ok: any = await exec('append_note', { filePath: 'note.md', content: 'appended line' });
+    expect(ok.ok).toBe(true);
+    expect(readFileSync(join(vault, 'note.md'), 'utf-8')).toContain('appended line');
+    const miss: any = await exec('append_note', { filePath: 'nope.md', content: 'x' });
+    expect(miss.error).toMatch(/not found/);
+  });
+
+  it('link_note inserts a [[wiki-link]] (idempotent) — creates a graph edge', async () => {
+    const deps = makeDeps();
+    const exec = buildExecuteAgentTool(deps as any);
+    const r1: any = await exec('link_note', { filePath: 'note.md', targetTitle: 'Atomic Notes' });
+    expect(r1.ok).toBe(true);
+    expect(readFileSync(join(vault, 'note.md'), 'utf-8')).toContain('[[Atomic Notes]]');
+    const r2: any = await exec('link_note', { filePath: 'note.md', targetTitle: 'Atomic Notes' });
+    expect(r2.note).toMatch(/already present/); // idempotent
   });
 });
