@@ -137,12 +137,14 @@ describe('SP1 chat IPC — security invariants (regression locks, Plan §9/§10)
     expect(h![0]).toMatch(/wcId/);
   });
 
-  it('agent: vault WRITES are a human gate — write tools pause on pendingApprovals (no auto-apply)', () => {
-    // The renderer can only approve/deny; a write tool cannot run without a chat:tool-confirm
-    // round-trip resolving the per-stream pendingApprovals promise.
+  it('agent: an opt-in review-before-apply broker exists (confirmWrites → pause on pendingApprovals)', () => {
+    // Writes auto-apply by default (frictionless), but the human-approval broker must remain
+    // wired behind req.confirmWrites so a safety-conscious user can require approval. The
+    // renderer can only approve/deny — never name a tool.
     expect(mainSrc).toContain('pendingApprovals');
     expect(mainSrc).toContain("'chat:tool-confirm'");
     expect(mainSrc).toContain('onToolConfirm');
+    expect(mainSrc).toContain('req.confirmWrites');
   });
 
   it('a SEPARATE before-quit listener aborts in-flight chat streams (existing ones untouched)', () => {

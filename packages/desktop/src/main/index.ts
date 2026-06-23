@@ -1038,9 +1038,14 @@ function registerIpcHandlers(config: AppConfig) {
           safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
         onToolResult: (name: string, ok: boolean, summary: string) =>
           safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary }),
-        // Write tool → pause the loop on an approval promise. An abort while waiting
-        // resolves it to false (DENY) so the loop unblocks and fails cleanly — no slot leak.
-        onToolConfirm: (name: string, args: Record<string, unknown>) =>
+      };
+      // Writes AUTO-APPLY by default (frictionless second-brain growth; every write is shown
+      // in the tool strip, stays inside the vault, and is undoable). Opt-in "review-before-
+      // apply": when req.confirmWrites is set, wire the human-approval broker so a write pauses
+      // the loop on a per-stream promise the renderer resolves via chat:tool-approve. An abort
+      // while waiting resolves DENY (no cap-of-2 slot leak).
+      if (req.confirmWrites) {
+        agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) =>
           new Promise<boolean>((resolve) => {
             if (controller.signal.aborted) { resolve(false); return; }
             const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
@@ -1052,8 +1057,8 @@ function registerIpcHandlers(config: AppConfig) {
             let argsPreview = '';
             try { argsPreview = JSON.stringify(args).slice(0, 400); } catch { argsPreview = '{…}'; }
             safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
-          }),
-      };
+          });
+      }
     }
 
     try {

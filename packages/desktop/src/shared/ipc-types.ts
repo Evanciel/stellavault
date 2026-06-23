@@ -553,7 +553,7 @@ export interface IpcChannelMap {
   // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
   // streamId). The API key NEVER appears in these args (main reads SecretStore).
   // sessionId routes the persisted assistant turn to the right session on done.
-  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean }]; result: void };
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean }]; result: void };
   'chat:abort': { args: [streamId: string]; result: void };
   // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
   'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };

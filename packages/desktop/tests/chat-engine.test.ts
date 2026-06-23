@@ -336,7 +336,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     onDelta: (d: string) => calls.deltas.push(d),
     onToolCall: (n: string) => calls.toolCall.push(n),
     onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
-    onToolConfirm: opts.onToolConfirm ?? (async () => true),
+    onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
     succeed: (c: any, t: string) => calls.succeed.push({ c, t }),
     fail: (m: string, cat: string) => calls.fail.push({ m, cat }),
     preloopCitations: opts.preloop ?? [],
@@ -384,7 +384,16 @@ describe('runAgentLoop — agent loop invariants', () => {
     expect(c.succeed).toHaveLength(1); // bailed after MAX_INVALID
   });
 
-  it('write tool APPROVED → executes; DENIED → not executed', async () => {
+  it('write tool AUTO-APPLIES when no confirm callback is wired (default frictionless mode)', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'wrote it' })],
+      // no onToolConfirm → auto-apply
+    );
+    expect(c.execute).toEqual([{ name: 'log_decision', args: { title: 't' } }]);
+    expect(c.succeed[0].t).toBe('wrote it');
+  });
+
+  it('write tool APPROVED → executes; DENIED → not executed (opt-in confirm mode)', async () => {
     const approved = await runLoop(
       [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'done' })],
       { onToolConfirm: async () => true },

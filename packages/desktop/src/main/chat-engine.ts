@@ -508,7 +508,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       '- Cite the notes you used as [[Note Title]].',
       '- If a search returns nothing useful, say so briefly and answer from general knowledge.',
       '- Never call the same tool with the same arguments twice.',
-      '- A write tool (e.g. log_decision) runs only after the user approves it; explain what you intend to write.',
+      '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
     ].join('\n');
     await runAgentLoop({
       turns: messages,
@@ -978,9 +978,13 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       }
       const args = (tc.function.arguments ?? {}) as Record<string, unknown>;
 
-      // write tool → human confirmation gate (loop pauses on the await)
-      if (ctx.toolset.isWrite(name)) {
-        const approved = ctx.onToolConfirm ? await ctx.onToolConfirm(name, args) : false;
+      // Write tool: by DEFAULT auto-apply (frictionless second-brain growth — the user sees
+      // every write in the tool strip and can undo it; writes stay inside the vault via
+      // path-safety + allowlist, and there is no network-write tool so nothing can exfiltrate).
+      // If an onToolConfirm callback IS wired (opt-in "review-before-apply" mode), pause for
+      // the user instead.
+      if (ctx.toolset.isWrite(name) && ctx.onToolConfirm) {
+        const approved = await ctx.onToolConfirm(name, args);
         if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
         if (!approved) {
           messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
