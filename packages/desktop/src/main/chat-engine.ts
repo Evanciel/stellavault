@@ -331,6 +331,58 @@ export function buildOllamaChatBody(
   };
 }
 
+// ── SP3 attachment distillation — vision-only describe pass ───────────────────
+// CRITICAL (empirical): gemma4:e4b cannot do vision AND tool-calling in the SAME /api/chat
+// request — a `tools` array BLINDS it to `images` ("I cannot see any image"). So attachment
+// distillation is TWO-PHASE: (1) describe the images here with NO tools (vision works), then
+// (2) feed that text into the normal tool-using distill loop. This body deliberately OMITS
+// the `tools` key entirely (an empty tools:[] is avoided out of caution).
+// NOTE (empirical): the instruction MUST live in the USER turn alongside the images, and must
+// NOT say "attached" — gemma4:e4b reads a short "describe the attached image" as "no image was
+// provided" and replies "please attach an image" even WITH images present. A descriptive
+// in-user prompt that says "the image(s) below" is reliable (verified 3/3). No system message.
+export const IMAGE_DESCRIBE_PROMPT =
+  'Describe what is visible in the image(s) below, factually in 1-3 sentences each: the main subject, any visible text (verbatim), and notable objects, colors, or structure. No preamble, no speculation.';
+
+// gemma4:e4b vision is FLAKY — it intermittently "loses" the image and replies that no image
+// was provided, even with identical input that succeeded moments before. So a single describe
+// is unreliable. We RETRY a few times and treat a "no image / cannot describe" reply as a miss.
+// If every attempt misses, we return '' so distillation files NOTHING rather than garbage.
+const DESCRIBE_MAX_ATTEMPTS = 4;
+/** True if the model's reply is a "there is no image" refusal rather than a real description. */
+export function looksLikeNoImageReply(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 15) return true;
+  return /\b(no image|not attached|cannot describe|can't describe|unable to (see|describe)|please (provide|attach|share)|i need an image|empty prompt|there (is|are) no (image|attachment))\b/i.test(t);
+}
+
+/** Describe image attachments with a vision-only pass (no tools), retrying past gemma4's flaky
+ *  "no image" misses. Returns the description, or '' if there are no images / not a local
+ *  provider / every attempt failed (caller then distills text-only — never files a garbage note). */
+export async function describeImages(cfg: LlmConfig, images: string[], signal: AbortSignal): Promise<string> {
+  if (images.length === 0 || cfg.provider !== 'openai-compatible') return '';
+  const body = {
+    model: cfg.model || DEFAULT_MODELS[cfg.provider],
+    stream: true,
+    think: false,
+    // Instruction in the USER turn with the images; NO system turn; NO `tools` key (tools blind
+    // gemma4 vision). See the note above on the "attached" phrasing trap.
+    messages: [{ role: 'user', content: IMAGE_DESCRIBE_PROMPT, images }],
+  };
+  for (let attempt = 0; attempt < DESCRIBE_MAX_ATTEMPTS; attempt++) {
+    if (signal.aborted) return '';
+    try {
+      const res = await streamOnceNative(nativeChatUrl(cfg.baseURL ?? ''), body, signal, () => {});
+      if (res.aborted) return '';
+      const text = res.text.trim();
+      if (text && !looksLikeNoImageReply(text)) return text; // a real description — done
+    } catch {
+      // network/parse error — fall through to the next attempt
+    }
+  }
+  return ''; // every attempt missed → file nothing rather than a "no image" non-description
+}
+
 export interface OllamaFrameResult {
   deltas: string[];
   toolCalls: OllamaToolCall[];
@@ -809,6 +861,10 @@ export function streamOnceNative(
   onDelta: (d: string) => void,
 ): Promise<StreamOnceResult> {
   return new Promise<StreamOnceResult>((resolve, reject) => {
+    // Already-aborted signal: the 'abort' event already fired in the past, so a listener would
+    // never run. Settle synchronously instead of issuing a doomed request (SP3 can hand this a
+    // pre-aborted signal if the user cancels before the describe pass starts).
+    if (signal.aborted) { resolve({ text: '', toolCalls: [], aborted: true, refusal: false }); return; }
     let u: URL;
     try { u = new URL(nativeUrl); } catch { reject(new ChatStreamError('invalid AI endpoint URL', 'generic')); return; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') { reject(new ChatStreamError('unsupported AI endpoint protocol', 'generic')); return; }

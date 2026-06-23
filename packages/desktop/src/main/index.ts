@@ -26,7 +26,7 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 // SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) — streaming engine + plaintext
 // session store. chatStream calls the configured provider DIRECTLY (net.request), the
 // store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
-import { chatStream, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { chatStream, describeImages, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
 import { buildAgentToolset, buildExecuteAgentTool } from './agent-tools.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
@@ -1168,16 +1168,35 @@ function registerIpcHandlers(config: AppConfig) {
     // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
     if (!cfg || cfg.provider !== 'openai-compatible') { safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }); return; }
 
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    chatStreamRegistry.set(req.streamId, entry);
+
     const transcript = req.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
       .join('\n\n')
       .slice(0, 12_000);
-    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}`, ts: Date.now() };
 
-    const controller = new AbortController();
-    const entry: ChatStreamEntry = { controller, wcId };
-    chatStreamRegistry.set(req.streamId, entry);
+    // SP3 attachment distillation: gemma4 can't see images while tools are present, so describe
+    // any conversation images with a VISION-ONLY pass first, then fold that text into the
+    // transcript the tool-using ingest loop distills. Failure/abort → text-only (graceful).
+    // This handler does NOT go through validateChatReq, so bound the images inline (shape +
+    // per-image size) before decoding — a stale/compromised renderer can't drive memory here.
+    const images = req.messages
+      .flatMap((m) => (m.attachments ?? []))
+      .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
+        && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
+      .slice(0, 4)
+      .map((a) => a.dataUrl.replace(/^data:[^,]*,/, ''));
+    let imageBlock = '';
+    if (images.length > 0) {
+      // Cap the model-generated description (untrusted: a prompt-injected image could make it
+      // huge) so it can't bypass the 12k transcript bound and bloat the ingest prompt.
+      const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
+      if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
+    }
+    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
 
     const afterWrite = async (saved: string) => {
       const safe = assertInsideVault(currentVaultPath, saved);

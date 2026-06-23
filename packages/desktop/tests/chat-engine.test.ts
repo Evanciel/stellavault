@@ -188,6 +188,38 @@ describe('buildChatBody', () => {
     expect(b.messages[1]).toEqual({ role: 'user', content: 'hi' });
   });
 
+  it('looksLikeNoImageReply: flags gemma4 "no image" misses, accepts real descriptions (SP3)', async () => {
+    const { looksLikeNoImageReply } = await import('../src/main/chat-engine.js');
+    for (const miss of [
+      'Please provide the image you would like me to describe.',
+      'I need an image attached to generate a description.',
+      'There is no image in the prompt.',
+      'I cannot describe what is not there.',
+      '', 'ok',
+    ]) expect(looksLikeNoImageReply(miss)).toBe(true);
+    for (const hit of [
+      'The image displays a dark background with abstract patterns and a glowing blue robot.',
+      'A red square on the left, a blue square on the right.',
+    ]) expect(looksLikeNoImageReply(hit)).toBe(false);
+  });
+
+  it('streamOnceNative: an already-aborted signal settles {aborted:true} with no request (SP3)', async () => {
+    const { streamOnceNative } = await import('../src/main/chat-engine.js');
+    const ac = new AbortController();
+    ac.abort();
+    const res = await streamOnceNative('http://127.0.0.1:11434/api/chat', { model: 'x' }, ac.signal, () => {});
+    expect(res).toEqual({ text: '', toolCalls: [], aborted: true, refusal: false });
+  });
+
+  it('describeImages: no images or non-local provider → "" without a network call (SP3 guard)', async () => {
+    const { describeImages } = await import('../src/main/chat-engine.js');
+    const ac = new AbortController();
+    expect(await describeImages(OPENAI_CFG, [], ac.signal)).toBe(''); // no images
+    // anthropic/google are not the local native path → '' (vision-describe is Ollama-only)
+    expect(await describeImages(ANTHROPIC_CFG, ['AAAA'], ac.signal)).toBe('');
+    expect(await describeImages(GEMINI_CFG, ['AAAA'], ac.signal)).toBe('');
+  });
+
   it('attachmentsToBase64 strips the data: prefix → bare base64 (Ollama native vision)', async () => {
     const { attachmentsToBase64 } = await import('../src/main/chat-engine.js');
     const m = { id: 'u', role: 'user' as const, text: '', ts: 1,
