@@ -16,7 +16,7 @@
 import { net } from 'electron';
 import type { Synthesizer, SynthesisSource } from '@stellavault/core';
 import {
-  DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, OPENAI_BASE_URL, type AiProvider,
+  ANTHROPIC_VERSION, DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, OPENAI_BASE_URL, type AiProvider,
 } from '../shared/ai-providers.js';
 
 // Re-export for back-compat (older imports referenced this from here).
@@ -29,12 +29,11 @@ export interface LlmConfig {
   baseURL?: string; // only used when provider === 'openai-compatible'
 }
 
-const ANTHROPIC_VERSION = '2023-06-01';
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_TOKENS = 2048;
 
 /** Build the grounding block from retrieved sources (title + snippet only). */
-function sourcesBlock(sources: SynthesisSource[]): string {
+export function sourcesBlock(sources: SynthesisSource[]): string {
   return sources
     .slice(0, 12)
     .map((s, i) => `[${i + 1}] ${s.title}\n${(s.snippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)}`)

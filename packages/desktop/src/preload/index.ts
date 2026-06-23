@@ -92,6 +92,20 @@ const ALLOWED_CHANNELS = new Set<string>([
   'review:confirm',
   'review:skip',
   'categories:list',
+  // SP1 multiturn chat — renderer to main commands (invoke)
+  'chat:send',
+  'chat:abort',
+  'chat:list-sessions',
+  'chat:load-session',
+  'chat:rename-session',
+  'chat:delete-session',
+  // Local model server (Ollama) lifecycle — "Start Ollama" affordance
+  'ollama:status',
+  'ollama:start',
+  // Compat check + auto-download (button-prompt)
+  'ollama:version',
+  'ollama:compat',
+  'ollama:download',
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([
@@ -105,6 +119,12 @@ const ALLOWED_EVENTS = new Set<string>([
   'capture:progress',     // second-brain capture lifecycle
   'capture:done',
   'review:changed',
+  // SP1 multiturn chat — main to renderer streaming (e.sender targeted, not broadcast)
+  'chat:chunk',
+  'chat:done',
+  'chat:error',
+  // Ollama auto-download byte progress (e.sender targeted)
+  'ollama:download-progress',
 ]);
 
 const api = {

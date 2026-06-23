@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { useUiStore, listCommands } from '../../lib/commands.js';
 import { bindingFor, chordFromEvent, normalizeChord, formatChord, findConflicts, isEditorChord } from '../../lib/hotkeys.js';
 import { Modal, ConfirmModal } from '../ui/Modal.js';
-import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META } from '../../../shared/ai-providers.js';
+import { DEFAULT_MODELS, MODELS_BY_PROVIDER, OLLAMA_BASE_URL, PROVIDER_META, isLocalProviderUrl } from '../../../shared/ai-providers.js';
 import { useT, type MsgKey } from '../../lib/i18n.js';
 
 type TabId = 'general' | 'editor' | 'appearance' | 'ai' | 'agent' | 'hotkeys' | 'about';
@@ -402,6 +402,83 @@ function AITab() {
     return () => clearTimeout(timer);
   }, [ai.provider, hasKey, ai.baseURL, loadModels]);
 
+  // ─── "Start Ollama" affordance (local openai-compatible only) ───
+  // When the user points the Local provider at a loopback host, surface whether the
+  // server is up / installed and a one-tap start. Remote hosts (Groq/OpenRouter) are
+  // never offered a start (isLocalProviderUrl gates it).
+  const [ollama, setOllama] = useState<{ reachable: boolean; installed: boolean } | null>(null);
+  const [startingOllama, setStartingOllama] = useState(false);
+  const [ollamaMsg, setOllamaMsg] = useState<string | null>(null);
+  // Compat (installed version vs current-model floor) + auto-download (button-prompt) state.
+  const [compat, setCompat] = useState<
+    { installed: boolean; version: string | null; minVersion: string; outdated: boolean } | null
+  >(null);
+  const [downloading, setDownloading] = useState(false);
+  const [dlPct, setDlPct] = useState<number | null>(null);
+  const isLocalOllama = ai.provider === 'openai-compatible' && isLocalProviderUrl(ai.baseURL ?? '');
+
+  const refreshOllama = useCallback(async () => {
+    if (!isLocalOllama) { setOllama(null); setCompat(null); return; }
+    try {
+      setOllama(await ipc('ollama:status', { baseURL: ai.baseURL ?? '' }));
+      setCompat(await ipc('ollama:compat'));
+    } catch { setOllama(null); setCompat(null); }
+  }, [isLocalOllama, ai.baseURL]);
+
+  // Auto-download the latest Ollama (button-prompt). Bytes stream via 'ollama:download-progress'.
+  const handleDownloadOllama = useCallback(async () => {
+    setDownloading(true); setOllamaMsg(null); setDlPct(0);
+    const off = onIpc('ollama:download-progress', (p: unknown) => {
+      const d = p as { phase: string; received?: number; total?: number };
+      if (d.phase === 'downloading' && d.total) setDlPct(Math.round((d.received! / d.total) * 100));
+      else if (d.phase === 'extracting') setDlPct(100);
+    });
+    try {
+      const r = await ipc('ollama:download');
+      if (r.ok) {
+        setOllamaMsg(t('settings.ai.ollama.installed'));
+        await refreshOllama();
+        void loadModels(true);
+      } else {
+        setOllamaMsg(t('settings.ai.ollama.downloadFailed'));
+      }
+    } catch {
+      setOllamaMsg(t('settings.ai.ollama.downloadFailed'));
+    } finally {
+      off(); setDownloading(false); setDlPct(null);
+    }
+  }, [t, refreshOllama, loadModels]);
+
+  // Debounced re-check as the provider / baseURL changes.
+  useEffect(() => {
+    setOllamaMsg(null);
+    const timer = setTimeout(() => { void refreshOllama(); }, 400);
+    return () => clearTimeout(timer);
+  }, [refreshOllama]);
+
+  const handleStartOllama = useCallback(async () => {
+    setStartingOllama(true);
+    setOllamaMsg(null);
+    try {
+      const r = await ipc('ollama:start', { baseURL: ai.baseURL ?? '' });
+      if (r.ok) {
+        setOllamaMsg(t('settings.ai.ollama.started'));
+        await refreshOllama();
+        void loadModels(true); // models become listable once the server is up
+      } else if (r.reason === 'not-installed') {
+        setOllamaMsg(t('settings.ai.ollama.notInstalled'));
+      } else if (r.reason === 'timeout') {
+        setOllamaMsg(t('settings.ai.ollama.timeout'));
+      } else {
+        setOllamaMsg(t('settings.ai.ollama.failed'));
+      }
+    } catch {
+      setOllamaMsg(t('settings.ai.ollama.failed'));
+    } finally {
+      setStartingOllama(false);
+    }
+  }, [ai.baseURL, t, refreshOllama, loadModels]);
+
   return (
     <div>
       <Field label={t('settings.ai.provider.label')} hint={t('settings.ai.provider.hint')}>
@@ -430,6 +507,101 @@ function AITab() {
                 onChange={(e) => patchAi({ baseURL: e.target.value })}
                 style={{ ...textInputStyle, width: 360 }}
               />
+            </Field>
+          )}
+
+          {/* Local server (Ollama) status + one-tap start — only for a loopback baseURL. */}
+          {isLocalOllama && (
+            <Field label={t('settings.ai.ollama.label')} hint={t('settings.ai.ollama.hint')}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {ollama === null ? (
+                  <span style={{ fontSize: 12, color: 'var(--ink-faint)' }}>{t('settings.ai.ollama.checking')}</span>
+                ) : ollama.reachable ? (
+                  <span style={{
+                    fontSize: 12, color: '#10b981', fontWeight: 600,
+                    padding: '4px 10px', background: 'rgba(16,185,129,0.1)',
+                    border: '1px solid rgba(16,185,129,0.3)', borderRadius: 4,
+                  }}>
+                    {t('settings.ai.ollama.running')}
+                  </span>
+                ) : ollama.installed ? (
+                  <>
+                    <span style={{ fontSize: 12, color: 'var(--ink-dim)' }}>{t('settings.ai.ollama.notRunning')}</span>
+                    <button
+                      onClick={() => void handleStartOllama()}
+                      disabled={startingOllama}
+                      style={{
+                        padding: '4px 12px', fontSize: 11,
+                        cursor: startingOllama ? 'default' : 'pointer',
+                        background: 'var(--accent)', border: 'none', borderRadius: 4,
+                        color: '#fff', opacity: startingOllama ? 0.6 : 1,
+                      }}
+                    >
+                      {startingOllama ? t('settings.ai.ollama.starting') : t('settings.ai.ollama.start')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 12, color: 'var(--ink-dim)' }}>{t('settings.ai.ollama.notInstalled')}</span>
+                    {/* Button-prompt auto-download: fetches the latest Ollama and installs it
+                        next to the models drive — never auto-runs (user must click). */}
+                    <button
+                      onClick={() => void handleDownloadOllama()}
+                      disabled={downloading}
+                      style={{
+                        padding: '4px 12px', fontSize: 11,
+                        cursor: downloading ? 'default' : 'pointer',
+                        background: 'var(--accent)', border: 'none', borderRadius: 4,
+                        color: '#fff', opacity: downloading ? 0.6 : 1,
+                      }}
+                    >
+                      {downloading
+                        ? `${t('settings.ai.ollama.downloading')}${dlPct !== null ? ` ${dlPct}%` : ''}`
+                        : t('settings.ai.ollama.downloadInstall')}
+                    </button>
+                    <button
+                      onClick={() => void ipc('shell:open-external', 'https://ollama.com/download')}
+                      style={{
+                        padding: '4px 12px', fontSize: 11, cursor: 'pointer',
+                        background: 'var(--hover)', border: '1px solid var(--border)',
+                        borderRadius: 4, color: 'var(--ink-dim)',
+                      }}
+                    >
+                      {t('settings.ai.ollama.download')}
+                    </button>
+                  </>
+                )}
+              </div>
+              {/* Compat warning: installed but older than the current-model floor → offer update. */}
+              {compat?.installed && compat.outdated && (
+                <div style={{
+                  marginTop: 8, fontSize: 11, color: 'var(--ink-dim)',
+                  display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+                  padding: '6px 10px', background: 'rgba(245,158,11,0.1)',
+                  border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4,
+                }}>
+                  <span>
+                    ⚠ {t('settings.ai.ollama.outdated')} (v{compat.version} → v{compat.minVersion}+)
+                  </span>
+                  <button
+                    onClick={() => void handleDownloadOllama()}
+                    disabled={downloading}
+                    style={{
+                      padding: '3px 10px', fontSize: 11,
+                      cursor: downloading ? 'default' : 'pointer',
+                      background: 'var(--accent)', border: 'none', borderRadius: 4,
+                      color: '#fff', opacity: downloading ? 0.6 : 1,
+                    }}
+                  >
+                    {downloading
+                      ? `${t('settings.ai.ollama.downloading')}${dlPct !== null ? ` ${dlPct}%` : ''}`
+                      : t('settings.ai.ollama.update')}
+                  </button>
+                </div>
+              )}
+              {ollamaMsg && (
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-faint)' }}>{ollamaMsg}</div>
+              )}
             </Field>
           )}
 

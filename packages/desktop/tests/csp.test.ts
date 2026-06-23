@@ -69,4 +69,24 @@ describe('renderer CSP — media-src lock', () => {
       }
     },
   );
+
+  // Inline-script backstop lock: sanitize.ts is the primary XSS boundary, but the
+  // CSP is the defense-in-depth net that makes any sanitize miss non-fatal. script
+  // currently falls back to default-src 'self' (NO unsafe-inline/unsafe-eval), so
+  // inline <script>/on* handlers are blocked. This fails CI if a future PR adds
+  // 'unsafe-inline'/'unsafe-eval' to default-src OR an explicit script-src — which
+  // would silently remove that backstop and leave sanitize as the sole defense.
+  it.each(['default-src', 'script-src'])(
+    "forbids 'unsafe-inline' / 'unsafe-eval' in %s (inline-script backstop)",
+    (directive) => {
+      const sources = csp.get(directive); // may be absent (script-src falls back)
+      if (!sources) return;
+      expect(sources, `${directive} must not weaken script policy`).not.toContain("'unsafe-inline'");
+      expect(sources).not.toContain("'unsafe-eval'");
+    },
+  );
+
+  it("default-src is 'self' (the script-src fallback, no inline)", () => {
+    expect(csp.get('default-src')).toEqual(["'self'"]);
+  });
 });

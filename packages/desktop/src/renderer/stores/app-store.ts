@@ -19,13 +19,16 @@ export interface OpenTab {
   // updateTabFrontmatter (Properties edits). `content` stays authoritative —
   // EditorArea derives {frontmatter, body} from it via lib/frontmatter.ts.
   frontmatter?: Record<string, unknown>;
-  // Wave 2 additive: special tab kinds. 'note' (default, file-backed) or
-  // 'graph' (full main-pane GraphView — no file, never dirty, content unused).
-  kind?: 'note' | 'graph';
+  // Wave 2 additive: special tab kinds. 'note' (default, file-backed),
+  // 'graph' (full main-pane GraphView) or 'chat' (full main-pane AI chat) —
+  // the special kinds carry no file, never go dirty, and leave content unused.
+  kind?: 'note' | 'graph' | 'chat';
 }
 
 // Singleton id for the graph tab — at most one graph tab is ever open.
 export const GRAPH_TAB_ID = '__graph-view__';
+// Singleton id for the chat tab — at most one center chat tab is ever open.
+export const CHAT_TAB_ID = '__chat-view__';
 
 interface AppState {
   // Sidebar
@@ -92,6 +95,7 @@ interface AppState {
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   // Wave 2 additive: open (or focus) the singleton full-pane graph tab.
   openGraphTab: () => void;
+  openChatTab: () => void;
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
@@ -223,6 +227,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tab: OpenTab = {
       id: GRAPH_TAB_ID, filePath: '', title: 'Graph',
       isDirty: false, content: '', kind: 'graph',
+    };
+    return { tabs: [...s.tabs, tab], activeTabId: tab.id };
+  }),
+
+  // Center chat tab — singleton, mirrors openGraphTab. Brings AI chat into the
+  // main pane as a first-class view (not just the right AI-panel tab).
+  openChatTab: () => set((s) => {
+    const existing = s.tabs.find((t) => t.kind === 'chat');
+    if (existing) return { activeTabId: existing.id };
+    const tab: OpenTab = {
+      id: CHAT_TAB_ID, filePath: '', title: 'Chat',
+      isDirty: false, content: '', kind: 'chat',
     };
     return { tabs: [...s.tabs, tab], activeTabId: tab.id };
   }),

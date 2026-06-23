@@ -239,6 +239,11 @@ export function registerBuiltinCommands(): void {
       // Full main-pane graph TAB (Wave 2) — the side panel stays on 'panel.graph'.
       run: () => app().openGraphTab(),
     },
+    {
+      id: 'chat.open-view', title: t('action.openChat'), category: 'View',
+      // Full main-pane AI chat TAB — the right AI panel keeps its own chat tab too.
+      run: () => app().openChatTab(),
+    },
     // ─── T2-3: editor view modes ───
     {
       id: 'view.editor-live', title: t('command.editorLive'), category: 'View',

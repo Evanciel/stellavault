@@ -20,6 +20,7 @@ export function TitleBar() {
   const rightPanel = useAppStore((s) => s.rightPanel);
   const setRightPanel = useAppStore((s) => s.setRightPanel);
   const openGraphTab = useAppStore((s) => s.openGraphTab);
+  const openChatTab = useAppStore((s) => s.openChatTab);
   const isDark = theme === 'dark';
   const isMac = window.stellavault.platform === 'darwin';
 
@@ -85,6 +86,14 @@ export function TitleBar() {
         title={t('titlebar.openGraphView')} aria-label="Open graph view"
       >
         &#x25C9;
+      </button>
+      {/* AI chat as a full-pane CENTER tab (first-class, not just the AI panel tab). */}
+      <button
+        onClick={openChatTab}
+        style={btnStyle()}
+        title={t('titlebar.openChat')} aria-label="Open AI chat"
+      >
+        &#x1F4AC;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}

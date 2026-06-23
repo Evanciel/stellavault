@@ -349,6 +349,34 @@ export interface CaptureCounts {
   watching: boolean;
 }
 
+// ─── SP1 multiturn chat (docs/02-design/multimedia-chat-sp1-plan.md §3) ──────
+// A chat turn. `text` is a single string (SP1 is text-only; SP3 widens to content
+// blocks without a body-builder rewrite). `incomplete` marks a partial / aborted /
+// refused turn (§7) — saved as-is and resumable. `citations` ride assistant turns
+// and are persisted as title+filePath only (Decision 2 — snippet stripped at rest).
+// NO apiKey/secret ever appears in any chat type (Invariant §6 — key stays in main).
+export type ChatRole = 'user' | 'assistant' | 'system';
+export interface ChatCitation {
+  title: string;
+  filePath: string;     // absolute; '' if not resolvable
+  snippet?: string;     // live display only; NOT persisted (Decision 2)
+}
+export interface ChatMessage {
+  id: string;           // renderer-generated (crypto.randomUUID) per turn
+  role: ChatRole;
+  text: string;
+  ts: number;           // epoch ms
+  incomplete?: boolean; // partial / aborted / refused turn (§7)
+  citations?: ChatCitation[]; // assistant turns only
+}
+// Session list row (⑨). `id` is the UUID filename; `title` is a metadata field
+// (rename writes this, NEVER the filename); `updated` is last-saved epoch ms.
+export interface ChatSessionMeta {
+  id: string;
+  title: string;
+  updated: number;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -519,6 +547,32 @@ export interface IpcChannelMap {
   'review:confirm':     { args: [id: string, categoryId: string | null, stage?: string]; result: void };
   'review:skip':        { args: [id: string]; result: void };
   'categories:list':    { args: []; result: CategoryInfo[] };
+
+  // ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3) ───
+  // Streaming command (renderer→main). result:void — tokens stream back via the
+  // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
+  // streamId). The API key NEVER appears in these args (main reads SecretStore).
+  // sessionId routes the persisted assistant turn to the right session on done.
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean }]; result: void };
+  'chat:abort': { args: [streamId: string]; result: void };
+  // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
+  'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
+  'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };
+  'chat:rename-session': { args: [id: string, title: string]; result: void };
+  'chat:delete-session': { args: [id: string]; result: void };
+
+  // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
+  // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'
+  // error banner. ollama:start spawns a FIXED binary (no renderer-supplied path/args);
+  // baseURL is used ONLY for the HTTP reachability probe.
+  'ollama:status': { args: [opts?: { baseURL?: string }]; result: { reachable: boolean; installed: boolean } };
+  'ollama:start':  { args: [opts?: { baseURL?: string }]; result: { ok: boolean; reason?: 'already-running' | 'not-installed' | 'spawn-failed' | 'timeout' } };
+  // Compat check: installed version vs the current-model floor (older Ollama 412s on new models).
+  'ollama:version': { args: []; result: { version: string | null } };
+  'ollama:compat':  { args: []; result: { installed: boolean; version: string | null; minVersion: string; outdated: boolean } };
+  // Auto-download latest Ollama (button-prompt). Download bytes stream via the
+  // 'ollama:download-progress' EVENT; the resolved invoke result reports the outcome.
+  'ollama:download': { args: []; result: { ok: boolean; binPath?: string; version?: string | null; reason?: string } };
 }
 
 // ─── Events (main → renderer, one-way) ───
@@ -539,6 +593,19 @@ export interface IpcEventMap {
   'capture:progress': { id: string; phase: string };
   'capture:done':     CaptureOutcome & { id: string };
   'review:changed':   { queueLength: number };
+
+  // ─── SP1 multiturn chat streaming (main → renderer, e.sender targeted) ───
+  // Filtered by streamId on the renderer (onIpc fires for ALL chat events on this
+  // window). NEVER broadcast — main sends only to the originating webContents.
+  'chat:chunk': { streamId: string; delta: string };
+  'chat:done':  { streamId: string; citations?: ChatCitation[] };
+  // category mirrors chat-engine's ErrorCategory union (kept in sync; shared/ must
+  // not import main/, so the union is inlined here as the wire-shape source of truth).
+  'chat:error': {
+    streamId: string;
+    message: string;
+    category?: 'key-missing' | 'rate-limited' | 'refused' | 'too-large' | 'aborted' | 'unreachable' | 'model-missing' | 'generic';
+  };
 }
 
 // Helper types for typed invoke/on

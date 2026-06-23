@@ -116,8 +116,8 @@ export function TabBar() {
                 </span>
               )}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
-                {/* Wave 2: graph tab gets the ◉ glyph */}
-                {tab.kind === 'graph' ? `◉ ${tab.title}` : tab.title}
+                {/* Wave 2: graph tab gets the ◉ glyph; center chat tab gets 💬 */}
+                {tab.kind === 'graph' ? `◉ ${tab.title}` : tab.kind === 'chat' ? `💬 ${tab.title}` : tab.title}
               </span>
               <button
                 aria-label={`Close ${tab.title}`}

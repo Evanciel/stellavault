@@ -5,7 +5,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'elect
 import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
 import type { Server as HttpServer } from 'node:http';
@@ -23,6 +23,27 @@ import { redactSecrets } from './redact-secrets.js';
 // from desktop-settings.ai when an API key is configured; null → extractive.
 import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
 import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvider } from '../shared/ai-providers.js';
+// SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) — streaming engine + plaintext
+// session store. chatStream calls the configured provider DIRECTLY (net.request), the
+// store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
+import { chatStream, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+// "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
+import {
+  ollamaStatus,
+  startOllama,
+  getOllamaVersion,
+  checkCompat,
+  downloadAndInstallOllama,
+} from './ollama-manager.js';
+import {
+  saveSession as chatSaveSession,
+  loadSession as chatLoadSession,
+  listSessions as chatListSessions,
+  renameSession as chatRenameSession,
+  deleteSession as chatDeleteSession,
+  isUuid as chatIsUuid,
+} from './chat-session-store.js';
+import type { ChatMessage } from '../shared/ipc-types.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -137,6 +158,49 @@ let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } 
 let currentVaultPath = '';
 // Second-brain auto-capture engine (Design §6.1) — created at the end of initCore.
 let engine: OrchestrationEngine | null = null;
+
+// ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3) ────────────────────────
+// In-flight chat streams keyed by renderer-supplied streamId. Each entry pins the
+// AbortController (for chat:abort + before-quit) and the originating webContents id
+// (wcId) so abort/cap can be authorised against the owner. Created BEFORE the RAG
+// await in chat:send so an in-flight search is cancellable; deleted in finally with
+// an identity guard. NEVER carries the API key.
+interface ChatStreamEntry { controller: AbortController; wcId: number; }
+const chatStreamRegistry = new Map<string, ChatStreamEntry>();
+const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CHAT_MAX_MESSAGES = 100;
+const CHAT_MAX_MSG_CHARS = 24_000;
+const CHAT_MAX_TOTAL_CHARS = 120_000;
+
+// Validate + sanitise a renderer chat:send request. Returns the cleaned turns
+// (renderer-supplied 'system' roles DROPPED — main owns the system prompt) or a
+// rejection reason. Caps message count / per-message length / total length.
+function validateChatReq(
+  req: any,
+): { ok: true; clean: ChatMessage[] } | { ok: false; msg: string } {
+  if (!req || typeof req.streamId !== 'string' || !CHAT_UUID_RE.test(req.streamId)) {
+    return { ok: false, msg: 'bad streamId' };
+  }
+  if (chatStreamRegistry.has(req.streamId)) return { ok: false, msg: 'duplicate streamId' };
+  if (typeof req.sessionId !== 'string' || !chatIsUuid(req.sessionId)) {
+    return { ok: false, msg: 'bad sessionId' };
+  }
+  if (!Array.isArray(req.messages) || req.messages.length === 0 || req.messages.length > CHAT_MAX_MESSAGES) {
+    return { ok: false, msg: 'bad messages' };
+  }
+  let total = 0;
+  const clean: ChatMessage[] = [];
+  for (const m of req.messages) {
+    if (!m || typeof m.text !== 'string') return { ok: false, msg: 'bad message text' };
+    // role whitelist: a 'system' turn must NEVER come from the renderer.
+    if (m.role !== 'user' && m.role !== 'assistant') return { ok: false, msg: 'bad role' };
+    if (m.text.length > CHAT_MAX_MSG_CHARS) return { ok: false, msg: 'message too long' };
+    total += m.text.length;
+    clean.push({ id: String(m.id ?? ''), role: m.role, text: m.text, ts: Number(m.ts) || Date.now() });
+  }
+  if (total > CHAT_MAX_TOTAL_CHARS) return { ok: false, msg: 'conversation too long' };
+  return { ok: true, clean };
+}
 
 // ─── Agent Memory / MCP server (T3-3) ────────────────
 // The embedded MCP server ("Agent Memory") lets a local agent (Claude) read/write
@@ -904,6 +968,91 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
+  // ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) ────────────────────
+  // Streaming chat: the renderer invokes 'chat:send' with the turn history; tokens
+  // stream back via the targeted 'chat:chunk'/'chat:done'/'chat:error' EVENTS
+  // (e.sender, never broadcast). The API key is read in main (getAiConfig) and NEVER
+  // crosses to the renderer or a log. chat-engine calls the provider directly — RAG is
+  // injected here via the module-level searchEngine (may be null on an unindexed vault,
+  // in which case the engine degrades to no grounding).
+  ipcMain.handle('chat:send', async (e, req: any): Promise<void> => {
+    const wcId = e.sender.id;
+    const v = validateChatReq(req);
+    if (!v.ok) throw new Error(`chat: ${v.msg}`);
+    // Concurrency = hard-reject-at-2 (queue DEFERRED, §4). Count this sender's
+    // in-flight streams; the cap lives ONLY here (single source of truth).
+    let owned = 0;
+    for (const ent of chatStreamRegistry.values()) if (ent.wcId === wcId) owned++;
+    if (owned >= MAX_CONCURRENT) throw new Error('chat: concurrent stream cap reached');
+
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => {
+      if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
+    };
+    // 'openai-compatible' (Ollama/LM Studio) may legitimately have no key. Every other
+    // provider requires one — surface a categorised error instead of a stuck bubble.
+    if (!cfg || (!cfg.apiKey && cfg.provider !== 'openai-compatible')) {
+      safeSend('chat:error', { streamId: req.streamId, message: 'No AI provider configured', category: 'key-missing' });
+      return;
+    }
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    // Register BEFORE any await so an in-flight RAG search is cancellable via
+    // chat:abort / before-quit.
+    chatStreamRegistry.set(req.streamId, entry);
+    try {
+      await chatStream({
+        cfg,
+        messages: v.clean,
+        ragOn: !!req.ragOn,
+        signal: controller.signal,
+        searchEngine, // module-level; may be null → engine null-guards
+        onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
+        onDone: (citations, fullText: string) => {
+          safeSend('chat:done', { streamId: req.streamId, citations });
+          const assistant: ChatMessage = {
+            id: randomUUID(),
+            role: 'assistant',
+            text: fullText,
+            ts: Date.now(),
+            citations,
+          };
+          // Persist the full turn (user turns + the new assistant turn). The store
+          // debounces, redacts, and strips citation snippet bodies at rest.
+          chatSaveSession(req.sessionId, [...v.clean, assistant]);
+        },
+        onError: (message: string, category?: ErrorCategory) =>
+          safeSend('chat:error', { streamId: req.streamId, message, category: category ?? 'generic' }),
+      });
+    } catch (err) {
+      // Generic message to the renderer; details stay console-only (and redacted by
+      // chat-engine's own logging — never the key).
+      console.error('[main] chat:send stream failed:', err);
+      safeSend('chat:error', { streamId: req.streamId, message: 'chat stream failed', category: 'generic' });
+    } finally {
+      // Identity guard: only delete if this exact entry still owns the slot (a reused
+      // streamId from a later send must not be clobbered).
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
+  // Abort an in-flight stream. Only the OWNING webContents may abort its own stream.
+  ipcMain.handle('chat:abort', (e, streamId: string): void => {
+    const entry = chatStreamRegistry.get(streamId);
+    if (!entry) return;
+    if (entry.wcId !== e.sender.id) return; // not your stream
+    entry.controller.abort();
+    chatStreamRegistry.delete(streamId);
+  });
+
+  // Session CRUD (⑨) — delegate to the store. Filenames are UUIDs; the store's
+  // isUuid + assertInsideDir guards run on every op. rename writes a title FIELD.
+  ipcMain.handle('chat:list-sessions', () => chatListSessions());
+  ipcMain.handle('chat:load-session', (_e, id: string) => chatLoadSession(id));
+  ipcMain.handle('chat:rename-session', (_e, id: string, title: string) => chatRenameSession(id, title));
+  ipcMain.handle('chat:delete-session', (_e, id: string) => chatDeleteSession(id));
+
   // W1-16: related notes — mirrors core's get-related MCP tool (doc title +
   // content head as the query, self excluded). Unindexed notes → [].
   ipcMain.handle('core:related', async (_e, filePath: string, limit?: number): Promise<SearchResult[]> => {
@@ -1274,6 +1423,29 @@ function registerIpcHandlers(config: AppConfig) {
     if (!isValidProvider(provider)) return false; // I-1: unknown provider → false
     return secretStore?.hasSecret(provider) ?? false;
   });
+
+  // ─── Local model server (Ollama) lifecycle ───
+  // "Start Ollama" UX: the renderer can ask whether the local server is up/installed
+  // and request a start. ollama:start spawns a FIXED binary (ollama-manager resolves it
+  // from PATH / known install dirs) — the renderer NEVER supplies a path or args; the
+  // optional baseURL is used only for the HTTP reachability probe.
+  ipcMain.handle('ollama:status', (_e, opts?: { baseURL?: string }) =>
+    ollamaStatus(opts?.baseURL ?? ''),
+  );
+  ipcMain.handle('ollama:start', (_e, opts?: { baseURL?: string }) =>
+    startOllama(opts?.baseURL ?? ''),
+  );
+  // Compat check + auto-download (button-prompt). Like ollama:start, the renderer supplies
+  // NOTHING to these — the version is read from the resolved binary, and the download is a
+  // FIXED GitHub release + FIXED per-platform asset (see ollama-manager security note).
+  ipcMain.handle('ollama:version', async () => ({ version: await getOllamaVersion() }));
+  ipcMain.handle('ollama:compat', () => checkCompat());
+  ipcMain.handle('ollama:download', (e) =>
+    // Stream download progress to the requesting renderer only (e.sender, never broadcast).
+    downloadAndInstallOllama((p) => {
+      if (!e.sender.isDestroyed()) e.sender.send('ollama:download-progress', p);
+    }),
+  );
   ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
     if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
     secretStore?.clearSecret(provider);
@@ -2145,7 +2317,11 @@ function registerAssetProtocol(config: AppConfig): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
     try {
       const url = new URL(request.url);
-      // app://vault/<relpath> — only the "vault" host is served.
+      // app://vault/<relpath> — only the "vault" host is served. CANONICAL host-pin
+      // policy, CASE-SENSITIVE: new URL() does NOT lowercase a custom-scheme host,
+      // so app://VAULT → hostname 'VAULT' → 404. Mirrored in the renderer — keep in
+      // lockstep with packages/desktop/src/renderer/lib/sanitize.ts (APP_VAULT_RE /
+      // enforceAppHost); tests/app-host-consistency.test.ts asserts both layers agree.
       if (url.hostname !== 'vault') {
         return new Response('Not found', { status: 404 });
       }
@@ -2530,6 +2706,16 @@ app.whenReady().then(async () => {
 // T3-3: stop the embedded MCP server on quit so its loopback port is released.
 app.on('before-quit', () => {
   void stopMcpServer();
+});
+
+// SP1 chat: abort every in-flight stream on quit so no net.request outlives the app
+// (no orphaned sockets, no send-after-destroy). SEPARATE listener — the two existing
+// before-quit handlers above are untouched.
+app.on('before-quit', () => {
+  for (const { controller } of chatStreamRegistry.values()) {
+    try { controller.abort(); } catch { /* already aborted */ }
+  }
+  chatStreamRegistry.clear();
 });
 
 app.on('window-all-closed', () => {

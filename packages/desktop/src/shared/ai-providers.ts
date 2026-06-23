@@ -12,6 +12,11 @@ export const DEFAULT_OLLAMA_MODEL = 'llama3.1';
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const OLLAMA_BASE_URL = 'http://localhost:11434/v1';
 
+// Anthropic Messages API version header. Single source of truth shared by
+// modelsListRequest (below), llm-synthesizer (Ask/Wiki buffered), and chat-engine
+// (SP1 streaming) — verified current 2026-06-22 (claude-api skill).
+export const ANTHROPIC_VERSION = '2023-06-01';
+
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
   none: '',
   anthropic: DEFAULT_ANTHROPIC_MODEL,
@@ -68,6 +73,29 @@ export const MODELS_BY_PROVIDER: Record<AiProvider, string[]> = {
   'openai-compatible': ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
 };
 
+/** True when `baseURL` (or the Ollama default when blank) targets a LOOPBACK host —
+ *  i.e. a local model server we could offer to start. Remote openai-compatible hosts
+ *  (Groq / OpenRouter / DeepSeek) return false so the UI never offers to "start Ollama"
+ *  for a server it can't possibly launch. */
+export function isLocalProviderUrl(baseURL: string): boolean {
+  const raw = (baseURL || OLLAMA_BASE_URL).trim();
+  let host: string;
+  try {
+    // URL.hostname returns IPv6 literals bracketed ("[::1]") — strip the brackets so
+    // the loopback comparison below matches the bare "::1".
+    host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost')
+  );
+}
+
 // Valid key-accepting providers (excludes 'none', which never stores a key).
 export const KEY_PROVIDERS: ReadonlySet<string> = new Set<string>([
   'anthropic', 'openai', 'openai-compatible', 'google',
@@ -95,7 +123,7 @@ export function modelsListRequest(
     }
     case 'anthropic':
       if (!key) return null;
-      return { url: 'https://api.anthropic.com/v1/models', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } };
+      return { url: 'https://api.anthropic.com/v1/models', headers: { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION } };
     case 'google':
       if (!key) return null;
       return { url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`, headers: {} };

@@ -1,0 +1,763 @@
+// chat-engine SSE streaming + pure-parser tests (SP1 T2, Plan §8/§9).
+// Reuses the FakeRequest/FakeResponse + vi.mock('electron') net pattern from
+// outbound-fetch.test.ts. vi.mock('electron') is hoisted BEFORE the dynamic import.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+
+// ── electron net.request mock ─────────────────────────────────────────────
+class FakeResponse extends EventEmitter {
+  statusCode: number;
+  headers: Record<string, string | string[]>;
+  constructor(statusCode = 200, headers: Record<string, string | string[]> = {}) {
+    super();
+    this.statusCode = statusCode;
+    this.headers = headers;
+  }
+}
+
+class FakeRequest extends EventEmitter {
+  opts: any;
+  ended = false;
+  aborted = false;
+  headers: Record<string, string> = {};
+  body = '';
+  constructor(opts: any) {
+    super();
+    this.opts = opts;
+  }
+  setHeader(k: string, v: string) { this.headers[k.toLowerCase()] = v; }
+  write(b: string) { this.body += b; }
+  end() { this.ended = true; }
+  abort() { this.aborted = true; this.emit('abort'); }
+}
+
+const reqs: FakeRequest[] = [];
+const mockRequest = vi.fn((opts: any) => {
+  const r = new FakeRequest(opts);
+  reqs.push(r);
+  return r;
+});
+
+vi.mock('electron', () => ({
+  net: { request: mockRequest },
+}));
+
+function lastReq(): FakeRequest { return reqs[reqs.length - 1]; }
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+const ANTHROPIC_CFG = { provider: 'anthropic' as const, apiKey: 'sk-ant-secret-KEY-12345', model: '', baseURL: '' };
+const OPENAI_CFG = { provider: 'openai' as const, apiKey: 'sk-secret-OPENAI', model: 'gpt-4o-mini', baseURL: '' };
+const GEMINI_CFG = { provider: 'google' as const, apiKey: 'AIza-SECRET-GEMINI-KEY', model: '', baseURL: '' };
+
+function userMsg(text: string) {
+  return [{ id: 'u1', role: 'user' as const, text, ts: 1 }];
+}
+
+beforeEach(() => {
+  reqs.length = 0;
+  vi.clearAllMocks();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+// ── Pure parsers (no net) ──────────────────────────────────────────────────
+describe('pure SSE parsers', () => {
+  it('parseAnthropicSse: text_delta accumulation', async () => {
+    const { parseAnthropicSse } = await import('../src/main/chat-engine.js');
+    const r = parseAnthropicSse(
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
+    );
+    expect(r.deltas).toEqual(['Hello']);
+    expect(r.done).toBe(false);
+  });
+
+  it('parseAnthropicSse: ping yields no delta, not done', async () => {
+    const { parseAnthropicSse } = await import('../src/main/chat-engine.js');
+    const r = parseAnthropicSse('event: ping\ndata: {"type":"ping"}');
+    expect(r.deltas).toEqual([]);
+    expect(r.done).toBe(false);
+    expect(r.refusal).toBeFalsy();
+  });
+
+  it('parseAnthropicSse: message_stop → done', async () => {
+    const { parseAnthropicSse } = await import('../src/main/chat-engine.js');
+    const r = parseAnthropicSse('event: message_stop\ndata: {"type":"message_stop"}');
+    expect(r.done).toBe(true);
+  });
+
+  it('parseAnthropicSse: message_delta stop_reason refusal → refusal flag', async () => {
+    const { parseAnthropicSse } = await import('../src/main/chat-engine.js');
+    const r = parseAnthropicSse(
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"refusal"}}',
+    );
+    expect(r.refusal).toBe(true);
+  });
+
+  it('parseAnthropicSse: error event throws categorized', async () => {
+    const { parseAnthropicSse } = await import('../src/main/chat-engine.js');
+    expect(() =>
+      parseAnthropicSse('event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"busy"}}'),
+    ).toThrow();
+  });
+
+  it('parseOpenAiSse: [DONE] + null delta skipped', async () => {
+    const { parseOpenAiSse } = await import('../src/main/chat-engine.js');
+    const frame =
+      'data: {"choices":[{"delta":{"content":"Hi"}}]}\n' +
+      'data: {"choices":[{"delta":{"content":null}}]}\n' +
+      'data: {"choices":[{"delta":{}}]}\n' +
+      'data: [DONE]';
+    const r = parseOpenAiSse(frame);
+    expect(r.deltas).toEqual(['Hi']);
+    expect(r.done).toBe(true);
+  });
+
+  it('parseGeminiSse: candidates parts text', async () => {
+    const { parseGeminiSse } = await import('../src/main/chat-engine.js');
+    const r = parseGeminiSse('data: {"candidates":[{"content":{"parts":[{"text":"Gem"}]}}]}');
+    expect(r.deltas).toEqual(['Gem']);
+  });
+
+  it('malformed JSON frame skipped (no throw)', async () => {
+    const { parseOpenAiSse, parseAnthropicSse, parseGeminiSse } = await import('../src/main/chat-engine.js');
+    expect(() => parseOpenAiSse('data: {not json')).not.toThrow();
+    expect(parseOpenAiSse('data: {not json').deltas).toEqual([]);
+    expect(() => parseAnthropicSse('event: x\ndata: {bad')).not.toThrow();
+    expect(() => parseGeminiSse('data: {bad')).not.toThrow();
+  });
+});
+
+// ── buildChatBody ───────────────────────────────────────────────────────────
+describe('buildChatBody', () => {
+  it('anthropic: no sampling/thinking params; model from default; system top-level', async () => {
+    const { buildChatBody, CHAT_MAX_TOKENS } = await import('../src/main/chat-engine.js');
+    const spec = buildChatBody(ANTHROPIC_CFG, 'SYS', userMsg('hi'));
+    const b: any = spec.body;
+    expect(spec.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(spec.headers['x-api-key']).toBe(ANTHROPIC_CFG.apiKey);
+    expect(b.model).toBe('claude-fable-5');
+    expect(b.max_tokens).toBe(CHAT_MAX_TOKENS);
+    expect(b.stream).toBe(true);
+    expect(b.system).toBe('SYS');
+    expect(b.temperature).toBeUndefined();
+    expect(b.top_p).toBeUndefined();
+    expect(b.top_k).toBeUndefined();
+    expect(b.thinking).toBeUndefined();
+    expect(b.budget_tokens).toBeUndefined();
+    expect(b.messages).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('anthropic: filters renderer-supplied system role out of messages', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const msgs = [
+      { id: 's', role: 'system' as const, text: 'EVIL', ts: 1 },
+      { id: 'u', role: 'user' as const, text: 'hi', ts: 2 },
+    ];
+    const b: any = buildChatBody(ANTHROPIC_CFG, 'SYS', msgs).body;
+    expect(b.messages).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('openai: system message first + Bearer auth', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const spec = buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi'));
+    const b: any = spec.body;
+    expect(spec.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(spec.headers.authorization).toBe('Bearer sk-secret-OPENAI');
+    expect(b.messages[0]).toEqual({ role: 'system', content: 'SYS' });
+    expect(b.stream).toBe(true);
+  });
+
+  it('google: ?alt=sse URL + key in x-goog-api-key header (NOT url)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const spec = buildChatBody(GEMINI_CFG, 'SYS', userMsg('hi'));
+    expect(spec.url).toContain(':streamGenerateContent?alt=sse');
+    expect(spec.url).not.toContain(GEMINI_CFG.apiKey);
+    expect(spec.url).not.toContain('key=');
+    expect(spec.headers['x-goog-api-key']).toBe(GEMINI_CFG.apiKey);
+    const b: any = spec.body;
+    expect(b.systemInstruction.parts[0].text).toBe('SYS');
+    expect(b.contents[0].role).toBe('user');
+  });
+
+  it('google: multi-turn maps assistant→model and preserves user/model/user order', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const msgs = [
+      { id: '1', role: 'user' as const, text: 'q1', ts: 1 },
+      { id: '2', role: 'assistant' as const, text: 'a1', ts: 2 },
+      { id: '3', role: 'user' as const, text: 'q2', ts: 3 },
+    ];
+    const b: any = buildChatBody(GEMINI_CFG, 'SYS', msgs).body;
+    expect(b.contents.map((c: any) => c.role)).toEqual(['user', 'model', 'user']);
+    expect(b.contents.map((c: any) => c.parts[0].text)).toEqual(['q1', 'a1', 'q2']);
+  });
+
+  it('openai: multi-turn keeps [system, user, assistant, user] order', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const msgs = [
+      { id: '1', role: 'user' as const, text: 'q1', ts: 1 },
+      { id: '2', role: 'assistant' as const, text: 'a1', ts: 2 },
+      { id: '3', role: 'user' as const, text: 'q2', ts: 3 },
+    ];
+    const b: any = buildChatBody(OPENAI_CFG, 'SYS', msgs).body;
+    expect(b.messages).toEqual([
+      { role: 'system', content: 'SYS' },
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+    ]);
+  });
+
+  // reasoning_effort:'none' — disables a local reasoning model's default chain-of-thought
+  // (gemma3/4, qwen3) so the OpenAI-compat endpoint returns the answer, not an empty
+  // thinking-only stream. Scoped to LOCAL servers (remote hosts may 400 on it).
+  it('openai-compatible (local Ollama): adds reasoning_effort:none', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'gemma4:e4b', baseURL: 'http://localhost:11434/v1' };
+    const b: any = buildChatBody(cfg, 'SYS', userMsg('hi')).body;
+    expect(b.reasoning_effort).toBe('none');
+  });
+
+  it('openai-compatible (blank baseURL → loopback default): adds reasoning_effort:none', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'm', baseURL: '' };
+    const b: any = buildChatBody(cfg, 'SYS', userMsg('hi')).body;
+    expect(b.reasoning_effort).toBe('none');
+  });
+
+  it('openai-compatible (remote Groq host): does NOT add reasoning_effort', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-compatible' as const, apiKey: 'gsk_x', model: 'llama', baseURL: 'https://api.groq.com/openai/v1' };
+    const b: any = buildChatBody(cfg, 'SYS', userMsg('hi')).body;
+    expect(b.reasoning_effort).toBeUndefined();
+  });
+
+  it('real OpenAI: never adds reasoning_effort', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const b: any = buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi')).body;
+    expect(b.reasoning_effort).toBeUndefined();
+  });
+});
+
+// ── capToBudget ─────────────────────────────────────────────────────────────
+describe('capToBudget', () => {
+  it('drops lowest-score tail entries beyond budget', async () => {
+    const { capToBudget } = await import('../src/main/chat-engine.js');
+    const big = ['A'.repeat(5000), 'B'.repeat(5000), 'C'.repeat(5000)].join('\n\n');
+    const out = capToBudget(big, 2000); // ~8000 char budget
+    expect(out.length).toBeLessThanOrEqual(8000);
+    expect(out.startsWith('A')).toBe(true);
+    expect(out).not.toContain('C'.repeat(100));
+  });
+});
+
+// ── chatStream over the net mock ────────────────────────────────────────────
+describe('chatStream', () => {
+  function drive(spec: { provider: any; cfg: any }) {
+    const deltas: string[] = [];
+    let doneText: string | null = null;
+    let err: { msg: string; cat?: string } | null = null;
+    const controller = new AbortController();
+    return { deltas, controller,
+      get doneText() { return doneText; },
+      get err() { return err; },
+      start: async (chatStream: any) => {
+        const p = chatStream({
+          cfg: spec.cfg, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+          onDelta: (d: string) => deltas.push(d),
+          onDone: (_c: any, full: string) => { doneText = full; },
+          onError: (m: string, c?: string) => { err = { msg: m, cat: c }; },
+        });
+        await tick();
+        return p;
+      },
+      finish: (full: string) => { doneText = full; },
+      setErr: (e: any) => { err = e; },
+    };
+  }
+
+  it('anthropic: accumulates text_delta then message_stop → done', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, { 'content-type': 'text/event-stream' });
+    req.emit('response', res);
+    res.emit('data', Buffer.from('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}\n\n'));
+    res.emit('data', Buffer.from('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"lo"}}\n\n'));
+    res.emit('data', Buffer.from('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+    await p;
+    expect(deltas).toEqual(['Hel', 'lo']);
+    expect(full).toBe('Hello');
+  });
+
+  it('anthropic: ping resets idle, emits no delta', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('event: ping\ndata: {"type":"ping"}\n\n'));
+    expect(deltas).toEqual([]);
+    res.emit('data', Buffer.from('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+    await p;
+    expect(full).toBe('');
+  });
+
+  it('anthropic: refusal message_delta → onError category refused', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"refusal"}}\n\n'));
+    await p;
+    expect(err.c).toBe('refused');
+    expect(req.aborted).toBe(true);
+  });
+
+  it('openai: [DONE] terminates; null delta skipped', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'));
+    res.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":null}}]}\n\n'));
+    res.emit('data', Buffer.from('data: [DONE]\n\n'));
+    await p;
+    expect(deltas).toEqual(['Hi']);
+    expect(full).toBe('Hi');
+  });
+
+  it('gemini: ?alt=sse url; parts text; ends on socket end', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: GEMINI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    expect(req.opts.path).toContain('alt=sse');
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('data: {"candidates":[{"content":{"parts":[{"text":"Ge"}]}}]}\n\n'));
+    res.emit('data', Buffer.from('data: {"candidates":[{"content":{"parts":[{"text":"m"}]}}]}\n\n'));
+    res.emit('end');
+    await p;
+    expect(deltas).toEqual(['Ge', 'm']);
+    expect(full).toBe('Gem');
+  });
+
+  it('partial chunk split across two data events buffered to \\n\\n', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: () => {}, onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    // a complete frame split mid-JSON across two emits — must NOT parse until \n\n arrives.
+    res.emit('data', Buffer.from('data: {"choices":[{"delta":{"con'));
+    expect(deltas).toEqual([]);
+    res.emit('data', Buffer.from('tent":"Yo"}}]}\n\n'));
+    expect(deltas).toEqual(['Yo']);
+    res.emit('data', Buffer.from('data: [DONE]\n\n'));
+    await p;
+  });
+
+  it('malformed JSON frame skipped (no throw out of loop)', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let err: any = null;
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('data: {bad json here\n\n'));
+    res.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'));
+    res.emit('data', Buffer.from('data: [DONE]\n\n'));
+    await p;
+    expect(err).toBeNull();
+    expect(deltas).toEqual(['ok']);
+  });
+
+  it('abort via signal aborts the request and reports aborted', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    res.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"par"}}]}\n\n'));
+    controller.abort();
+    await p;
+    expect(req.aborted).toBe(true);
+    expect(err.c).toBe('aborted');
+  });
+
+  it('aborted-before-start issues no net.request', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    controller.abort();
+    await chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(err.c).toBe('aborted');
+  });
+
+  it('HTTP 429 → onError category rate-limited', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(429, {});
+    req.emit('response', res);
+    res.emit('end');
+    await p;
+    expect(err.c).toBe('rate-limited');
+  });
+
+  it('HTTP 404 → onError category model-missing (e.g. local model not pulled)', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(404, {});
+    req.emit('response', res);
+    res.emit('end');
+    await p;
+    expect(err.c).toBe('model-missing');
+  });
+
+  it('API key NEVER appears in any console-logged string (gemini error path)', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: GEMINI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {}, onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(500, {});
+    req.emit('response', res);
+    res.emit('end');
+    await p;
+    // trigger a request-error log path too
+    const c2 = new AbortController();
+    const p2 = chatStream({
+      cfg: GEMINI_CFG, messages: userMsg('hi'), ragOn: false, signal: c2.signal,
+      onDelta: () => {}, onDone: () => {}, onError: () => {},
+    });
+    await tick();
+    lastReq().emit('error', new Error(`socket fail ${GEMINI_CFG.apiKey}`));
+    await p2;
+    const logged = spy.mock.calls.flat().map(String).join('\n');
+    expect(logged).not.toContain(GEMINI_CFG.apiKey);
+    expect(logged).not.toContain('key=');
+    spy.mockRestore();
+  });
+
+  it('redactForLog strips key query + header values', async () => {
+    const { redactForLog } = await import('../src/main/chat-engine.js');
+    expect(redactForLog('https://x/y?key=SECRET123&z=1')).not.toContain('SECRET123');
+    expect(redactForLog('x-goog-api-key: AIzaSECRET')).not.toContain('AIzaSECRET');
+    expect(redactForLog('authorization: Bearer sk-SECRET')).not.toContain('sk-SECRET');
+  });
+
+  it('anthropic: frame split between the event: and data: lines buffers until \\n\\n', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const deltas: string[] = [];
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: (d: string) => deltas.push(d),
+      onDone: (_c: any, f: string) => { full = f; },
+      onError: () => {},
+    });
+    await tick();
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    // Split mid-frame BETWEEN the 'event:' line and the 'data:' line — no \n\n yet.
+    res.emit('data', Buffer.from('event: content_block_delta\n'));
+    expect(deltas).toEqual([]);
+    res.emit('data', Buffer.from('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}\n\n'));
+    expect(deltas).toEqual(['Hi']);
+    res.emit('data', Buffer.from('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+    await p;
+    expect(full).toBe('Hi');
+  });
+});
+
+// ── timeouts (connect + idle) — §4/§9/§12 ────────────────────────────────────
+describe('chatStream timeouts', () => {
+  it('idle timeout: 60s with no data after first response → onError generic + abort', async () => {
+    vi.useFakeTimers();
+    const { chatStream, IDLE_TIMEOUT_MS } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await vi.advanceTimersByTimeAsync(0); // let chatStream reach net.request
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res); // clears connectTimer, arms idleTimer
+    // No data at all — idle timer must fire and tear the request down.
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS + 1);
+    await p;
+    expect(err.c).toBe('generic');
+    expect(req.aborted).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('connect timeout: 30s with no response event → onError generic + abort', async () => {
+    vi.useFakeTimers();
+    const { chatStream, CONNECT_TIMEOUT_MS } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const req = lastReq();
+    // Never emit 'response' — connect timer must fire.
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS + 1);
+    await p;
+    expect(err.c).toBe('generic');
+    expect(req.aborted).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('ping frames reset idle so a long-thinking stream does NOT time out', async () => {
+    vi.useFakeTimers();
+    const { chatStream, IDLE_TIMEOUT_MS } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    let full: string | null = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: (_c: any, f: string) => { full = f; },
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const req = lastReq();
+    const res = new FakeResponse(200, {});
+    req.emit('response', res);
+    // Emit a non-text ping every (IDLE-1)ms across > 2*IDLE total. Each ping must
+    // reset idle (proving idle resets on EVERY frame, not just text_delta).
+    const step = IDLE_TIMEOUT_MS - 1_000;
+    let elapsed = 0;
+    while (elapsed < IDLE_TIMEOUT_MS * 3) {
+      res.emit('data', Buffer.from('event: ping\ndata: {"type":"ping"}\n\n'));
+      await vi.advanceTimersByTimeAsync(step);
+      elapsed += step;
+    }
+    expect(err).toBeNull(); // never timed out despite > 3*idle elapsed
+    res.emit('data', Buffer.from('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+    await p;
+    expect(full).toBe('');
+    expect(err).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('error-status body that never ends still times out (idle covers the drain)', async () => {
+    vi.useFakeTimers();
+    const { chatStream, IDLE_TIMEOUT_MS } = await import('../src/main/chat-engine.js');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let err: any = null;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const req = lastReq();
+    const res = new FakeResponse(500, {});
+    req.emit('response', res); // error headers, but NEVER 'end' the body (half-open)
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS + 1);
+    await p;
+    // The promise resolved (no orphan slot) and an error surfaced.
+    expect(err).not.toBeNull();
+    expect(req.aborted).toBe(true);
+    vi.useRealTimers();
+  });
+});
+
+// ── abort during/after the RAG await (registry-before-await design) ──────────
+describe('chatStream RAG-await abort', () => {
+  it('signal aborted DURING the RAG search → no net.request issued, onError aborted', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    let err: any = null;
+    const controller = new AbortController();
+    // searchEngine.search() aborts the signal before resolving — exercises the
+    // post-RAG-await signal.aborted guard (the abortable-in-flight-RAG case).
+    const searchEngine = {
+      search: async () => {
+        controller.abort();
+        return [{ document: { title: 'N', filePath: '/v/n.md' }, chunk: { content: 'x' }, score: 1 }];
+      },
+    };
+    await chatStream({
+      cfg: OPENAI_CFG, messages: userMsg('hi'), ragOn: true, signal: controller.signal, searchEngine,
+      onDelta: () => {}, onDone: () => {},
+      onError: (m: string, c?: string) => { err = { m, c }; },
+    });
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(err.c).toBe('aborted');
+  });
+});
+
+// ── RAG ─────────────────────────────────────────────────────────────────────
+describe('buildChatRagBlock', () => {
+  it('null searchEngine → empty block, no throw', async () => {
+    const { buildChatRagBlock } = await import('../src/main/chat-engine.js');
+    const out = await buildChatRagBlock('q', null);
+    expect(out.block).toBe('');
+    expect(out.citations).toEqual([]);
+  });
+
+  it('adapts search results to citations (title+filePath only)', async () => {
+    const { buildChatRagBlock } = await import('../src/main/chat-engine.js');
+    const fakeEngine = {
+      search: async () => [
+        { document: { title: 'Note A', filePath: '/v/a.md' }, chunk: { content: 'body a '.repeat(100) }, score: 0.9 },
+        { document: { title: 'Note B', filePath: '/v/b.md' }, chunk: { content: 'body b' }, score: 0.5 },
+      ],
+    };
+    const out = await buildChatRagBlock('q', fakeEngine);
+    expect(out.citations).toEqual([
+      { title: 'Note A', filePath: '/v/a.md' },
+      { title: 'Note B', filePath: '/v/b.md' },
+    ]);
+    expect(out.block).toContain('Note A');
+    // §9 'no full body': the 700-char source body must be sliced (snippet ≤ 200 → after
+    // sourcesBlock's own 400-cap, still well under 700) and never emitted whole.
+    expect(out.block).not.toContain('body a '.repeat(100));
+    expect(out.block.length).toBeLessThan(700);
+  });
+
+  it('caps an oversized sources block under the RAG budget and keeps the system prompt bounded', async () => {
+    const { buildChatRagBlock, buildSystemPrompt, RAG_TOKEN_BUDGET, capToBudget } =
+      await import('../src/main/chat-engine.js');
+    // Many high-then-low score sources whose rendered block blows past the ~8000-char budget.
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      document: { title: `Note ${i}`, filePath: `/v/${i}.md` },
+      chunk: { content: 'x'.repeat(200) },
+      score: 1 - i / 100, // descending: drop the lowest-score tail
+    }));
+    const out = await buildChatRagBlock('q', { search: async () => many });
+    const maxChars = Math.floor(RAG_TOKEN_BUDGET / 0.25);
+    expect(out.block.length).toBeLessThanOrEqual(maxChars); // capped under budget
+    expect(out.block).toContain('Note 0'); // highest-score kept
+    expect(out.block).not.toContain('Note 59'); // lowest-score dropped
+    // The assembled system prompt stays bounded (block + wrapper overhead only).
+    const sys = buildSystemPrompt(out.block);
+    expect(sys.length).toBeLessThanOrEqual(maxChars + 600);
+    // capToBudget is idempotent on an already-capped block.
+    expect(capToBudget(out.block, RAG_TOKEN_BUDGET)).toBe(out.block);
+  });
+
+  it('capToBudget drops the lowest-score tail when fed score-descending input', async () => {
+    const { capToBudget } = await import('../src/main/chat-engine.js');
+    const block = [
+      '[1] High\n' + 'h'.repeat(5000),
+      '[2] Mid\n' + 'm'.repeat(5000),
+      '[3] Low\n' + 'l'.repeat(5000),
+    ].join('\n\n');
+    const out = capToBudget(block, 2000);
+    expect(out).toContain('[1] High');
+    expect(out).not.toContain('[3] Low'); // lowest-score tail dropped first
+  });
+
+  it('ragOn system prompt wraps block in <untrusted> with data-not-instructions guard', async () => {
+    const { buildSystemPrompt } = await import('../src/main/chat-engine.js');
+    const sys = buildSystemPrompt('SOME GROUNDING');
+    expect(sys).toContain('<untrusted>');
+    expect(sys).toContain('SOME GROUNDING');
+    expect(sys).toContain('</untrusted>');
+    expect(sys).toContain('not instructions');
+  });
+});
