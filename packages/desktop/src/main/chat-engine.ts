@@ -495,12 +495,27 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     const nativeUrl = nativeChatUrl(cfg.baseURL ?? '');
     const toolset = opts.toolset;
     const executeTool = opts.executeTool;
+    // Agent-specific system prompt (E2E finding): without these rules gemma4:e4b sometimes
+    // (a) stops with an empty message after a tool returns, (b) answers in English regardless
+    // of the user's language, or (c) loops the same search. Keep the RAG/<untrusted> guard.
+    const agentSystem = [
+      system,
+      '',
+      "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
+      'RULES (follow exactly):',
+      '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
+      "- Always answer in the SAME LANGUAGE as the user's latest message.",
+      '- Cite the notes you used as [[Note Title]].',
+      '- If a search returns nothing useful, say so briefly and answer from general knowledge.',
+      '- Never call the same tool with the same arguments twice.',
+      '- A write tool (e.g. log_decision) runs only after the user approves it; explain what you intend to write.',
+    ].join('\n');
     await runAgentLoop({
       turns: messages,
       toolset,
       executeTool,
       streamStep: (msgs) =>
-        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, system, msgs, toolset.schemas, false), signal, onDelta),
+        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, false), signal, onDelta),
       signal,
       onDelta,
       onToolCall: opts.onToolCall,
