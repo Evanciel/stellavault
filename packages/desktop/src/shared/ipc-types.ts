@@ -644,6 +644,10 @@ export interface IpcChannelMap {
   'skill:list':         { args: []; result: SkillMeta[] };
   'skill:set-promoted': { args: [name: string, promoted: boolean]; result: { promoted: boolean } };
 
+  // ─── Always-on daemon (daemon-keepalive §5) — headless self-compile ───
+  // run-now triggers a headless "Compile now" of the most-recent session (also a tray action).
+  'daemon:run-now': { args: []; result: { ok: boolean } };
+
   // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
   // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'
   // error banner. ollama:start spawns a FIXED binary (no renderer-supplied path/args);

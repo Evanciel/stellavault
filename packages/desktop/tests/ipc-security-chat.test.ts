@@ -295,3 +295,35 @@ describe('Memory-relax (Part 1 §4) — autonomous append + push undo toast', ()
     expect(reflect![0]).not.toContain('onMemoryWrite');
   });
 })
+
+describe('Daemon headless distill (daemon-keepalive §3/§4) — safety floor', () => {
+  it('chat:distill is a thin wrapper over runDistill (extraction, no behaviour fork)', () => {
+    const h = mainSrc.match(/ipcMain\.handle\('chat:distill'[\s\S]*?\n  \}\);/);
+    expect(h).not.toBeNull();
+    expect(h![0]).toContain('runDistill(');
+    expect(h![0]).toContain('headless: false');
+  });
+
+  it('runDistill enforces the headless safety floor: create-only deny + injection pre-scan + write cap + no memory write', () => {
+    // Bound the capture to the next module function (the inline opts type has its own `\n}`).
+    const fn = mainSrc.match(/async function runDistill\(opts[\s\S]*?\n\/\/ Headless emit/);
+    expect(fn).not.toBeNull();
+    const src = fn![0];
+    // create-only: append_note/link_note/log_decision + core_memory_* denied in headless
+    expect(mainSrc).toContain("const DAEMON_HEADLESS_DENY = new Set(['append_note', 'link_note', 'log_decision', 'core_memory_append', 'core_memory_replace'])");
+    expect(src).toContain('DAEMON_HEADLESS_DENY.has(name)');
+    // injection pre-scan gates ONLY the headless path
+    expect(src).toMatch(/headless && scanForInjection\(transcript\)\.blocked\.length > 0/);
+    // per-run write cap
+    expect(src).toContain('DAEMON_WRITE_CAP');
+    // NO memoryWrite dep wired (memory append/replace error via dispatcher) — only memoryRecall
+    expect(src).toContain('memoryRecall:');
+    expect(src).not.toContain('memoryAppend:');
+    expect(src).not.toContain('memoryReplace:');
+  });
+
+  it('daemon:run-now is allowlisted (preload) + main-handled', () => {
+    expect(allowedChannelsBody).toContain("'daemon:run-now'");
+    expect(mainSrc).toContain("ipcMain.handle('daemon:run-now'");
+  });
+})

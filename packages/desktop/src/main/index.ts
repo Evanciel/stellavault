@@ -34,6 +34,7 @@ import {
   listBlocks, getBlock, deleteBlock, describeMemoryWrite, looksLikeSecret, type MemoryBlockMeta,
 } from './memory-store.js';
 import { scanForInjection } from './injection-scan.js';
+import { daemonLogEmit, type DistillEvent } from './daemon/daemon-log.js';
 import {
   buildSkillCatalogue, loadSkillBody, listAllSkills, setSkillPromoted, type SkillMeta,
 } from './skill-store.js';
@@ -782,6 +783,136 @@ async function findBacklinks(vaultPath: string, title: string): Promise<Array<{ 
 
 // ─── IPC Handlers ────────────────────────────────────
 
+// ─── Always-on daemon (Design Ref: §3 — daemon-keepalive) ───
+// The distill BODY, extracted so it runs from BOTH the chat:distill IPC handler (windowed,
+// emit=safeSend) AND the tray "Compile now" / future scheduler (headless, emit=daemon log).
+// `headless` adds the §4 safety floor: a poisoned conversation must not file injection payloads as
+// wiki notes nobody reviews, and an unattended run may only CREATE new notes (never mutate existing
+// ones / write memory), bounded by a per-run write cap.
+type DistillEmit = (channel: 'chat:tool-call' | 'chat:tool-result' | 'chat:distill-done', payload: Record<string, unknown>) => void;
+// Headless deny: append_note/link_note MUTATE existing notes (unattended = nobody watches the tool
+// strip to undo); log_decision + core_memory_* are likewise not create-only. distill never wires a
+// memoryWrite dep, but deny them POSITIVELY so a future refactor that re-wires one fails loud (§4 S1).
+const DAEMON_HEADLESS_DENY = new Set(['append_note', 'link_note', 'log_decision', 'core_memory_append', 'core_memory_replace']);
+const DAEMON_WRITE_CAP = 8;
+
+async function runDistill(opts: {
+  messages: ChatMessage[]; streamId: string; emit: DistillEmit; headless: boolean; wcId: number;
+}): Promise<void> {
+  const { messages, streamId, emit, headless, wcId } = opts;
+  const cfg = getAiConfig();
+  // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
+  if (!cfg || cfg.provider !== 'openai-compatible') { emit('chat:distill-done', { streamId, summary: '' }); return; }
+
+  const transcript = messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
+    .join('\n\n')
+    .slice(0, 12_000);
+
+  // §4 safety (headless only): an unattended distill on a prompt-injected conversation must not file
+  // the payload as a durable wiki note nobody reviews. Pre-scan; skip the whole run on a hit. The
+  // windowed path keeps the user in the loop (tool strip), so it is NOT gated here.
+  if (headless && scanForInjection(transcript).blocked.length > 0) {
+    emit('chat:distill-done', { streamId, summary: '' });
+    return;
+  }
+
+  const controller = new AbortController();
+  // wcId=-1 for the daemon: registered in the SAME chatStreamRegistry so before-quit aborts it, but
+  // chat:abort's per-window ownership (ent.wcId === wcId, wcId>=0) never cross-aborts it (§3 S3).
+  const entry: ChatStreamEntry = { controller, wcId };
+  chatStreamRegistry.set(streamId, entry);
+
+  // SP3: describe conversation images with a vision-only pass first (gemma4 can't see images while
+  // tools are present). Untrusted: bound shape + per-image size before decode, cap the description.
+  const images = messages
+    .flatMap((m) => (m.attachments ?? []))
+    .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
+      && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
+    .slice(0, 4)
+    .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
+  let imageBlock = '';
+  if (images.length > 0) {
+    const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
+    if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
+  }
+  const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
+
+  const afterWrite = async (saved: string) => {
+    const safe = assertInsideVault(currentVaultPath, saved);
+    noteSelfWrite(safe);
+    const core = await import('@stellavault/core');
+    if (typeof (core as any).indexFiles === 'function') {
+      await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+    }
+    bumpVaultFsVersion();
+    bumpGraphCacheVersion();
+  };
+  const baseExecute = buildExecuteAgentTool({
+    searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
+    getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+    // distill gets READ memory deps only — NO memoryWrite (review-before-apply, §7-1).
+    memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+  });
+  // §4 headless safety floor (S1/S2): create-only + per-run write cap. baseExecute already wires NO
+  // memoryWrite dep (core_memory_* error anyway); the deny set + cap are defence-in-depth that fail
+  // LOUD — append_note/link_note mutate existing notes unattended, which the windowed user could undo.
+  let writes = 0;
+  const executeTool = !headless ? baseExecute : async (name: string, args: Record<string, unknown>) => {
+    if (DAEMON_HEADLESS_DENY.has(name)) return { error: `'${name}' is disabled in headless daemon mode` };
+    if (name === 'create_note') {
+      if (writes >= DAEMON_WRITE_CAP) return { error: 'daemon write cap reached' };
+      writes++;
+    }
+    return baseExecute(name, args);
+  };
+
+  try {
+    await chatStream({
+      cfg, messages: [ingestTurn], ragOn: false, signal: controller.signal, searchEngine,
+      agentOn: true, distill: true, toolset: buildAgentToolset(), executeTool,
+      onToolCall: (name, detailRedacted) => emit('chat:tool-call', { streamId, name, detailRedacted }),
+      onToolResult: (name, ok, summary, filePath) => emit('chat:tool-result', { streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+      onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
+      onDone: (_citations, fullText) => emit('chat:distill-done', { streamId, summary: fullText.slice(0, 300) }),
+      onError: () => emit('chat:distill-done', { streamId, summary: '' }),
+    });
+  } catch (err) {
+    console.error('[main] runDistill failed:', err);
+    emit('chat:distill-done', { streamId, summary: '' });
+  } finally {
+    if (chatStreamRegistry.get(streamId) === entry) chatStreamRegistry.delete(streamId);
+  }
+}
+
+// Headless emit: write the audit JSONL log (§6 acceptance grep + §4 safety negative-assert) AND
+// broadcast to any open window (a manual "Compile now" may run while a window is open).
+function daemonEmit(open: BrowserWindow[]): DistillEmit {
+  const ev: Record<string, DistillEvent['event']> = { 'chat:tool-call': 'tool-call', 'chat:tool-result': 'tool-result', 'chat:distill-done': 'done' };
+  return (channel, payload) => {
+    daemonLogEmit({ event: ev[channel], streamId: String(payload.streamId ?? ''), name: payload.name as string | undefined, ok: payload.ok as boolean | undefined, filePath: payload.filePath as string | undefined, summary: payload.summary as string | undefined });
+    for (const w of open) { if (!w.isDestroyed()) w.webContents.send(channel, payload); }
+  };
+}
+
+// Tray "Compile now" / daemon:run-now entry (§3 runManualDistill). Phase 0: most-recent session with
+// >= 2 turns, processed once in-memory (no persistent daemon_distill_log until Phase 1, §10-1).
+async function runManualDistill(): Promise<void> {
+  try {
+    const sessions = chatListSessions();
+    const target = sessions[0]; // most recent (desc)
+    if (!target) return;
+    const msgs = chatLoadSession(target.id);
+    if (!Array.isArray(msgs) || msgs.filter((m) => m.role === 'user' || m.role === 'assistant').length < 2) return;
+    const streamId = `daemon-${target.id}`;
+    daemonLogEmit({ event: 'start', streamId });
+    await runDistill({ messages: msgs, streamId, wcId: -1, headless: true, emit: daemonEmit(BrowserWindow.getAllWindows()) });
+  } catch (err) {
+    console.error('[daemon] runManualDistill failed', err);
+  }
+}
+
 function registerIpcHandlers(config: AppConfig) {
   const vp = config.vaultPath;
 
@@ -1302,88 +1433,23 @@ function registerIpcHandlers(config: AppConfig) {
   // INGEST system prompt — the agent folds the conversation's durable knowledge into the
   // wiki (atomic notes, [[links]], log). Writes auto-apply; no chat bubble is produced (the
   // distillation prose is discarded — only the tool activity + a short summary surface).
+  // Thin wrapper over runDistill (windowed: emit=safeSend, headless=false → identical pre-extraction
+  // behaviour). The daemon path (tray "Compile now" / daemon:run-now) calls runDistill headless.
   ipcMain.handle('chat:distill', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
-    const wcId = e.sender.id;
     if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
     if (typeof req.streamId !== 'string' || !req.streamId) return;
-    const cfg = getAiConfig();
     const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
-    // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
-    if (!cfg || cfg.provider !== 'openai-compatible') { safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }); return; }
-
-    const controller = new AbortController();
-    const entry: ChatStreamEntry = { controller, wcId };
-    chatStreamRegistry.set(req.streamId, entry);
-
-    const transcript = req.messages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      // SP4: fold audio/video transcripts in so the distiller files them too.
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
-      .join('\n\n')
-      .slice(0, 12_000);
-
-    // SP3 attachment distillation: gemma4 can't see images while tools are present, so describe
-    // any conversation images with a VISION-ONLY pass first, then fold that text into the
-    // transcript the tool-using ingest loop distills. Failure/abort → text-only (graceful).
-    // This handler does NOT go through validateChatReq, so bound the images inline (shape +
-    // per-image size) before decoding — a stale/compromised renderer can't drive memory here.
-    const images = req.messages
-      .flatMap((m) => (m.attachments ?? []))
-      .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
-        && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
-      .slice(0, 4)
-      .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
-    let imageBlock = '';
-    if (images.length > 0) {
-      // Cap the model-generated description (untrusted: a prompt-injected image could make it
-      // huge) so it can't bypass the 12k transcript bound and bloat the ingest prompt.
-      const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
-      if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
-    }
-    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
-
-    const afterWrite = async (saved: string) => {
-      const safe = assertInsideVault(currentVaultPath, saved);
-      noteSelfWrite(safe);
-      const core = await import('@stellavault/core');
-      if (typeof (core as any).indexFiles === 'function') {
-        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
-      }
-      bumpVaultFsVersion();
-      bumpGraphCacheVersion();
-    };
-    const executeTool = buildExecuteAgentTool({
-      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
-      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
-      // §6 INT-2: distill gets READ memory deps (recall_memory works in the ingest loop too).
-      // NO memoryWrite here — distill auto-applies without a confirm gate, so a reflection/ingest
-      // loop must never perform an unattended durable-memory write (review-before-apply, §7-1).
-      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+    await runDistill({
+      messages: req.messages, streamId: req.streamId, wcId: e.sender.id, headless: false,
+      emit: (channel, payload) => safeSend(channel, payload),
     });
+  });
 
-    try {
-      await chatStream({
-        cfg,
-        messages: [ingestTurn],
-        ragOn: false,            // distillation does its own search; no RAG pre-injection
-        signal: controller.signal,
-        searchEngine,
-        agentOn: true,
-        distill: true,           // → agent loop uses the Karpathy INGEST prompt
-        toolset: buildAgentToolset(),
-        executeTool,             // writes auto-apply (no onToolConfirm)
-        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
-        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
-        onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
-        onDone: (_citations, fullText) => safeSend('chat:distill-done', { streamId: req.streamId, summary: fullText.slice(0, 300) }),
-        onError: () => safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }),
-      });
-    } catch (err) {
-      console.error('[main] chat:distill failed:', err);
-      safeSend('chat:distill-done', { streamId: req.streamId, summary: '' });
-    } finally {
-      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
-    }
+  // Daemon: trigger a headless "Compile now" of the most-recent session (also reachable from the
+  // tray menu, §3). Runs the §4 safety floor (create-only, scan, write-cap, no memory write).
+  ipcMain.handle('daemon:run-now', async (): Promise<{ ok: boolean }> => {
+    await runManualDistill();
+    return { ok: true };
   });
 
   // Reflection follow-up (§A2): run the SAME agent loop READ-ONLY to PROPOSE durable-memory
