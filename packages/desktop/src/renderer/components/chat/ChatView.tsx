@@ -112,6 +112,9 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [introIdx] = useState(() => Math.floor(Math.random() * 4));
   // Hermes-style disclosure: the tool-activity strip collapses to a summary row.
   const [toolsOpen, setToolsOpen] = useState(false);
+  // Agent multi-step plan (set_plan): planDone is a scalar mirroring the wire doneCount 1:1.
+  const [planSteps, setPlanSteps] = useState<string[]>([]);
+  const [planDone, setPlanDone] = useState(0);
   const [input, setInput] = useState('');
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
@@ -328,6 +331,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       setDistilling(false);
       setDistillSummary(e.summary || null);
     });
+    // Agent multi-step plan — last-writer-wins; doneCount clamped so a bad event can't over-index.
+    const offPlan = onIpc('chat:plan', (p: unknown) => {
+      const e = p as { streamId: string; steps: string[]; doneCount: number };
+      if (!ownsStream(e.streamId)) return;
+      setPlanSteps(e.steps);
+      setPlanDone(Math.max(0, Math.min(e.doneCount, e.steps.length)));
+    });
 
     return () => {
       offChunk();
@@ -337,6 +347,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       offToolResult();
       offToolConfirm();
       offDistillDone();
+      offPlan();
     };
   }, [syncActiveCount, sessionId, variant]);
 
@@ -379,6 +390,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     setError(null);
     setCapMessage(false);
     setToolLog([]);   // fresh tool trace per turn
+    setPlanSteps([]); setPlanDone(0); // fresh plan per turn
     setConfirm(null);
     streamMapRef.current.set(newStreamId, assistantTurn.id);
     syncActiveCount();
@@ -430,6 +442,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       distillStreamRef.current.delete(sid);
     }
     setDistilling(false);
+    setPlanSteps([]); setPlanDone(0); // drop stale plan on edit/truncate
     syncActiveCount();
     setInput(target.text);
     setAttachments((target.attachments ?? []).map((a) => ({ uid: crypto.randomUUID(), ...a })));
@@ -625,6 +638,29 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
           </button>
         )}
       </div>
+
+      {/* Agent multi-step plan (set_plan) — a live checklist that ticks off as the agent works. */}
+      {planSteps.length > 0 && (
+        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px' }}>
+          <div style={{ maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--ink-faint)', fontSize: 10.5, fontWeight: 600, marginBottom: 4 }}>
+              🗒 {t('panel.ai.planProgress').replace('{done}', String(planDone)).replace('{total}', String(planSteps.length))}
+            </div>
+            <div role="list" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {planSteps.map((stepText, i) => {
+                const done = i < planDone;
+                const current = i === planDone && planDone < planSteps.length;
+                return (
+                  <div key={i} role="listitem" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: done ? 'var(--ink-dim)' : current ? 'var(--accent-2)' : 'var(--ink-faint)', fontWeight: current ? 600 : 400, borderLeft: current ? '2px solid var(--accent-2)' : '2px solid transparent', paddingLeft: 6, transition: 'color 140ms, border-color 140ms' }}>
+                    <span aria-hidden style={{ color: done ? 'var(--accent-2)' : undefined }}>{done ? '☑' : '☐'}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stepText}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Agent tool-activity (SP-E) — Hermes-style disclosure: a tertiary summary row that
           shows the latest step + a step count, expanding to the full trace on click. */}

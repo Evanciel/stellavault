@@ -42,7 +42,11 @@ describe('agent-tools — toolset metadata', () => {
       'append_note', 'create_note', 'detect_gaps', 'find_decisions', 'get_related', 'learning_path',
       'link_note', 'list_topics', 'log_decision', 'read_note', 'search_vault',
     ]);
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(11);
+    // 12 schemas = 11 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
+    // model but intentionally NOT in AGENT_VALID_NAMES — runAgentLoop intercepts it).
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(12);
+    expect(AGENT_VALID_NAMES.has('set_plan')).toBe(false);
+    expect((AGENT_TOOL_SCHEMAS as any[]).some((s) => s.function?.name === 'set_plan')).toBe(true);
     for (const w of ['log_decision', 'create_note', 'append_note', 'link_note']) expect(isAgentWriteTool(w)).toBe(true);
     for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path']) expect(isAgentWriteTool(r)).toBe(false);
   });

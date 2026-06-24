@@ -140,6 +140,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:tool-confirm',
   // Agent (SP-I): distillation pass finished (summary of what was folded into the wiki)
   'chat:distill-done',
+  'chat:plan', // agent multi-step plan checklist (one-way main→renderer)
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);

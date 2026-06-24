@@ -557,6 +557,7 @@ export interface ChatStreamOptions {
   executeTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
+  onPlan?: (steps: string[], done: number) => void; // set_plan → live checklist
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
   // INGEST prompt — fold the conversation's durable knowledge into the wiki. Implies agent.
@@ -624,13 +625,14 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
           '',
           "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
           'RULES (follow exactly):',
-          '- Before calling tools, state your plan in ONE short sentence.',
+          '- FIRST, call set_plan with 2-6 short steps describing how you will answer. As you finish each step, call set_plan again with an updated `done` count.',
           '- If a tool returns empty or an error, do NOT repeat it — adapt your approach (rephrase the query, try a different tool) or answer from general knowledge, then give your final answer.',
           '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
           "- Always answer in the SAME LANGUAGE as the user's latest message.",
           '- Cite the notes you used as [[Note Title]].',
           '- If a search returns nothing useful, say so briefly and answer from general knowledge.',
           '- Never call the same tool with the same arguments twice.',
+          '- Before your FINAL answer, silently confirm every plan step is addressed; if one is not, do that step first. Then give the final answer.',
           '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
         ].join('\n');
     await runAgentLoop({
@@ -643,6 +645,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       onDelta,
       onToolCall: opts.onToolCall,
       onToolResult: opts.onToolResult,
+      onPlan: opts.onPlan,
       onToolConfirm: opts.onToolConfirm,
       succeed,
       fail,
@@ -1062,6 +1065,7 @@ export interface AgentLoopCtx {
   onDelta: (d: string) => void;
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
+  onPlan?: (steps: string[], done: number) => void;
   /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   succeed: (citations: ChatCitation[], fullText: string) => void;
@@ -1090,6 +1094,9 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
   let fullText = '';
   let invalidCount = 0;
   let deadEndCount = 0; // consecutive empty/error READ results → force-conclude past the limit
+  let planSteps: string[] = []; // multi-step plan (set_plan); declared once, `done` bumped after
+  let planDone = 0;
+  let planDeclared = false;
 
   for (let step = 0; step < AGENT_MAX_STEPS; step++) {
     if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
@@ -1121,6 +1128,22 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
     // tool_calls before returning to keep native role alternation valid.
     for (const tc of res.toolCalls) {
       const name = tc.function.name;
+      // set_plan: a loop-local CONTROL tool (NOT in validNames/dispatcher — no vault effect). MUST
+      // be handled BEFORE the unknown-tool branch or it would trip AGENT_MAX_INVALID. Declares the
+      // plan once (2-6 steps, latched), then only bumps `done`; surfaces it via onPlan; acks with a
+      // role:'tool' message (alternation preserved) and continues. Never settles, never deadEnds.
+      if (name === 'set_plan') {
+        const a = (tc.function.arguments ?? {}) as Record<string, unknown>;
+        if (!planDeclared && Array.isArray(a.steps)) {
+          const s = (a.steps as unknown[]).map(String).map((x) => x.trim()).filter(Boolean).slice(0, 6);
+          if (s.length >= 2) { planSteps = s; planDeclared = true; }
+        }
+        const d = Number(a.done);
+        if (Number.isFinite(d)) planDone = Math.max(0, Math.min(Math.floor(d), planSteps.length));
+        ctx.onPlan?.(planSteps, planDone);
+        messages.push({ role: 'tool', tool_name: name, content: planDeclared ? `Plan recorded (${planDone}/${planSteps.length} done).` : 'Plan must have 2-6 steps.' });
+        continue;
+      }
       // allowlist — unknown → synthetic tool-error (role alternation preserved)
       if (!ctx.toolset.validNames.has(name)) {
         if (++invalidCount > AGENT_MAX_INVALID) { ctx.succeed(citations, fullText); return; }

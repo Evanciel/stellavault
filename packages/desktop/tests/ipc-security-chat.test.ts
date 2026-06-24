@@ -55,6 +55,7 @@ const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
   'chat:tool-call', 'chat:tool-result', 'chat:tool-confirm', // agent SP-D transparency/confirm
   'chat:distill-done', // agent SP-I: distillation summary
+  'chat:plan',         // agent multi-step plan checklist
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {

@@ -405,7 +405,7 @@ const step = (over: Partial<Step> = {}): Step => ({ text: '', toolCalls: [], abo
 
 async function runLoop(steps: Step[], opts: any = {}) {
   const { runAgentLoop } = await import('../src/main/chat-engine.js');
-  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [] };
+  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [], plan: [] };
   let i = 0;
   const ctx = {
     turns: opts.turns ?? [{ id: 'u', role: 'user', text: 'q', ts: 1 }],
@@ -426,6 +426,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     onDelta: (d: string) => calls.deltas.push(d),
     onToolCall: (n: string) => calls.toolCall.push(n),
     onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
+    onPlan: (steps: string[], done: number) => calls.plan.push({ steps, done }),
     onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
     succeed: (c: any, t: string) => calls.succeed.push({ c, t }),
     fail: (m: string, cat: string) => calls.fail.push({ m, cat }),
@@ -471,6 +472,39 @@ describe('runAgentLoop — agent loop invariants', () => {
     const c = await runLoop(always, { toolResult: { results: [] } });
     expect(c.execute.length).toBeLessThanOrEqual(4); // dead-ended well before MAX_STEPS(12)
     expect(c.execute.length).toBeGreaterThanOrEqual(3);
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('set_plan: declares the plan (onPlan fired), acks as a tool turn, never settles', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('set_plan', { steps: ['a', 'b', 'c'], done: 0 })] }),
+      step({ text: 'done answer' }),
+    ]);
+    expect(c.plan).toEqual([{ steps: ['a', 'b', 'c'], done: 0 }]);
+    expect(c.execute).toHaveLength(0); // set_plan is a control tool — never dispatched
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('set_plan: latch — a re-call updates `done` but cannot rewrite the steps', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('set_plan', { steps: ['x', 'y', 'z'], done: 0 })] }),
+      step({ toolCalls: [tc('set_plan', { steps: ['HACKED'], done: 2 })] }),
+      step({ text: 'ok' }),
+    ]);
+    expect(c.plan[0]).toEqual({ steps: ['x', 'y', 'z'], done: 0 });
+    expect(c.plan[1]).toEqual({ steps: ['x', 'y', 'z'], done: 2 }); // steps frozen, done bumped
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('set_plan: a batch with set_plan + a real tool answers both (alternation preserved)', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('set_plan', { steps: ['s1', 's2'], done: 0 }), tc('search_vault', { query: 'q' })] }),
+      step({ text: 'answer' }),
+    ]);
+    expect(c.plan).toHaveLength(1);
+    expect(c.execute).toEqual([{ name: 'search_vault', args: { query: 'q' } }]); // the real tool ran
     expect(c.succeed).toHaveLength(1);
     expect(c.fail).toHaveLength(0);
   });

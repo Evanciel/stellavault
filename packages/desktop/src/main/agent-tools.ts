@@ -42,6 +42,24 @@ export interface AgentToolDeps {
 
 // OpenAI function-format schemas — the ONLY tools the model is told about.
 export const AGENT_TOOL_SCHEMAS: unknown[] = [
+  // set_plan is a loop-local CONTROL tool — intentionally NOT in AGENT_VALID_NAMES /
+  // AGENT_WRITE_NAMES / the dispatcher (no vault side effect); runAgentLoop intercepts it and
+  // surfaces the plan as a live checklist. It IS advertised here so the model knows to call it.
+  {
+    type: 'function',
+    function: {
+      name: 'set_plan',
+      description: 'Declare or update your step-by-step plan. Call ONCE near the start with 2-6 short steps, then call again ONLY to update `done` (count of finished steps). Write-free; does not change the vault.',
+      parameters: {
+        type: 'object',
+        properties: {
+          steps: { type: 'array', items: { type: 'string' }, description: '2-6 short imperative steps' },
+          done: { type: 'number', description: 'how many steps are finished (0 at first)' },
+        },
+        required: ['steps'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {

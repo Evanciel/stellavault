@@ -639,6 +639,9 @@ export interface IpcEventMap {
   'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
   // Agent (SP-I): a distillation pass finished — summary of what was folded into the wiki.
   'chat:distill-done': { streamId: string; summary: string };
+  // Agent multi-step plan (set_plan) — declarative/idempotent: every emit carries the WHOLE plan,
+  // doneCount ∈ [0, steps.length], last-writer-wins per streamId. steps are short display labels.
+  'chat:plan': { streamId: string; steps: string[]; doneCount: number };
 }
 
 // Helper types for typed invoke/on
