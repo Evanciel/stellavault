@@ -3,13 +3,45 @@
 // (rehype-sanitize + enforceAppHost). These add a copy button + language label to code
 // blocks and keep inline code tight. No new URLs/attributes are introduced.
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { Components } from 'react-markdown';
+import { common, createLowlight } from 'lowlight';
 import { useT } from './i18n.js';
+
+// One shared highlighter over the "common" language set (js/ts/py/json/bash/css/…). lowlight
+// is already a dependency (tiptap code-block). It emits a hast tree of <span class="hljs-*">,
+// which we convert to React elements (NO dangerouslySetInnerHTML) — colors come from theme.css.
+const lowlight = createLowlight(common);
 
 function langFromClass(className?: string): string {
   const m = /language-([\w-]+)/.exec(className || '');
   return m ? m[1] : '';
+}
+
+interface HastNode { type: string; value?: string; tagName?: string; properties?: { className?: string[] }; children?: HastNode[] }
+
+function hastToReact(node: HastNode, key: number): React.ReactNode {
+  if (node.type === 'text') return node.value;
+  if (node.type === 'element') {
+    const cls = node.properties?.className?.join(' ');
+    return React.createElement(
+      node.tagName || 'span',
+      { key, className: cls },
+      (node.children || []).map((c, i) => hastToReact(c, i)),
+    );
+  }
+  return null;
+}
+
+/** Syntax-highlighted children for a code block, or null if the language is unknown/unsupported. */
+function highlight(code: string, lang: string): React.ReactNode | null {
+  if (!lang || !lowlight.registered(lang)) return null;
+  try {
+    const tree = lowlight.highlight(lang, code) as unknown as HastNode;
+    return (tree.children || []).map((c, i) => hastToReact(c, i));
+  } catch {
+    return null;
+  }
 }
 
 /** Recursively flatten a React node tree to its text — for the copy button. */
@@ -25,6 +57,8 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
   const t = useT();
   const [copied, setCopied] = useState(false);
   const lang = langFromClass(className);
+  const raw = useMemo(() => nodeText(children), [children]);
+  const highlighted = useMemo(() => highlight(raw, lang), [raw, lang]);
   const copy = () => {
     try {
       void navigator.clipboard.writeText(nodeText(children));
@@ -43,8 +77,8 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
           {copied ? t('panel.ai.copied') : t('panel.ai.copy')}
         </button>
       </div>
-      <pre style={{ margin: 0, padding: '10px 12px', overflowX: 'auto', fontSize: 12.5, lineHeight: 1.55 }}>
-        <code className={className} style={{ fontFamily: 'var(--mono, monospace)', background: 'none', padding: 0 }}>{children}</code>
+      <pre className="sv-hl" style={{ margin: 0, padding: '10px 12px', overflowX: 'auto', fontSize: 12.5, lineHeight: 1.55 }}>
+        <code className={className} style={{ fontFamily: 'var(--mono, monospace)', background: 'none', padding: 0 }}>{highlighted ?? children}</code>
       </pre>
     </div>
   );

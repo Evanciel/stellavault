@@ -51,10 +51,11 @@ describe('CHAT_SANITIZE_SCHEMA shape', () => {
     expect((CHAT_SANITIZE_SCHEMA.attributes as Record<string, unknown>).p).toBeUndefined();
   });
 
-  it('renders a fenced code block with its language label + content (className survives)', () => {
+  it('renders a fenced code block: language label, syntax highlighting, content (className survives)', () => {
     const html = render('```python\nprint(1)\n```');
     expect(html).toContain('python');   // language label from the surviving className
-    expect(html).toContain('print(1)'); // code content
+    expect(html).toContain('print');    // code content (lowlight splits print(1) into tokens)
+    expect(html).toContain('hljs-');    // syntax highlighting was applied (lowlight token spans)
   });
 
   it('restricts protocols: href https|app, src app — no http/javascript/data/mailto', () => {
