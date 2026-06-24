@@ -412,6 +412,19 @@ export interface SkillMeta {
   promoted: boolean;
 }
 
+// ─── Agent REFLECTION (follow-up §A) — a read-only memory-candidate proposal ───
+// The reflection pass (chat:reflect) parses the model's read-only JSON into these. A candidate
+// is NEVER auto-written: it surfaces as a review chip, and only the user's approve drives the
+// real (force-confirm) core_memory_append write (§A3). `suggestedOp` is kept on the wire for
+// forward-compat, but this round is APPEND-ONLY — parseReflectionCandidates forces 'append'
+// and drops `targetId` (replace before/after diff UI is Deferred). Shared = wire source of truth.
+export interface ReflectionCandidate {
+  text: string;
+  rationale: string;
+  suggestedOp: 'append' | 'replace';
+  targetId?: string;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -594,6 +607,14 @@ export interface IpcChannelMap {
   'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
+  // Reflection follow-up (§A): run the distill loop READ-ONLY (deny-all confirm broker, no
+  // memoryWrite dep → fail-closed) to PROPOSE durable-memory candidates. Results arrive via the
+  // 'chat:reflect-done' event; nothing is written until the user approves a chip.
+  'chat:reflect': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
+  // Apply ONE user-approved reflection candidate (§A3) — append-only, re-scanned (injection +
+  // looksLikeSecret) in main, routed through coreMemoryAppend (provenance 'user'). The renderer
+  // carries only the opaque candidate it got from chat:reflect-done.
+  'memory:apply-candidate': { args: [req: { streamId: string; candidate: ReflectionCandidate }]; result: { ok: boolean; id?: string; reason?: string } };
   // SP2: pick image file(s) for a chat attachment. Main runs the dialog, reads + validates
   // (ext/magic-byte/size) each file, and returns ready-to-display base64 attachments.
   'chat:pick-images': { args: []; result: { attachments: ChatAttachment[] } };
@@ -674,6 +695,9 @@ export interface IpcEventMap {
   'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
   // Agent (SP-I): a distillation pass finished — summary of what was folded into the wiki.
   'chat:distill-done': { streamId: string; summary: string };
+  // Reflection follow-up (§A): a read-only reflection pass finished — its proposed memory
+  // candidates (already injection/secret scanned in main). Empty array → "nothing durable".
+  'chat:reflect-done': { streamId: string; candidates: ReflectionCandidate[] };
   // Agent multi-step plan (set_plan) — declarative/idempotent: every emit carries the WHOLE plan,
   // doneCount ∈ [0, steps.length], last-writer-wins per streamId. steps are short display labels.
   'chat:plan': { streamId: string; steps: string[]; doneCount: number };

@@ -1343,3 +1343,49 @@ describe('runAgentLoop — recall_memory dead-end exemption (P1 §6 INT-7)', () 
     expect(c.fail).toHaveLength(0);
   });
 });
+
+// ── Reflection follow-up (§A2) — pure candidate parser + READ-only prompt ─────
+describe('parseReflectionCandidates (§A2 — append-only, fail-closed)', () => {
+  it('parses a fenced JSON array, caps at 3, forces append, drops targetId', async () => {
+    const { parseReflectionCandidates } = await import('../src/main/chat-engine.js');
+    const out = parseReflectionCandidates('here are facts:\n```json\n' + JSON.stringify([
+      { text: 'Prefers Postgres over MongoDB', rationale: 'stated twice', suggestedOp: 'replace', targetId: 'abc' },
+      { text: 'Works on the Stellavault desktop app', rationale: 'ongoing' },
+      { text: 'Uses an RTX 3080 Ti GPU', rationale: 'env' },
+      { text: 'A fourth durable fact about the user', rationale: 'overflow' },
+    ]) + '\n```');
+    expect(out).toHaveLength(3); // cap
+    expect(out.every((c) => c.suggestedOp === 'append')).toBe(true); // replace forced → append
+    expect(out.every((c) => !('targetId' in c) || c.targetId === undefined)).toBe(true); // targetId dropped
+    expect(out[0].text).toBe('Prefers Postgres over MongoDB');
+  });
+
+  it('drops empty / too-short text and de-dupes within the batch', async () => {
+    const { parseReflectionCandidates } = await import('../src/main/chat-engine.js');
+    const out = parseReflectionCandidates('```json\n' + JSON.stringify([
+      { text: '   ', rationale: 'blank' },
+      { text: 'short', rationale: 'under 8 chars' },
+      { text: 'Prefers dark mode everywhere', rationale: 'a' },
+      { text: 'prefers   DARK mode   everywhere', rationale: 'dup (normalized)' },
+    ]) + '\n```');
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe('Prefers dark mode everywhere');
+  });
+
+  it('malformed / missing JSON and the empty array → [] (fail-closed, no throw)', async () => {
+    const { parseReflectionCandidates } = await import('../src/main/chat-engine.js');
+    expect(parseReflectionCandidates('no json here at all')).toEqual([]);
+    expect(parseReflectionCandidates('```json\n{ not valid ]\n```')).toEqual([]);
+    expect(parseReflectionCandidates('```json\n[]\n```')).toEqual([]);
+    expect(parseReflectionCandidates('')).toEqual([]);
+    // bare array fallback (no fence)
+    expect(parseReflectionCandidates('[{"text":"A durable fact here","rationale":"x"}]')).toHaveLength(1);
+  });
+
+  it('KARPATHY_REFLECT_PROMPT is read-only and carries no write/agent rules', async () => {
+    const { KARPATHY_REFLECT_PROMPT } = await import('../src/main/chat-engine.js');
+    expect(KARPATHY_REFLECT_PROMPT).toMatch(/READ-ONLY/i);
+    expect(KARPATHY_REFLECT_PROMPT).not.toContain('create_note'); // no ingest write rule
+    expect(KARPATHY_REFLECT_PROMPT).not.toContain('set_plan');     // no agent plan rule
+  });
+});

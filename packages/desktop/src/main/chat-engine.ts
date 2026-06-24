@@ -23,7 +23,7 @@ import { net } from 'electron';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
 import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
 import { modelSupportsTools } from './ollama-manager.js';
-import type { ChatMessage, ChatCitation } from '../shared/ipc-types.js';
+import type { ChatMessage, ChatCitation, ReflectionCandidate } from '../shared/ipc-types.js';
 
 // ── Constants (Plan §4) ──────────────────────────────────────────────────────
 export const CONNECT_TIMEOUT_MS = 30_000;
@@ -557,6 +557,56 @@ export const KARPATHY_INGEST_PROMPT = [
   'RULES: you MUST write — at minimum one create_note OR one append_note. Atomic notes (one concept each); reuse+link over duplicate; short stable titles; never invent facts not in the conversation. After writing, reply in the user\'s language with a 1-sentence summary of what you created/linked (do NOT dump the note contents).',
 ].join('\n');
 
+// Reflection follow-up (§A2) — READ-ONLY durable-memory proposal prompt. The reflection pass
+// reuses the agent loop but with NO write deps (memoryWrite absent) AND a deny-all confirm
+// broker, so it CANNOT write anything; it only PROPOSES facts that surface as review chips, and
+// the user's approval drives the real (force-confirm) write (§A3). This round is APPEND-ONLY, so
+// the model is asked for plain {text,rationale} facts; parseReflectionCandidates forces
+// suggestedOp:'append'. Design Ref: §A1/§A2, §10-d (explicit trigger only — no auto-trigger).
+export const KARPATHY_REFLECT_PROMPT = [
+  "You are reviewing a finished conversation to PROPOSE durable facts about the USER worth remembering long-term — stable preferences, environment/setup, ongoing projects, recurring constraints. Skip transient Q&A, one-off tasks, and anything not durably about the user.",
+  'You are in READ-ONLY mode: do NOT call any tool. Do not write anything to the vault or memory.',
+  'Reply with ONLY a single fenced ```json code block containing a JSON array of AT MOST 5 objects, each exactly { "text": "<the durable fact as one short sentence>", "rationale": "<why it is worth remembering>" }.',
+  'Each `text` must be a self-contained fact (e.g. "Prefers Postgres over MongoDB for new projects"), not a question or a task. Emit `[]` if there is nothing durable. Output NOTHING except the JSON block.',
+].join('\n');
+
+// Pure parser for the reflection pass output (§A2). Extracts the fenced JSON array, validates each
+// item's shape, FORCES suggestedOp:'append' (this round is append-only — replace before/after diff
+// UI is Deferred; `targetId` is dropped), drops too-short / empty text, de-dupes within the batch,
+// and caps at 3. FAIL-CLOSED: any parse/shape error yields []. Memory-aware dedupe (vs the existing
+// store) + the injection/secret scan happen in the handler (index.ts), which keeps this electron-free.
+const REFLECT_MIN_TEXT = 8;
+const REFLECT_MAX_CANDIDATES = 3;
+export function parseReflectionCandidates(fullText: string): ReflectionCandidate[] {
+  if (typeof fullText !== 'string' || !fullText) return [];
+  // Prefer a fenced ```json block; fall back to the first bare [...] array in the text.
+  const fenced = fullText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced ? fenced[1] : (fullText.match(/\[[\s\S]*\]/)?.[0] ?? '');
+  if (!raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: ReflectionCandidate[] = [];
+  const seen = new Set<string>();
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const text = String((item as Record<string, unknown>).text ?? '').trim();
+    if (text.length < REFLECT_MIN_TEXT) continue;
+    const key = text.toLowerCase().replace(/\s+/g, ' ');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rationale = String((item as Record<string, unknown>).rationale ?? '').trim();
+    // APPEND-ONLY this round (§A3): force 'append', drop targetId regardless of what the model said.
+    out.push({ text, rationale, suggestedOp: 'append' });
+    if (out.length >= REFLECT_MAX_CANDIDATES) break;
+  }
+  return out;
+}
+
 // ── chatStream — the streaming loop over net.request ──────────────────────────
 export interface ChatStreamOptions {
   cfg: LlmConfig;
@@ -590,6 +640,10 @@ export interface ChatStreamOptions {
   // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
   // INGEST prompt — fold the conversation's durable knowledge into the wiki. Implies agent.
   distill?: boolean;
+  // Reflection pass (§A2): same agent loop, READ-ONLY — the system prompt is the REFLECT prompt
+  // (propose durable-memory facts as JSON). The handler wires NO memoryWrite dep AND a deny-all
+  // onToolConfirm, so this pass can never write. Implies agent. Mutually exclusive with distill.
+  reflect?: boolean;
 }
 
 export async function chatStream(opts: ChatStreamOptions): Promise<void> {
@@ -651,8 +705,12 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     // P3 (§4.2): the always-injected skill catalogue (Level-1) rides the agent system prompt only
     // (skills are local-tool-capable; the cloud/single-shot path never gets them, §4.5). It is
     // pre-scanned + capped at source (skill-store), so it splices as trusted context.
-    const skillCatalogue = opts.distill ? '' : (opts.skillCatalogue ?? '');
-    const agentSystem = opts.distill
+    // §A2 3-way branch: a reflect/distill pass MUST NOT inherit the agent RULES (set_plan /
+    // create_note) — those would make gemma4 try to WRITE and skip the JSON the reflect pass needs.
+    const skillCatalogue = (opts.distill || opts.reflect) ? '' : (opts.skillCatalogue ?? '');
+    const agentSystem = opts.reflect
+      ? [system, '', KARPATHY_REFLECT_PROMPT].join('\n')
+      : opts.distill
       ? [system, '', KARPATHY_INGEST_PROMPT].join('\n')
       : [
           system,

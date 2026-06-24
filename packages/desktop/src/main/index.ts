@@ -26,13 +26,14 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 // SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) — streaming engine + plaintext
 // session store. chatStream calls the configured provider DIRECTLY (net.request), the
 // store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
-import { chatStream, describeImages, foldAttachmentsIntoText, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { chatStream, describeImages, foldAttachmentsIntoText, parseReflectionCandidates, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
 import { transcribeAudio, describeVideo } from './media-transcribe.js';
 import { buildAgentToolset, buildExecuteAgentTool, isAgentForceConfirmTool } from './agent-tools.js';
 import {
   buildCoreMemoryBlock, recallMemory, coreMemoryAppend, coreMemoryReplace,
-  listBlocks, getBlock, deleteBlock, describeMemoryWrite, type MemoryBlockMeta,
+  listBlocks, getBlock, deleteBlock, describeMemoryWrite, looksLikeSecret, type MemoryBlockMeta,
 } from './memory-store.js';
+import { scanForInjection } from './injection-scan.js';
 import {
   buildSkillCatalogue, loadSkillBody, listAllSkills, setSkillPromoted, type SkillMeta,
 } from './skill-store.js';
@@ -52,7 +53,7 @@ import {
   deleteSession as chatDeleteSession,
   isUuid as chatIsUuid,
 } from './chat-session-store.js';
-import type { ChatMessage, ChatAttachment } from '../shared/ipc-types.js';
+import type { ChatMessage, ChatAttachment, ReflectionCandidate } from '../shared/ipc-types.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -1378,6 +1379,102 @@ function registerIpcHandlers(config: AppConfig) {
       safeSend('chat:distill-done', { streamId: req.streamId, summary: '' });
     } finally {
       if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
+  // Reflection follow-up (§A2): run the SAME agent loop READ-ONLY to PROPOSE durable-memory
+  // candidates. Two fail-closed layers keep it write-free (review-before-apply, §7-1 / SEC-2):
+  //   (1) executeTool gets READ deps only — NO memoryWrite (dispatcher → 'memory write
+  //       unavailable here' if the model tries core_memory_*);
+  //   (2) onToolConfirm is a DENY-ALL broker — every write tool (vault create_note/append_note
+  //       AND core_memory_*) is refused, so the pass cannot mutate anything at all.
+  // The model's JSON is parsed (chat-engine), then each candidate is dedup'd vs the existing
+  // store and injection/secret-scanned BEFORE it is emitted as a chip (1st gate; the real write
+  // re-scans in memory:apply-candidate, §A3). Explicit trigger only — no auto-trigger (§10-d).
+  ipcMain.handle('chat:reflect', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
+    const wcId = e.sender.id;
+    if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
+    if (typeof req.streamId !== 'string' || !req.streamId) return;
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
+    const emitDone = (candidates: ReflectionCandidate[]): void => safeSend('chat:reflect-done', { streamId: req.streamId, candidates });
+    if (!cfg || cfg.provider !== 'openai-compatible') { emitDone([]); return; }
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    chatStreamRegistry.set(req.streamId, entry);
+
+    const transcript = req.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
+      .join('\n\n')
+      .slice(0, 12_000);
+    const reflectTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Review this finished conversation and propose durable user-memory facts:\n\n${transcript}`, ts: Date.now() };
+
+    // READ-only deps (recall_memory works; NO memoryWrite → fail-closed layer 1). afterWrite is a
+    // no-op: a vault write would need the deny-all broker (layer 2) to approve, which it never does.
+    const executeTool = buildExecuteAgentTool({
+      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady,
+      afterWrite: () => { /* reflection never writes (deny-all broker); never reached */ },
+      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+    });
+
+    try {
+      await chatStream({
+        cfg,
+        messages: [reflectTurn],
+        ragOn: false,
+        signal: controller.signal,
+        searchEngine,
+        agentOn: true,
+        reflect: true,                       // → agent loop uses the READ-ONLY REFLECT prompt
+        toolset: buildAgentToolset(),
+        executeTool,
+        onToolConfirm: async () => false,    // deny-all broker (fail-closed layer 2)
+        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+        onDelta: () => { /* reflection prose is not shown as a chat bubble */ },
+        onDone: (_citations, fullText) => {
+          // Dedupe vs the existing store + 1st-pass injection/secret scan, THEN emit chips.
+          const existing = new Set(listBlocks().map((b) => b.text.toLowerCase().replace(/\s+/g, ' ')));
+          const candidates = parseReflectionCandidates(fullText).filter((c) => {
+            const key = c.text.toLowerCase().replace(/\s+/g, ' ');
+            if (existing.has(key)) return false;
+            if (scanForInjection(c.text).blocked.length > 0) return false;
+            if (looksLikeSecret(c.text)) return false;
+            return true;
+          });
+          emitDone(candidates);
+        },
+        onError: () => emitDone([]),
+      });
+    } catch (err) {
+      console.error('[main] chat:reflect failed:', err);
+      emitDone([]);
+    } finally {
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
+  // Apply ONE user-approved reflection candidate (§A3) — append-only. The renderer carries the
+  // opaque candidate it got from chat:reflect-done; main NEVER trusts the queued text and re-runs
+  // BOTH detectors (injection-scan + looksLikeSecret) at write time, then routes through
+  // coreMemoryAppend (provenance 'user' — human review is the trust gate, §A3). The write inherits
+  // appendBlock's fail-closed bounds + secret drop; throws map to { ok:false }. This is a direct,
+  // user-gated write that bypasses the LLM, so the "reflection loop holds no write tool" invariant
+  // holds by construction.
+  ipcMain.handle('memory:apply-candidate', (_e, req: { streamId: string; candidate: ReflectionCandidate }): { ok: boolean; id?: string; reason?: string } => {
+    const text = String(req?.candidate?.text ?? '');
+    if (!text.trim()) return { ok: false, reason: 'empty' };
+    if (scanForInjection(text).blocked.length > 0) return { ok: false, reason: 'injection' };
+    if (looksLikeSecret(text)) return { ok: false, reason: 'secret' };
+    try {
+      const { id } = coreMemoryAppend(text);
+      return { ok: true, id };
+    } catch (err) {
+      console.error('[main] memory:apply-candidate failed:', err);
+      return { ok: false, reason: 'bounds-or-secret' };
     }
   });
 

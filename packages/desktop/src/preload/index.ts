@@ -112,6 +112,9 @@ const ALLOWED_CHANNELS = new Set<string>([
   'skill:set-promoted',
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill',
+  // Reflection follow-up (§A): read-only propose-memory pass + apply one approved candidate.
+  'chat:reflect',
+  'memory:apply-candidate',
   // SP2: pick image file(s) to attach to a chat turn (dialog → validated base64).
   'chat:pick-images',
   // SP4: pick audio/video → cloud transcript (Whisper/Gemini) attachment.
@@ -148,6 +151,8 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:tool-confirm',
   // Agent (SP-I): distillation pass finished (summary of what was folded into the wiki)
   'chat:distill-done',
+  // Reflection follow-up (§A): read-only reflection pass finished (proposed memory candidates)
+  'chat:reflect-done',
   'chat:plan', // agent multi-step plan checklist (one-way main→renderer)
   'chat:skill-invoke', // P3: invoke_skill loaded a skill (one-way main→renderer)
   // Ollama auto-download byte progress (e.sender targeted)

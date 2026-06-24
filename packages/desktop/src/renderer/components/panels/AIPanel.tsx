@@ -9,9 +9,10 @@ import { invokeIpcRaw } from '../../lib/runtime-sync.js';
 import { registerCommand } from '../../lib/commands.js';
 import { useT } from '../../lib/i18n.js';
 import { ChatPanel } from '../chat/ChatPanel.js';
+import { MemorySkillsPanel } from './MemorySkillsPanel.js';
 import type { SearchResult, VaultStats, DecayItem } from '../../../shared/ipc-types.js';
 
-type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats' | 'chat';
+type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats' | 'chat' | 'manage';
 
 // ─── Cross-component tab requests (palette commands → panel) ───
 
@@ -81,7 +82,7 @@ export function AIPanel() {
         borderBottom: '1px solid var(--border)',
         fontSize: 11,
       }}>
-        {(['ask', 'search', 'express', 'decay', 'stats', 'chat'] as Tab[]).map((tab) => (
+        {(['ask', 'search', 'express', 'decay', 'stats', 'chat', 'manage'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -98,7 +99,7 @@ export function AIPanel() {
               fontSize: 11,
             }}
           >
-            {tab === 'ask' ? t('panel.ai.tabAsk') : tab === 'search' ? t('panel.ai.tabSearch') : tab === 'express' ? t('panel.ai.tabDraft') : tab === 'decay' ? t('panel.ai.tabMemory') : tab === 'stats' ? t('panel.ai.tabStats') : t('panel.ai.tabChat')}
+            {tab === 'ask' ? t('panel.ai.tabAsk') : tab === 'search' ? t('panel.ai.tabSearch') : tab === 'express' ? t('panel.ai.tabDraft') : tab === 'decay' ? t('panel.ai.tabMemory') : tab === 'stats' ? t('panel.ai.tabStats') : tab === 'chat' ? t('panel.ai.tabChat') : t('panel.ai.tabManage')}
           </button>
         ))}
       </div>
@@ -111,6 +112,7 @@ export function AIPanel() {
         {activeTab === 'decay' && <ReviewQueue />}
         {activeTab === 'stats' && <VaultStatsView />}
         {activeTab === 'chat' && <ChatPanel />}
+        {activeTab === 'manage' && <MemorySkillsPanel />}
       </div>
     </div>
   );

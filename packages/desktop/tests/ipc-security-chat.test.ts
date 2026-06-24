@@ -51,6 +51,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:delete-session',
   'chat:tool-approve', // agent SP-D: renderer approves/denies a write tool
   'chat:distill',      // agent SP-I: auto-distill a finished conversation into the wiki
+  'chat:reflect',      // §A: read-only reflection pass → propose memory candidates
   'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
   'chat:pick-media',   // SP4: pick audio/video → cloud transcript attachment
   'chat:export-note',  // part5: save the conversation verbatim as a vault note
@@ -59,6 +60,7 @@ const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
   'chat:tool-call', 'chat:tool-result', 'chat:tool-confirm', // agent SP-D transparency/confirm
   'chat:distill-done', // agent SP-I: distillation summary
+  'chat:reflect-done', // §A: reflection pass finished (proposed memory candidates)
   'chat:plan',         // agent multi-step plan checklist
   'chat:skill-invoke', // P3: invoke_skill loaded a skill
 ];
@@ -221,7 +223,7 @@ describe('SP1 chat IPC — both-side coverage (single-side omission FAILS)', () 
 });
 
 describe('Agent MEMORY IPC (P2, §6 INT-8) — both-side trust boundary', () => {
-  const MEMORY_CHANNELS = ['memory:list', 'memory:get', 'memory:delete'];
+  const MEMORY_CHANNELS = ['memory:list', 'memory:get', 'memory:delete', 'memory:apply-candidate'];
 
   it('all memory channels are in ALLOWED_CHANNELS and main-handled', () => {
     for (const ch of MEMORY_CHANNELS) {
@@ -243,6 +245,19 @@ describe('Agent MEMORY IPC (P2, §6 INT-8) — both-side trust boundary', () => 
     expect(mainSrc).toContain('deleteBlock(');
     expect(memoryStoreSrc).toContain('export function deleteBlock');
     expect(memoryStoreSrc).toMatch(/isMemoryId\(id\)/);
+  });
+
+  it('memory:apply-candidate RE-SCANS the queued text (injection + secret) before the write (§A3)', () => {
+    // A reflection candidate is renderer-queued, so main must NEVER trust it: the apply handler
+    // re-runs BOTH detectors (scanForInjection + looksLikeSecret) and routes through the
+    // append-only coreMemoryAppend (provenance 'user'). Lock the whole gate inside the handler.
+    const h = mainSrc.match(/ipcMain\.handle\('memory:apply-candidate'[\s\S]*?\n  \}\);/);
+    expect(h).not.toBeNull();
+    expect(h![0]).toMatch(/scanForInjection\([\s\S]*?\)\.blocked\.length > 0/); // injection re-scan
+    expect(h![0]).toContain('looksLikeSecret(');  // secret re-scan
+    expect(h![0]).toContain('coreMemoryAppend(');  // append-only write path
+    // No core_memory_replace from this path (append-only this round, §A3).
+    expect(h![0]).not.toContain('coreMemoryReplace(');
   });
 });
 

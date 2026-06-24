@@ -40,7 +40,7 @@ import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { applyTemplate, type SlashCommand } from './commands.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
-import type { ChatMessage, ChatCitation, ChatAttachment } from '../../../shared/ipc-types.js';
+import type { ChatMessage, ChatCitation, ChatAttachment, ReflectionCandidate } from '../../../shared/ipc-types.js';
 
 const MAX_CONCURRENT = 2;
 
@@ -106,6 +106,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   autoDistillRef.current = autoDistill;
   const messagesRef = useRef<ChatMessage[]>(messages);
   const distillStreamRef = useRef<Set<string>>(new Set());
+  // Reflection follow-up (§A): an EXPLICIT 🧠 Reflect pass proposes durable-memory facts as review
+  // chips. reflectStreamRef routes its events (NOT an auto-trigger — separate from autoDistill).
+  // reflectQueue holds the proposed candidates one-at-a-time; reflectNote shows the empty result.
+  const [reflecting, setReflecting] = useState(false);
+  const [reflectQueue, setReflectQueue] = useState<ReflectionCandidate[]>([]);
+  const [reflectEmpty, setReflectEmpty] = useState(false); // last pass found nothing durable
+  const reflectStreamRef = useRef<Set<string>>(new Set());
   // Auto-reveal the graph the FIRST time a write lands (then leave it to the user).
   const autoOpenedGraphRef = useRef(false);
   // Hermes-style rotating intro copy — one warm headline/body per mount.
@@ -294,7 +301,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     });
 
     // Agent (SP-E/I) — tool activity routed by streamId (chat stream OR distill stream).
-    const ownsStream = (sid: string) => streamMapRef.current.has(sid) || distillStreamRef.current.has(sid);
+    const ownsStream = (sid: string) => streamMapRef.current.has(sid) || distillStreamRef.current.has(sid) || reflectStreamRef.current.has(sid);
     const offToolCall = onIpc('chat:tool-call', (p: unknown) => {
       const e = p as { streamId: string; name: string; detailRedacted: string };
       if (!ownsStream(e.streamId)) return;
@@ -331,6 +338,16 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       setDistilling(false);
       setDistillSummary(e.summary || null);
     });
+    // Reflection follow-up (§A3): proposed memory candidates arrived (already injection/secret
+    // scanned + dedup'd in main). Empty → an inline "nothing durable" note (not silent).
+    const offReflectDone = onIpc('chat:reflect-done', (p: unknown) => {
+      const e = p as { streamId: string; candidates: ReflectionCandidate[] };
+      if (!reflectStreamRef.current.has(e.streamId)) return;
+      reflectStreamRef.current.delete(e.streamId);
+      setReflecting(false);
+      if (!Array.isArray(e.candidates) || e.candidates.length === 0) { setReflectEmpty(true); return; }
+      setReflectQueue(e.candidates);
+    });
     // Agent multi-step plan — last-writer-wins; doneCount clamped so a bad event can't over-index.
     const offPlan = onIpc('chat:plan', (p: unknown) => {
       const e = p as { streamId: string; steps: string[]; doneCount: number };
@@ -347,9 +364,33 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       offToolResult();
       offToolConfirm();
       offDistillDone();
+      offReflectDone();
       offPlan();
     };
   }, [syncActiveCount, sessionId, variant]);
+
+  // Reflection follow-up (§A1) — EXPLICIT trigger only (no auto-trigger, §10-d): run a read-only
+  // pass over the current conversation, then surface proposed facts as review chips.
+  const startReflect = useCallback(() => {
+    const sid = crypto.randomUUID();
+    reflectStreamRef.current.add(sid);
+    setReflecting(true);
+    setReflectEmpty(false);
+    setReflectQueue([]);
+    void ipc('chat:reflect', { messages: messagesRef.current, streamId: sid, sessionId: sessionId ?? undefined })
+      .catch(() => { reflectStreamRef.current.delete(sid); setReflecting(false); });
+  }, [sessionId]);
+
+  // Approve the front candidate → real (force-confirm-equivalent, user-gated) append-only write,
+  // re-scanned in main (§A3). Deny → just drop it. Either way advance the one-at-a-time queue.
+  const applyCandidate = useCallback(() => {
+    setReflectQueue((q) => {
+      const [head, ...rest] = q;
+      if (head) void ipc('memory:apply-candidate', { streamId: '', candidate: head }).catch(() => {});
+      return rest;
+    });
+  }, []);
+  const dismissCandidate = useCallback(() => setReflectQueue((q) => q.slice(1)), []);
 
   // Keep messagesRef current so the mount-once chat:done handler distills the latest turns.
   useEffect(() => { messagesRef.current = messages; }, [messages]);
@@ -441,6 +482,12 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       void ipc('chat:abort', sid).catch(() => {});
       distillStreamRef.current.delete(sid);
     }
+    // Abort any in-flight reflection + drop pending chips for the now-discarded conversation.
+    for (const sid of [...reflectStreamRef.current]) {
+      void ipc('chat:abort', sid).catch(() => {});
+      reflectStreamRef.current.delete(sid);
+    }
+    setReflecting(false); setReflectQueue([]); setReflectEmpty(false);
     setDistilling(false);
     setPlanSteps([]); setPlanDone(0); // drop stale plan on edit/truncate
     syncActiveCount();
@@ -731,6 +778,46 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
         </div>
       )}
 
+      {/* Reflection review chip (§A3) — a proposed durable fact; appended to memory only on Save.
+          One at a time; approving routes through main's re-scanned append-only write. */}
+      {reflectQueue.length > 0 && (() => {
+        const cand = reflectQueue[0];
+        return (
+          <div style={{ padding: isMain ? '0 16px 8px' : '0 10px 8px' }}>
+            <div style={{
+              maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined,
+              padding: '10px 12px', borderRadius: 8,
+              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 6 }}>
+                🧠 {t('panel.ai.reflectConfirm')}{reflectQueue.length > 1 ? ` (${reflectQueue.length})` : ''}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink)', whiteSpace: 'pre-wrap', marginBottom: cand.rationale ? 4 : 8 }}>
+                {cand.text}
+              </div>
+              {cand.rationale && (
+                <div style={{ fontSize: 10.5, color: 'var(--ink-faint)', whiteSpace: 'pre-wrap', marginBottom: 8 }}>{cand.rationale}</div>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={applyCandidate} style={{ padding: '5px 16px', fontSize: 12, fontWeight: 600, background: 'var(--accent)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>
+                  {t('panel.ai.reflectSave')}
+                </button>
+                <button onClick={dismissCandidate} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+                  {t('panel.ai.agentDeny')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Reflection status (§A3) — running / nothing-found (not silent). */}
+      {(reflecting || reflectEmpty) && reflectQueue.length === 0 && (
+        <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 10.5, color: 'var(--accent-2)', textAlign: isMain ? 'center' : 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {reflecting ? `🧠 ${t('panel.ai.reflecting')}` : `🧠 ${t('panel.ai.reflectNone')}`}
+        </div>
+      )}
+
       {/* Stop button while streaming */}
       {isStreaming && (
         <div style={{ padding: '0 10px 6px', display: 'flex', justifyContent: 'center' }}>
@@ -768,6 +855,20 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       {(pickingMedia || mediaNote) && (
         <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 10.5, color: pickingMedia ? 'var(--accent-2)' : '#e5854d', textAlign: isMain ? 'center' : 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {pickingMedia ? `🎧 ${t('panel.ai.transcribing')}` : mediaNote}
+        </div>
+      )}
+
+      {/* Reflection trigger (§A1) — EXPLICIT only. Shown once there's a real exchange to reflect on
+          and nothing else in flight; never auto-fires (§10-d). */}
+      {messages.some((m) => m.role === 'assistant') && !isStreaming && !reflecting && reflectQueue.length === 0 && (
+        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px', display: 'flex', justifyContent: isMain ? 'center' : 'flex-start' }}>
+          <button
+            onClick={startReflect}
+            title={t('panel.ai.reflectHint')}
+            style={{ padding: '4px 14px', fontSize: 11, borderRadius: 6, background: 'transparent', border: '1px solid var(--border)', color: 'var(--ink-dim)', cursor: 'pointer' }}
+          >
+            🧠 {t('panel.ai.reflectButton')}
+          </button>
         </div>
       )}
 
