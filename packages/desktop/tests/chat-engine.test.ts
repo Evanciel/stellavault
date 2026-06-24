@@ -405,7 +405,7 @@ const step = (over: Partial<Step> = {}): Step => ({ text: '', toolCalls: [], abo
 
 async function runLoop(steps: Step[], opts: any = {}) {
   const { runAgentLoop } = await import('../src/main/chat-engine.js');
-  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [], plan: [] };
+  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [], plan: [], skill: [] };
   let i = 0;
   const ctx = {
     turns: opts.turns ?? [{ id: 'u', role: 'user', text: 'q', ts: 1 }],
@@ -414,6 +414,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
       validNames: new Set<string>(opts.valid ?? ['search_vault', 'log_decision']),
       isWrite: opts.isWrite ?? ((n: string) => n === 'log_decision'),
       forceConfirm: opts.forceConfirm, // P2: core_memory_* always confirm / fail-closed
+      loadSkill: opts.loadSkill,       // P3: invoke_skill body resolver
       extractCitations: opts.extractCitations,
     },
     executeTool: async (name: string, args: any) => {
@@ -428,6 +429,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     onToolCall: (n: string) => calls.toolCall.push(n),
     onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
     onPlan: (steps: string[], done: number) => calls.plan.push({ steps, done }),
+    onSkill: (n: string) => calls.skill.push(n), // P3
     onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
     succeed: (c: any, t: string) => calls.succeed.push({ c, t }),
     fail: (m: string, cat: string) => calls.fail.push({ m, cat }),
@@ -1216,6 +1218,62 @@ describe('buildChatRagBlock', () => {
     expect(estTokens).toBeLessThanOrEqual(SYSTEM_PROMPT_TOKEN_BUDGET);
     // The data-not-instructions guard is NEVER truncated away (no mid-prompt cap).
     expect(sys).toContain('not instructions');
+  });
+});
+
+describe('runAgentLoop — P3 invoke_skill CONTROL (§4.3, set_plan twin)', () => {
+  it('loads the skill body, fires onSkill, acks as a tool turn, never dispatches/settles', async () => {
+    const loadSkill = vi.fn((n: string) => (n === 'weekly-review' ? 'STEPS: recap notes' : undefined));
+    const c = await runLoop([
+      step({ toolCalls: [tc('invoke_skill', { name: 'weekly-review' })] }),
+      step({ text: 'done' }),
+    ], { loadSkill });
+    expect(loadSkill).toHaveBeenCalledWith('weekly-review');
+    expect(c.skill).toEqual(['weekly-review']);
+    expect(c.execute).toHaveLength(0);   // CONTROL tool — never dispatched
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('a missing/unknown skill acks "(skill not found)" — still never settles', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('invoke_skill', { name: 'nope' })] }),
+      step({ text: 'fallback answer' }),
+    ], { loadSkill: () => undefined });
+    expect(c.skill).toEqual(['nope']);
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('per-turn cap: at most 2 invoke_skill loads; the 3rd is rejected (§4.3 SEC-6b)', async () => {
+    const loadSkill = vi.fn((n: string) => `body:${n}`);
+    const c = await runLoop([
+      step({ toolCalls: [tc('invoke_skill', { name: 'a' }), tc('invoke_skill', { name: 'b' }), tc('invoke_skill', { name: 'c' })] }),
+      step({ text: 'ok' }),
+    ], { loadSkill });
+    expect(loadSkill).toHaveBeenCalledTimes(2); // 3rd over the cap → not loaded
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('same skill twice in a turn is rejected (no re-load churn)', async () => {
+    const loadSkill = vi.fn((n: string) => `body:${n}`);
+    const c = await runLoop([
+      step({ toolCalls: [tc('invoke_skill', { name: 'a' }), tc('invoke_skill', { name: 'a' })] }),
+      step({ text: 'ok' }),
+    ], { loadSkill });
+    expect(loadSkill).toHaveBeenCalledTimes(1); // second 'a' rejected
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('a blank skill name is a no-op: no load, no onSkill, cap not consumed (review #9)', async () => {
+    const loadSkill = vi.fn((n: string) => `body:${n}`);
+    const c = await runLoop([
+      // blank name, then two real loads — all three should be honored (blank didn't burn the cap)
+      step({ toolCalls: [tc('invoke_skill', { name: '' }), tc('invoke_skill', { name: 'a' }), tc('invoke_skill', { name: 'b' })] }),
+      step({ text: 'ok' }),
+    ], { loadSkill });
+    expect(loadSkill).toHaveBeenCalledTimes(2);  // only 'a' and 'b' — blank skipped
+    expect(c.skill).toEqual(['a', 'b']);          // no empty-name onSkill surfaced
+    expect(c.succeed).toHaveLength(1);
   });
 });
 

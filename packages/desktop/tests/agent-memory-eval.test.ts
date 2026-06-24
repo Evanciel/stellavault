@@ -1,14 +1,15 @@
 // Agent tool-selection EVAL gate (P1→P2, Design Ref §5 / §10-f LOCKED).
 //
 // §10-f: 10 fixed prompts, the model must pick the CORRECT tool >= 8/10 with the CURRENT toolset
-// (P2 = 15 advertised tools — re-measured at the new count per §10-f after P2 added the two
-// core_memory_* write tools, crossing the P1 ≤14 ceiling). This is the "did the new memory tools
-// degrade gemma4:e4b's tool selection" regression gate. It hits a LIVE local Ollama, so it
-// AUTO-SKIPS when Ollama is unreachable (keeps CI + the offline suite green). Run it with Ollama up:
+// (P3 = 16 advertised tools — re-measured at the new count per §10-f after P2 added the two
+// core_memory_* write tools and P3 added invoke_skill, past the P1 ≤14 ceiling, staged budget).
+// This is the "did the new tools degrade gemma4:e4b's tool selection" regression gate. It hits a
+// LIVE local Ollama, so it AUTO-SKIPS when Ollama is unreachable (keeps CI + the offline suite
+// green). Run it deliberately with Ollama up:
 //
 //   OLLAMA_EVAL_MODEL=gemma4:e4b npx vitest run tests/agent-memory-eval.test.ts
 //
-// It reuses the REAL AGENT_TOOL_SCHEMAS (the shipped 15-tool advertised set) so the eval measures
+// It reuses the REAL AGENT_TOOL_SCHEMAS (the shipped 16-tool advertised set) so the eval measures
 // the shipped toolset, not a hand-copied one. The Ollama body/parse is inlined (plain fetch +
 // NDJSON) so the eval needs neither electron `net` nor the chat-engine module.
 import { describe, it, expect, vi } from 'vitest';
@@ -94,9 +95,9 @@ async function firstToolFor(prompt: string, schemas: unknown[]): Promise<string>
 }
 
 describe.skipIf(!UP)('agent-memory eval — §10-f tool-selection gate (live Ollama)', () => {
-  it('picks the correct tool on >= 8/10 prompts (P2 15-tool set)', async () => {
+  it('picks the correct tool on >= 8/10 prompts (P3 16-tool set)', async () => {
     const { AGENT_TOOL_SCHEMAS } = await import('../src/main/agent-tools.js');
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(15); // P2 advertised count (14 dispatched + set_plan)
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(16); // P3 advertised count (14 dispatched + set_plan + invoke_skill)
 
     let correct = 0;
     const transcript: string[] = [];

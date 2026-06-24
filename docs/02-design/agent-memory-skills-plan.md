@@ -295,14 +295,27 @@ if (name === 'invoke_skill') {
   - **커밋·푸시 완료:** `7355dd3`(P1 구현 10파일) + `f396f80`(§10-f eval 게이트). feat/multimedia-chat → origin(PR #2).
   - **§10-f eval 게이트 아티팩트:** `tests/agent-memory-eval.test.ts` — 10프롬프트 도구선택 ≥8/10(실 AGENT_TOOL_SCHEMAS, live Ollama fetch+NDJSON). Ollama 미가동 시 **자동 skip**(CI 안전). 실행: `OLLAMA_EVAL_MODEL=gemma4:e4b npx vitest run tests/agent-memory-eval.test.ts`.
   - **남은 검증(P1 비차단):** 위 eval 1회 실행(Ollama 상주 시 — 현재 미가동이라 보류). Manual Browser Gate 불요(브라우저 API/신규 UI IPC 없음 — P1은 main-process 전용).
-- **P2 — Memory self-edit:**
-  - `core_memory_replace`/`core_memory_append` WRITE 도구(force-confirm, fail-closed) + `deps.memoryWrite` **양쪽 사이트**(단 distill `:1293`엔 미wire)
-  - `memory:list/get/delete` UI IPC(main id-검증 + wcId-owner)
-  - `list_skills`는 메모리 selection 정확도 측정 통과 후 추가(16 tools에서 eval 재측정)
+- **P2 — Memory self-edit: ✅ 구현+적대리뷰+수정 완료(2026-06-24, 커밋 `5a0ed74`, PR#2)**
+  - `core_memory_replace`/`core_memory_append` WRITE 도구(force-confirm, fail-closed) + `memoryAppend`/`memoryReplace` deps **chat:send만**(distill 미wire — 무인 쓰기 차단)
+  - `memory:list/get/delete` UI IPC(main `isMemoryId`+존재 검증 — 글로벌 스토어라 wcId-owner 대신 id-검증이 containment)
+  - **force-confirm 메커니즘**: chat-engine 게이트 `isWrite+approver→confirm / isWrite+forceConfirm+no-approver→fail-closed`; index.ts broker **항상 wire**(비-force는 confirmWrites OFF 시 즉시 자동승인=auto-apply 보존, core_memory_*는 항상 프롬프트). `AgentToolset.forceConfirm`=`isAgentForceConfirmTool`.
+  - **적대리뷰 wf_13733669(14에이전트, 4렌즈→독립검증) 확정 7건 전부 수정:** ①HIGH `String.replace` `$&`/`$1` 치환 해석→인덱스 splice(승인≠저장 fact-flip 제거) ②HIGH recall_memory가 id 미노출→`core_memory_replace` 호출불가→recall에 off-vault id 추가 ③HIGH/MED 광고 15>≤14→**ceiling 단계화 재잠금**(P1≤14/P2≤16, 각 eval 재측정) + eval 문서/probe 갱신 ④LOW provenance 'user' 강제→`target.provenance` 상속 ⑤LOW/MED confirm 프리뷰 raw args→`describeMemoryWrite`(BEFORE/AFTER+provenance). 반박 다수(아키텍처 정합 확인).
+  - **`list_skills`는 미추가**(P1 eval 통과 후·P3). §9 YAGNI-7(Mem0 reconcile/dedup) 드롭 유지.
+  - **게이트: tsc0 / vitest 425 PASS(1 skip=live eval) / injection·SSRF·CSP / npm run package exit0.** confirm-diff(`describeMemoryWrite`) + force-confirm fail-closed + replace 0/2+ 거부 + $-리터럴 + provenance 상속 테스트 포함.
+  - **남은 검증(비차단):** §10-f eval 15툴 라이브 1회(Ollama 상주 시) + 메모리 관리 UI 패널(렌더러, Manual Browser Gate 동반 — 후속).
+  - ~~`list_skills`는 메모리 selection 정확도 측정 통과 후 추가(16 tools에서 eval 재측정)~~ → P1 eval 후
   - **§9 YAGNI-7 반영**: Mem0-style extract→reconcile(ADD/UPDATE/DELETE/NOOP) + MD5/유사도 dedup 파이프라인은 **드롭**. 대신 쓰기 제안 시 현재 메모리 사실을 같은 프롬프트에 넣어 단일 모델 콜이 append-vs-replace를 inline 결정 → 하나의 confirm diff. 사람이 보는 confirm이 dedup 게이트.
   - **게이트:** confirm-diff E2E to disk + force-confirm fail-closed 테스트 + replace 0/2+ 매치 거부 테스트.
-- **P3 — Skills + (read-only) reflection:**
-  - `list_skills`/`invoke_skill` + `Skills/` + `onSkill→chat:skill-invoke` + provenance 카탈로그 게이트
+- **P3 — Skills: ✅ 구현+적대리뷰+수정 완료(2026-06-24, PR#2). (reflection은 후속 분리)**
+  - 신규 `skill-store.ts`: 오프-볼트 promoted 레지스트리(**content-hash 바인딩** — 동기화 shadow 차단) + Skills/ frontmatter 파싱(라인기반, 따옴표/주석/블록스칼라) + `buildSkillCatalogue`(Level-1, promoted만·scan·cap) + `loadSkillBody`(Level-2, `## Steps`만·해시매칭파일·allowToolNames scan·cap) + `setSkillPromoted`(name→유일파일 검증).
+  - `invoke_skill` CONTROL(set_plan 쌍둥이·valid/write/dispatcher 미포함·**declarative-never-eval**) — inert role:'tool' ack, 턴당 `AGENT_MAX_SKILL_INVOKE=2` + 같은스킬 거부 + 빈이름 no-op. **promoted 0개면 미광고**(slot 절약).
+  - 카탈로그 agentSystem 전용(클라우드 제외 §4.5)·frozen snapshot. injection-scan **BASE/TOOL_NAME 분리**(본문은 allowToolNames — "call search_vault" 정당).
+  - `skill:list`/`skill:set-promoted` IPC + `chat:skill-invoke` 이벤트. SkillMeta=shared.
+  - **적대리뷰 wf_814f89c6(25에이전트): 확정 9건 전부 수정** — HIGH name-keyed→**content-hash 바인딩**, MED 빈스킬 invoke_skill 미광고, LOW×6(promote 유일파일검증·frontmatter파서·extractSteps Steps없으면 lead만·상수화·빈이름·eval문서). 12반박.
+  - **게이트: tsc0·vitest446(1skip)·injection/SSRF/CSP·package exit0.** declarative-never-eval·path-safety(name→실파일)·provenance hard-lock 검증.
+  - **reflection 후속 분리**: §10-d(P3전 비활성)·§10-e(자동트리거 dogfooding 후)에 따라 이번 커밋은 스킬 집중. reflection(read-only distill→review chip)은 다음.
+  - **남은 검증(비차단):** §10-f eval 16툴 라이브(Ollama 상주 시) + 스킬/메모리 관리 UI 패널(Manual Browser Gate 동반).
+  - ~~`list_skills`~~ 미추가(카탈로그-인-프롬프트가 대체).
   - **§9 SEC-2/YAGNI-5 반영**: background reflection 데몬은 **무인 쓰기 금지**. reflection은 distill 루프를 **read-only pass**로만 돌려 candidate diff를 생성, P2 confirm UI에 review chip으로 큐잉. **reflection 루프는 write 도구를 절대 보유하지 않는다**(memoryWrite 미wire 불변식). 자동 트리거 임계값은 vault-calibrated 값을 dogfooding 후 결정(§10-e); 그 전엔 명시적 "remember X"만.
   - **게이트:** Manual Browser Gate(commit-blocking) — point-render, Stop-mid-recall abort, window-close orphan, sanitize, disk-write E2E, force-confirm 가시화.
 

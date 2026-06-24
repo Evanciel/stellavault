@@ -33,6 +33,9 @@ import {
   buildCoreMemoryBlock, recallMemory, coreMemoryAppend, coreMemoryReplace,
   listBlocks, getBlock, deleteBlock, describeMemoryWrite, type MemoryBlockMeta,
 } from './memory-store.js';
+import {
+  buildSkillCatalogue, loadSkillBody, listAllSkills, setSkillPromoted, type SkillMeta,
+} from './skill-store.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
   ollamaStatus,
@@ -1159,10 +1162,21 @@ function registerIpcHandlers(config: AppConfig) {
         memoryAppend: (text: string) => coreMemoryAppend(text),
         memoryReplace: (id: string, oldStr: string, newStr: string) => coreMemoryReplace(id, oldStr, newStr),
       });
+      // P3 (§4.2): build the catalogue once; advertise invoke_skill ONLY when ≥1 skill is promoted
+      // (review #4 — don't burn a gemma4:e4b tool slot on an unusable tool when there are no skills).
+      const skillCatalogue = buildSkillCatalogue(currentVaultPath);
       agentOpts = {
         agentOn: true,
-        toolset: buildAgentToolset(),
+        // P3 (§4.3): the toolset's loadSkill resolves a PROMOTED skill body (vault-relative +
+        // provenance gate + Steps-only scan/cap live in skill-store). The catalogue (Level-1) is
+        // injected separately as skillCatalogue (agent-loop only, §4.5).
+        toolset: buildAgentToolset({
+          loadSkill: (name: string) => loadSkillBody(currentVaultPath, name),
+          hasSkills: skillCatalogue !== '',
+        }),
         executeTool,
+        skillCatalogue,
+        onSkill: (name: string) => safeSend('chat:skill-invoke', { streamId: req.streamId, name }),
         onToolCall: (name: string, detailRedacted: string) =>
           safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
         onToolResult: (name: string, ok: boolean, summary: string, filePath?: string) =>
@@ -1269,6 +1283,14 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('memory:list', (): MemoryBlockMeta[] => listBlocks());
   ipcMain.handle('memory:get', (_e, id: string): MemoryBlockMeta | null => getBlock(id));
   ipcMain.handle('memory:delete', (_e, id: string): { ok: boolean } => ({ ok: deleteBlock(id) }));
+
+  // Agent SKILLS management (P3, §4.4): list the vault's Skills/*.md with their PROMOTED state and
+  // let the user promote/un-promote. Promotion is the consent gate — only a promoted skill enters
+  // the always-injected catalogue / is loadable by invoke_skill. The renderer carries a skill NAME
+  // (from skill:list); the promoted set lives OFF-VAULT so a synced .md can never self-promote.
+  ipcMain.handle('skill:list', (): SkillMeta[] => listAllSkills(currentVaultPath));
+  ipcMain.handle('skill:set-promoted', (_e, name: string, promoted: boolean): { promoted: boolean } =>
+    ({ promoted: setSkillPromoted(currentVaultPath, name, promoted === true) }));
 
   // Karpathy auto-distillation (SP-I): after a chat turn, the renderer (when auto-distill is
   // on) sends the just-finished conversation here. We run the SAME agent loop but with the

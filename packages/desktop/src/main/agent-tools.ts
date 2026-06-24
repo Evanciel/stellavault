@@ -69,6 +69,23 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
       },
     },
   },
+  // invoke_skill (P3) is a loop-local CONTROL tool like set_plan — intentionally NOT in
+  // AGENT_VALID_NAMES / AGENT_WRITE_NAMES / the dispatcher. runAgentLoop intercepts it, loads the
+  // named skill's (Steps-only, scanned, capped) body, and pushes it as a role:'tool' ack. The
+  // body is INERT text (declarative-never-eval) — the recipe's writes must re-fire through the
+  // real confirm-gated WRITE tools. Available skill NAMES are listed in the system prompt catalogue.
+  {
+    type: 'function',
+    function: {
+      name: 'invoke_skill',
+      description: "Load the step-by-step recipe for one of your Available Skills (listed in your context). Pass the skill's exact name. The steps are GUIDANCE — you still call the real tools to do the work; never assume a step ran on its own.",
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'the exact name of a skill from your Available Skills list' } },
+        required: ['name'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -484,12 +501,21 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
 }
 
 /** The toolset object runAgentLoop consumes (schemas + name set + write predicate + citations). */
-export function buildAgentToolset() {
+export function buildAgentToolset(opts?: { loadSkill?: (name: string) => string | undefined; hasSkills?: boolean }) {
+  // P3 (review #4): advertise invoke_skill ONLY when ≥1 skill is promoted. With no skills it is a
+  // dead slot that just crowds gemma4:e4b's small toolset (§5 ceiling spirit). The static
+  // AGENT_TOOL_SCHEMAS is unchanged; we filter the per-request advertised copy.
+  const schemas = opts?.hasSkills
+    ? AGENT_TOOL_SCHEMAS
+    : AGENT_TOOL_SCHEMAS.filter((s) => (s as { function?: { name?: string } })?.function?.name !== 'invoke_skill');
   return {
-    schemas: AGENT_TOOL_SCHEMAS,
+    schemas,
     validNames: AGENT_VALID_NAMES,
     isWrite: isAgentWriteTool,
     forceConfirm: isAgentForceConfirmTool, // P2: core_memory_* always confirm (fail-closed w/o approver)
+    // P3: invoke_skill (a CONTROL tool) loads a skill body through this injected resolver. index.ts
+    // provides it (vault-relative + provenance gate + scan); absent → invoke_skill acks "not found".
+    loadSkill: opts?.loadSkill,
     extractCitations: extractAgentCitations,
   };
 }

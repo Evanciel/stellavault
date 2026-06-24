@@ -404,6 +404,14 @@ export interface MemoryBlockMeta {
   updated: number;
 }
 
+// ─── Agent SKILLS (P3) — a vault Skills/*.md recipe + its promotion state ───
+export interface SkillMeta {
+  name: string;
+  description: string;
+  /** Promoted = user-consented into the always-injected catalogue (§4.4 gate). */
+  promoted: boolean;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -609,6 +617,12 @@ export interface IpcChannelMap {
   'memory:get':    { args: [id: string]; result: MemoryBlockMeta | null };
   'memory:delete': { args: [id: string]; result: { ok: boolean } };
 
+  // ─── Agent SKILLS management (P3, §4.4) — vault Skills/*.md + promotion gate ───
+  // skill:list returns each skill with its PROMOTED state; skill:set-promoted is the user's
+  // explicit consent to (de)catalogue a skill. Only promoted skills reach the prompt / invoke.
+  'skill:list':         { args: []; result: SkillMeta[] };
+  'skill:set-promoted': { args: [name: string, promoted: boolean]; result: { promoted: boolean } };
+
   // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
   // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'
   // error banner. ollama:start spawns a FIXED binary (no renderer-supplied path/args);
@@ -663,6 +677,8 @@ export interface IpcEventMap {
   // Agent multi-step plan (set_plan) — declarative/idempotent: every emit carries the WHOLE plan,
   // doneCount ∈ [0, steps.length], last-writer-wins per streamId. steps are short display labels.
   'chat:plan': { streamId: string; steps: string[]; doneCount: number };
+  // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
+  'chat:skill-invoke': { streamId: string; name: string };
 }
 
 // Helper types for typed invoke/on

@@ -60,6 +60,7 @@ const CHAT_EVENTS = [
   'chat:tool-call', 'chat:tool-result', 'chat:tool-confirm', // agent SP-D transparency/confirm
   'chat:distill-done', // agent SP-I: distillation summary
   'chat:plan',         // agent multi-step plan checklist
+  'chat:skill-invoke', // P3: invoke_skill loaded a skill
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {
@@ -242,5 +243,23 @@ describe('Agent MEMORY IPC (P2, §6 INT-8) — both-side trust boundary', () => 
     expect(mainSrc).toContain('deleteBlock(');
     expect(memoryStoreSrc).toContain('export function deleteBlock');
     expect(memoryStoreSrc).toMatch(/isMemoryId\(id\)/);
+  });
+});
+
+describe('Agent SKILLS IPC (P3, §4.4) — both-side trust boundary', () => {
+  const SKILL_CHANNELS = ['skill:list', 'skill:set-promoted'];
+
+  it('skill channels are in ALLOWED_CHANNELS and main-handled; not in events', () => {
+    for (const ch of SKILL_CHANNELS) {
+      expect(allowedChannelsBody).toContain(`'${ch}'`);
+      expect(mainSrc).toContain(`ipcMain.handle('${ch}'`);
+      expect(allowedEventsBody).not.toContain(`'${ch}'`);
+    }
+  });
+
+  it('chat:skill-invoke is an allowed EVENT (not a channel) and emitted by main', () => {
+    expect(allowedEventsBody).toContain("'chat:skill-invoke'");
+    expect(allowedChannelsBody).not.toContain("'chat:skill-invoke'");
+    expect(mainSrc).toContain("'chat:skill-invoke'");
   });
 });

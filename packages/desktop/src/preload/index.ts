@@ -107,6 +107,9 @@ const ALLOWED_CHANNELS = new Set<string>([
   'memory:list',
   'memory:get',
   'memory:delete',
+  // Agent SKILLS management (P3, §4.4) — list vault Skills + promote/un-promote (consent gate).
+  'skill:list',
+  'skill:set-promoted',
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill',
   // SP2: pick image file(s) to attach to a chat turn (dialog → validated base64).
@@ -146,6 +149,7 @@ const ALLOWED_EVENTS = new Set<string>([
   // Agent (SP-I): distillation pass finished (summary of what was folded into the wiki)
   'chat:distill-done',
   'chat:plan', // agent multi-step plan checklist (one-way main→renderer)
+  'chat:skill-invoke', // P3: invoke_skill loaded a skill (one-way main→renderer)
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);

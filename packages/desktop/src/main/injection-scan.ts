@@ -35,8 +35,9 @@ const TOOL_NAMES = [
   'core_memory_replace', 'core_memory_append',
 ];
 
-// Each rule is a global regex. Order does not matter (matches are independent spans).
-const RULES: RegExp[] = [
+// BASE rules — role-spoofing, wrapper escape, override imperatives, fenced injection cues. These
+// have NO legitimate place in any untrusted text (memory fact, skill description, OR skill body).
+const BASE_RULES: RegExp[] = [
   // Role-spoofing / wrapper-escape markers. A durable fact never contains these.
   /<\/?\s*untrusted\s*>/gi,
   /<\|\s*(?:im_start|im_end|system|assistant|user|endoftext)\s*\|>/gi,
@@ -50,25 +51,35 @@ const RULES: RegExp[] = [
   /\bfrom\s+now\s+on\b[^.\n]{0,60}/gi,
   /\b(?:act|behave)\s+as\b[^.\n]{0,40}/gi,
   /\bpretend\s+(?:to\s+be|you\s+are)\b[^.\n]{0,40}/gi,
-  // Direct call-coaxing: "call <tool>", "use the <tool> tool", or a bare tool-name mention.
-  new RegExp(
-    `\\b(?:call|invoke|run|use|trigger|execute)\\b[^.\\n]{0,30}\\b(?:${TOOL_NAMES.join('|')})\\b`,
-    'gi',
-  ),
-  new RegExp(`\\b(?:${TOOL_NAMES.join('|')})\\b`, 'gi'),
   // Fenced block that itself carries an injection cue (role label / ignore-previous /
   // "instruction"). Plain fenced code (no cue) is left intact.
   /```[\s\S]*?(?:system\s*:|assistant\s*:|ignore\s+(?:previous|above)|new\s+instructions?)[\s\S]*?```/gi,
 ];
 
+// TOOL-NAME rules — a bare/coaxed tool-name mention. Stripped from a memory fact or a skill
+// DESCRIPTION (no reason to name a tool). NOT stripped from a PROMOTED skill BODY, which is a
+// user-authored recipe that legitimately says "call search_vault" — the body is inert text
+// (declarative-never-eval) and the BASE rules still strip role-spoof/override there.
+const TOOL_NAME_RULES: RegExp[] = [
+  new RegExp(`\\b(?:call|invoke|run|use|trigger|execute)\\b[^.\\n]{0,30}\\b(?:${TOOL_NAMES.join('|')})\\b`, 'gi'),
+  new RegExp(`\\b(?:${TOOL_NAMES.join('|')})\\b`, 'gi'),
+];
+
+export interface ScanOpts {
+  /** Skip the tool-name rules — for a PROMOTED, user-authored skill body that legitimately
+   *  references tools. BASE rules (role-spoof / override / fenced) always run. */
+  allowToolNames?: boolean;
+}
+
 /** Strip prompt-injection spans from untrusted text destined for a prompt snapshot.
  *  Pure: same input → same output, no side effects. Returns the sanitized copy plus the
  *  list of matched spans. An all-clean input returns `{ clean: text, blocked: [] }`. */
-export function scanForInjection(text: string): InjectionScanResult {
+export function scanForInjection(text: string, opts?: ScanOpts): InjectionScanResult {
   if (!text) return { clean: text ?? '', blocked: [] };
   const blocked: string[] = [];
   let clean = text;
-  for (const rule of RULES) {
+  const rules = opts?.allowToolNames ? BASE_RULES : [...BASE_RULES, ...TOOL_NAME_RULES];
+  for (const rule of rules) {
     clean = clean.replace(rule, (match) => {
       blocked.push(match);
       // Preserve a leading newline captured by the role-label rule so line structure

@@ -568,6 +568,11 @@ export interface ChatStreamOptions {
   // from memory-store.buildCoreMemoryBlock(). Injected by the handler so chat-engine stays
   // electron-free (no off-vault store import). '' / undefined → no memory section.
   coreMemory?: string;
+  // Agent SKILLS (P3, §4.2): pre-rendered, scanned, capped Level-1 catalogue (PROMOTED skills
+  // only) from skill-store.buildSkillCatalogue(). Agent-loop only (skills are local-tool-capable
+  // only, §4.5) — NOT injected into the cloud/single-shot path. '' / undefined → no skill section.
+  skillCatalogue?: string;
+  onSkill?: (name: string) => void; // invoke_skill → chat:skill-invoke surface
   onDelta: (delta: string) => void;
   onDone: (citations: ChatCitation[], fullText: string) => void;
   onError: (message: string, category?: ErrorCategory) => void;
@@ -643,13 +648,19 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     // (a) stops with an empty message after a tool returns, (b) answers in English regardless
     // of the user's language, or (c) loops the same search. Keep the RAG/<untrusted> guard.
     // In DISTILL mode the system prompt is the Karpathy INGEST prompt instead.
+    // P3 (§4.2): the always-injected skill catalogue (Level-1) rides the agent system prompt only
+    // (skills are local-tool-capable; the cloud/single-shot path never gets them, §4.5). It is
+    // pre-scanned + capped at source (skill-store), so it splices as trusted context.
+    const skillCatalogue = opts.distill ? '' : (opts.skillCatalogue ?? '');
     const agentSystem = opts.distill
       ? [system, '', KARPATHY_INGEST_PROMPT].join('\n')
       : [
           system,
+          ...(skillCatalogue ? ['', skillCatalogue] : []),
           '',
           "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
           'RULES (follow exactly):',
+          ...(skillCatalogue ? ['- If an Available Skill fits the request, call invoke_skill with its name to load its steps, then follow them using the real tools.'] : []),
           '- FIRST, call set_plan with 2-6 short steps describing how you will answer. As you finish each step, call set_plan again with an updated `done` count.',
           '- If a tool returns empty or an error, do NOT repeat it — adapt your approach (rephrase the query, try a different tool) or answer from general knowledge, then give your final answer.',
           '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
@@ -671,6 +682,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       onToolCall: opts.onToolCall,
       onToolResult: opts.onToolResult,
       onPlan: opts.onPlan,
+      onSkill: opts.onSkill,
       onToolConfirm: opts.onToolConfirm,
       succeed,
       fail,
@@ -1080,6 +1092,10 @@ export interface AgentToolset {
   // onToolConfirm broker is wired (e.g. the distill loop), the write is FAIL-CLOSED — never
   // auto-applied. Regular writes (forceConfirm=false) keep their auto-apply-by-default behavior.
   forceConfirm?: (name: string) => boolean;
+  // P3 (§4.3): resolve a PROMOTED skill's (Steps-only, injection-scanned, capped) body for
+  // invoke_skill. Injected by index.ts (vault path + provenance gate live there). Absent (or a
+  // miss) → invoke_skill acks "(skill not found)". The body is INERT text — never eval'd.
+  loadSkill?: (name: string) => string | undefined;
   extractCitations?: (name: string, result: unknown) => ChatCitation[];
 }
 
@@ -1095,6 +1111,7 @@ export interface AgentLoopCtx {
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
   onPlan?: (steps: string[], done: number) => void;
+  onSkill?: (name: string) => void; // P3: invoke_skill → chat:skill-invoke surface
   /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   succeed: (citations: ChatCitation[], fullText: string) => void;
@@ -1107,6 +1124,8 @@ const AGENT_MAX_INVALID = 3;
 // §4.3 / SEC-6b: max recall_memory executions per user turn (across all loop steps). recall reads
 // a small local file, but it is dead-end-exempt, so cap the control churn explicitly.
 export const AGENT_MAX_RECALL = 4;
+// §4.3: max invoke_skill loads per user turn (a non-settling CONTROL tool — bound the churn).
+export const AGENT_MAX_SKILL_INVOKE = 2;
 // plan-act-reflect: after this many consecutive empty/error tool results, stop digging and
 // force a final answer (bounded — a small local model can otherwise re-call a dead-end tool).
 const DEAD_END_LIMIT = 2;
@@ -1131,6 +1150,11 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
   // step with no self-termination pressure. Bounds total recalls across the whole runAgentLoop
   // call (AGENT_MAX_STEPS already bounds model turns; this bounds the non-settling control churn).
   let recallCount = 0;
+  // §4.3 / SEC-6b: per-turn invoke_skill cap + same-skill-same-turn reject (a control tool that
+  // never settles, so it must be bounded against a slow-DoS loop). invoke_skill is loop-local
+  // CONTROL (like set_plan) — never dispatched, never deadEnds.
+  let skillInvokeCount = 0;
+  const invokedSkills = new Set<string>();
   let planSteps: string[] = []; // multi-step plan (set_plan); declared once, `done` bumped after
   let planDone = 0;
   let planDeclared = false;
@@ -1179,6 +1203,35 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
         if (Number.isFinite(d)) planDone = Math.max(0, Math.min(Math.floor(d), planSteps.length));
         ctx.onPlan?.(planSteps, planDone);
         messages.push({ role: 'tool', tool_name: name, content: planDeclared ? `Plan recorded (${planDone}/${planSteps.length} done).` : 'Plan must have 2-6 steps.' });
+        continue;
+      }
+      // invoke_skill (P3, §4.3): a loop-local CONTROL tool (set_plan twin — NOT in validNames /
+      // dispatcher, so it MUST be handled before the unknown-tool branch). Loads a PROMOTED skill's
+      // (Steps-only, scanned, capped) body via the injected resolver and pushes it as a SINGLE
+      // role:'tool' ack, then continues — never settles, never deadEnds, never eval'd. Per-turn cap
+      // + same-skill-same-turn reject bound the non-settling control churn (§4.3 / SEC-6b).
+      if (name === 'invoke_skill') {
+        const a = (tc.function.arguments ?? {}) as Record<string, unknown>;
+        const skillName = typeof a.name === 'string' ? a.name.trim() : '';
+        // A blank/missing name is a no-op: don't burn the cap, don't surface an empty skill event
+        // (review #9). The model gets a corrective ack and can retry with a real name.
+        if (!skillName) {
+          messages.push({ role: 'tool', tool_name: name, content: 'invoke_skill needs a skill name' });
+          continue;
+        }
+        if (skillInvokeCount >= AGENT_MAX_SKILL_INVOKE) {
+          messages.push({ role: 'tool', tool_name: name, content: 'skill limit reached this turn' });
+          continue;
+        }
+        if (invokedSkills.has(skillName)) {
+          messages.push({ role: 'tool', tool_name: name, content: 'that skill was already loaded this turn' });
+          continue;
+        }
+        skillInvokeCount++;
+        invokedSkills.add(skillName);
+        const body = ctx.toolset.loadSkill?.(skillName);
+        ctx.onSkill?.(skillName);
+        messages.push({ role: 'tool', tool_name: name, content: body ?? '(skill not found)' });
         continue;
       }
       // allowlist — unknown → synthetic tool-error (role alternation preserved)

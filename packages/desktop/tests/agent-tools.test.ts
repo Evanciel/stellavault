@@ -44,15 +44,27 @@ describe('agent-tools — toolset metadata', () => {
       'find_decisions', 'get_related', 'learning_path', 'link_note', 'list_topics', 'log_decision',
       'read_note', 'recall_memory', 'search_vault',
     ]);
-    // 15 schemas = 14 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
-    // model but intentionally NOT in AGENT_VALID_NAMES — runAgentLoop intercepts it).
-    // P2 (§5/§10-f): 15 advertised crosses the soft ≤14 ceiling → re-measured by the eval gate.
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(15);
+    // 16 schemas = 14 dispatched tools + set_plan + invoke_skill (loop-local CONTROL tools
+    // advertised to the model but intentionally NOT in AGENT_VALID_NAMES — runAgentLoop intercepts).
+    // P3 (§5/§10-f): 16 advertised within the staged P3 budget → re-measured by the eval gate.
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(16);
     expect(AGENT_VALID_NAMES.has('set_plan')).toBe(false);
+    expect(AGENT_VALID_NAMES.has('invoke_skill')).toBe(false); // CONTROL — not dispatched
     expect((AGENT_TOOL_SCHEMAS as any[]).some((s) => s.function?.name === 'set_plan')).toBe(true);
+    expect((AGENT_TOOL_SCHEMAS as any[]).some((s) => s.function?.name === 'invoke_skill')).toBe(true);
     for (const w of ['log_decision', 'create_note', 'append_note', 'link_note', 'core_memory_append', 'core_memory_replace']) expect(isAgentWriteTool(w)).toBe(true);
     // recall_memory is a READ tool — NEVER a write (no confirm gate, never in AGENT_WRITE_NAMES).
     for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path', 'recall_memory']) expect(isAgentWriteTool(r)).toBe(false);
+  });
+
+  it('buildAgentToolset advertises invoke_skill ONLY when hasSkills (review #4)', async () => {
+    const { buildAgentToolset } = await import('../src/main/agent-tools.js');
+    const names = (ts: any) => (ts.schemas as any[]).map((x) => x.function?.name);
+    expect(names(buildAgentToolset())).not.toContain('invoke_skill');            // default: no skills
+    expect(names(buildAgentToolset({ hasSkills: false }))).not.toContain('invoke_skill');
+    expect(names(buildAgentToolset({ hasSkills: true }))).toContain('invoke_skill');
+    // set_plan is always advertised regardless.
+    expect(names(buildAgentToolset())).toContain('set_plan');
   });
 
   it('marks ONLY core_memory_* as force-confirm (durable memory always approved)', () => {
