@@ -3,7 +3,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
 import { pathToFileURL } from 'node:url';
-import { join, relative, resolve, dirname, basename, extname } from 'node:path';
+import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
@@ -511,6 +511,14 @@ async function initCore(config: AppConfig): Promise<void> {
 /** Vault-relative path with forward slashes — matches core's documents.file_path. */
 function toVaultRel(vaultPath: string, filePath: string): string {
   return relative(resolve(vaultPath), resolve(filePath)).replace(/\\/g, '/');
+}
+
+/** Resolve a write-tool's note path (vault-relative or absolute) to an absolute path inside the
+ *  active vault — what the renderer's "Filed" chip passes to vault:read-file → openFile. */
+function absVaultPath(p?: string): string | undefined {
+  if (!p) return undefined;
+  const abs = isAbsolute(p) ? p : join(currentVaultPath, p);
+  try { return assertInsideVault(currentVaultPath, abs); } catch { return undefined; }
 }
 
 /** Map a core SearchResult (chunk+document) to the IPC SearchResult shape (absolute path). */
@@ -1099,8 +1107,8 @@ function registerIpcHandlers(config: AppConfig) {
         executeTool,
         onToolCall: (name: string, detailRedacted: string) =>
           safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
-        onToolResult: (name: string, ok: boolean, summary: string) =>
-          safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary }),
+        onToolResult: (name: string, ok: boolean, summary: string, filePath?: string) =>
+          safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
       };
       // Writes AUTO-APPLY by default (frictionless second-brain growth; every write is shown
       // in the tool strip, stays inside the vault, and is undoable). Opt-in "review-before-
@@ -1247,7 +1255,7 @@ function registerIpcHandlers(config: AppConfig) {
         toolset: buildAgentToolset(),
         executeTool,             // writes auto-apply (no onToolConfirm)
         onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
-        onToolResult: (name, ok, summary) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary }),
+        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
         onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
         onDone: (_citations, fullText) => safeSend('chat:distill-done', { streamId: req.streamId, summary: fullText.slice(0, 300) }),
         onError: () => safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }),

@@ -556,7 +556,7 @@ export interface ChatStreamOptions {
   toolset?: AgentToolset;
   executeTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   onToolCall?: (name: string, detailRedacted: string) => void;
-  onToolResult?: (name: string, ok: boolean, summary: string) => void;
+  onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
   // INGEST prompt — fold the conversation's durable knowledge into the wiki. Implies agent.
@@ -1043,7 +1043,7 @@ export interface AgentLoopCtx {
   signal: AbortSignal;
   onDelta: (d: string) => void;
   onToolCall?: (name: string, detailRedacted: string) => void;
-  onToolResult?: (name: string, ok: boolean, summary: string) => void;
+  onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
   /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   succeed: (citations: ChatCitation[], fullText: string) => void;
@@ -1130,7 +1130,12 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
         toolOk = false;
         result = { error: redactForLog(String((err as Error)?.message ?? 'tool failed')) };
       }
-      ctx.onToolResult?.(name, toolOk, summarizeResult(result));
+      // SP-G: a write tool's note path (result.filePath for create_note; the arg path for
+      // append/link) so the renderer can make the "Filed" row open the note.
+      const writePath = String(
+        (result as Record<string, unknown>)?.filePath ?? (args as Record<string, unknown>)?.filePath ?? '',
+      );
+      ctx.onToolResult?.(name, toolOk, summarizeResult(result), writePath || undefined);
       messages.push({ role: 'tool', tool_name: name, content: safeStringify(result) });
       if (ctx.toolset.extractCitations) mergeCitations(citations, ctx.toolset.extractCitations(name, result));
 

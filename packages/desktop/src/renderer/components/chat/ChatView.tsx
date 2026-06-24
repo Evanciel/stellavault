@@ -91,7 +91,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   // Agent mode (SP-E): the model can call vault tools (search/read/…) and propose a
   // confirm-gated write. Tool activity streams into toolLog; a write pauses on `confirm`.
   const [agentOn, setAgentOn] = useState(false);
-  const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean }>>([]);
+  const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean; filePath?: string }>>([]);
   const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
   // Auto-distill (SP-I, Karpathy ingest): after each answer, fold the conversation into the
   // wiki. autoDistillRef/messagesRef are read inside the mount-once chat:done handler.
@@ -144,6 +144,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
   }, []);
   const removeAttachment = useCallback((uid: string) => {
     setAttachments((prev) => prev.filter((a) => a.uid !== uid));
+  }, []);
+  // Open a note the agent just filed (the "Filed" row) in the editor — the second-brain loop.
+  const openNote = useCallback(async (filePath?: string) => {
+    if (!filePath) return;
+    try {
+      const content = await ipc('vault:read-file', filePath);
+      const title = filePath.split(/[\\/]/).pop()?.replace(/\.md$/i, '') ?? filePath;
+      useAppStore.getState().openFile(filePath, title, content);
+    } catch (err) { console.error('[chat] open filed note failed', err); }
   }, []);
   // Discard staged IMAGE attachments if the provider/endpoint changes (the view isn't remounted
   // on a settings change) — a cloud model can't see them. Audio/video transcripts are plain text
@@ -256,9 +265,9 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
       setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'call', name: e.name, text: e.detailRedacted }]);
     });
     const offToolResult = onIpc('chat:tool-result', (p: unknown) => {
-      const e = p as { streamId: string; name: string; ok: boolean; summary: string };
+      const e = p as { streamId: string; name: string; ok: boolean; summary: string; filePath?: string };
       if (!ownsStream(e.streamId)) return;
-      setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'result', name: e.name, text: e.summary, ok: e.ok }]);
+      setToolLog((prev) => [...prev, { id: crypto.randomUUID(), kind: 'result', name: e.name, text: e.summary, ok: e.ok, filePath: e.filePath }]);
       // Split-view: the first successful write reveals the graph so the user watches the
       // vault grow (agent OR auto-distill writes — both are "the wiki compiling"). Guards:
       //  • variant==='main' ONLY — the panel-variant chat LIVES in the right panel, so
@@ -552,11 +561,17 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
                   // accent treatment so the knowledge-building is visible, not buried in tools.
                   const isWrite = tlog.kind === 'result' && tlog.ok !== false && AGENT_WRITE_TOOLS.has(tlog.name);
                   const icon = tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : isWrite ? '📝' : '✓';
+                  const openable = isWrite && !!tlog.filePath;
                   return (
-                    <div key={tlog.id} style={{ fontSize: 11, color: isWrite ? 'var(--accent-2)' : 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div key={tlog.id}
+                      onClick={openable ? () => void openNote(tlog.filePath) : undefined}
+                      title={openable ? t('panel.ai.openNote') : undefined}
+                      style={{ fontSize: 11, color: isWrite ? 'var(--accent-2)' : 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center', cursor: openable ? 'pointer' : 'default' }}
+                    >
                       <span aria-hidden style={{ opacity: 0.85 }}>{icon}</span>
-                      <span style={{ fontWeight: 600 }}>{isWrite ? t('panel.ai.filed') : tlog.name}</span>
+                      <span style={{ fontWeight: 600, textDecoration: openable ? 'underline' : 'none', textUnderlineOffset: 2 }}>{isWrite ? t('panel.ai.filed') : tlog.name}</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
+                      {openable && <span aria-hidden style={{ opacity: 0.6 }}>↗</span>}
                     </div>
                   );
                 })}

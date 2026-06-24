@@ -632,7 +632,7 @@ export interface IpcEventMap {
   };
   // Agent (SP-D) — tool-activity transparency + write-approval handshake (e.sender targeted).
   'chat:tool-call':    { streamId: string; name: string; detailRedacted: string };
-  'chat:tool-result':  { streamId: string; name: string; ok: boolean; summary: string };
+  'chat:tool-result':  { streamId: string; name: string; ok: boolean; summary: string; filePath?: string };
   'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
   // Agent (SP-I): a distillation pass finished — summary of what was folded into the wiki.
   'chat:distill-done': { streamId: string; summary: string };

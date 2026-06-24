@@ -272,6 +272,7 @@ export const messages = {
   "panel.ai.copied": { en: "Copied", ko: "복사됨" },
   "panel.ai.copyMessage": { en: "Copy message", ko: "메시지 복사" },
   "panel.ai.filed": { en: "Filed", ko: "정리됨" },
+  "panel.ai.openNote": { en: "Open the note", ko: "노트 열기" },
   "panel.ai.suggest.0": { en: "Summarize my recent notes", ko: "최근 노트 요약해줘" },
   "panel.ai.suggest.1": { en: "What am I missing on this topic?", ko: "이 주제에서 내가 놓친 건?" },
   "panel.ai.suggest.2": { en: "Connect these ideas into a note", ko: "이 아이디어들을 노트로 연결해줘" },
