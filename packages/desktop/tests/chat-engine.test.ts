@@ -1184,4 +1184,62 @@ describe('buildChatRagBlock', () => {
     expect(sys).toContain('</untrusted>');
     expect(sys).toContain('not instructions');
   });
+
+  it('coreMemory (P1 §3.2/§4.5) is spliced trusted, ABOVE the <untrusted> RAG block', async () => {
+    const { buildSystemPrompt } = await import('../src/main/chat-engine.js');
+    const mem = '=== Core Memory ===\n- Prefers gemma4';
+    // With RAG: memory sits BEFORE the untrusted wrapper (trusted system context).
+    const sys = buildSystemPrompt('GROUNDING', mem);
+    expect(sys).toContain('Prefers gemma4');
+    expect(sys.indexOf(mem)).toBeLessThan(sys.indexOf('<untrusted>'));
+    expect(sys.indexOf(mem)).toBeGreaterThan(-1);
+    // Without RAG (cloud/single-shot floor §4.5): memory still injected, no <untrusted>.
+    const noRag = buildSystemPrompt('', mem);
+    expect(noRag).toContain('Prefers gemma4');
+    expect(noRag).not.toContain('<untrusted>');
+    // Default empty coreMemory → behaviour unchanged (back-compat).
+    expect(buildSystemPrompt('GROUNDING')).not.toContain('Core Memory');
+  });
+
+  it('combined injection ceiling (§6/LM-2): worst-case RAG + memory stays under SYSTEM_PROMPT_TOKEN_BUDGET', async () => {
+    const { buildSystemPrompt, capToBudget, RAG_TOKEN_BUDGET, SYSTEM_PROMPT_TOKEN_BUDGET } =
+      await import('../src/main/chat-engine.js');
+    // Max-size RAG block (as buildChatRagBlock would cap it) + a generously-large memory block.
+    // capToBudget keeps whole '\n\n'-separated entries, so feed it real multi-entry input.
+    const ragEntries = Array.from({ length: 40 }, (_v, i) => `[${i}] Title\n${'R'.repeat(300)}`).join('\n\n');
+    const maxRag = capToBudget(ragEntries, RAG_TOKEN_BUDGET);
+    expect(maxRag).toContain('Title'); // sanity: the cap kept entries (not emptied)
+    const bigMemory = `=== Core Memory ===\n${Array.from({ length: 40 }, (_v, i) => `- fact ${i} ${'m'.repeat(30)}`).join('\n')}`;
+    const sys = buildSystemPrompt(maxRag, bigMemory);
+    const estTokens = Math.ceil(sys.length * 0.25); // same ~4 chars/token estimate as capToBudget
+    expect(estTokens).toBeLessThanOrEqual(SYSTEM_PROMPT_TOKEN_BUDGET);
+    // The data-not-instructions guard is NEVER truncated away (no mid-prompt cap).
+    expect(sys).toContain('not instructions');
+  });
+});
+
+describe('runAgentLoop — recall_memory dead-end exemption (P1 §6 INT-7)', () => {
+  it('empty {memories:[]} does NOT force-conclude (unlike an empty search)', async () => {
+    // A model that keeps recalling empty memory must NOT be force-concluded toward DEAD_END_LIMIT
+    // (empty memory is the common P1 case, not a failed search). The per-turn recall CAP (§4.3)
+    // stops execution after AGENT_MAX_RECALL=4, then the empty-but-non-dead-end recalls run the
+    // loop to the MAX_STEPS guard (succeed once, never fail).
+    const always = Array.from({ length: 16 }, () => step({ toolCalls: [tc('recall_memory', { query: 'prefs' })] }));
+    const c = await runLoop(always, { valid: ['recall_memory'], toolResult: { memories: [] } });
+    expect(c.execute.length).toBe(4);   // AGENT_MAX_RECALL — capped, never re-executed past it
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('recall cap (§4.3 / SEC-6b): at most AGENT_MAX_RECALL executions per turn', async () => {
+    // One turn batches 6 recall calls; only the first 4 reach executeTool, the rest get a
+    // synthetic "recall limit reached" ack. Then a final answer settles once.
+    const c = await runLoop([
+      step({ toolCalls: Array.from({ length: 6 }, () => tc('recall_memory', { query: 'x' })) }),
+      step({ text: 'answer' }),
+    ], { valid: ['recall_memory'], toolResult: { memories: [{ text: 'fact', provenance: 'user' }] } });
+    expect(c.execute).toHaveLength(4); // AGENT_MAX_RECALL — over-limit calls skip execute
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
 });

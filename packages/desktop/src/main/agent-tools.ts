@@ -38,6 +38,10 @@ export interface AgentToolDeps {
   getRelatedByPath?: (filePath: string, limit: number) => Promise<unknown>;
   detectGaps?: () => Promise<unknown>;
   learningPath?: (limit: number) => Promise<unknown>;
+  // Agent MEMORY (P1, Design Ref §3.2, §5) — a READ surface over the off-vault durable user
+  // model. Returns title/text/provenance only (never a secret, never a vault path). Injected
+  // by index.ts → memory-store.recallMemory.
+  memoryRecall?: (query: string, k?: number) => Promise<unknown> | unknown;
 }
 
 // OpenAI function-format schemas — the ONLY tools the model is told about.
@@ -138,6 +142,21 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
   {
     type: 'function',
     function: {
+      name: 'recall_memory',
+      description: "Recall durable facts you've learned about THIS user (their preferences, environment, ongoing projects) — your long-term memory, separate from their notes. Call this when the answer depends on who the user is or how they work. Returns short facts only.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'what to recall (e.g. "preferences", "hardware", a project name)' },
+          k: { type: 'number', description: 'max facts to return (default 8)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'log_decision',
       description: "Record a NEW decision in the vault's decision journal. This WRITES a file to the vault and REQUIRES the user to approve it before it runs.",
       parameters: {
@@ -205,7 +224,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
 
 export const AGENT_VALID_NAMES = new Set<string>([
   'search_vault', 'read_note', 'list_topics', 'find_decisions',
-  'get_related', 'detect_gaps', 'learning_path',
+  'get_related', 'detect_gaps', 'learning_path', 'recall_memory',
   'log_decision', 'create_note', 'append_note', 'link_note',
 ]);
 const AGENT_WRITE_NAMES = new Set<string>(['log_decision', 'create_note', 'append_note', 'link_note']);
@@ -315,6 +334,12 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
       case 'learning_path': {
         if (!deps.learningPath) return { items: [] };
         try { return await deps.learningPath(Math.min(Number(args.limit) || 10, 30)); } catch { return { items: [] }; }
+      }
+      // ── Agent MEMORY (P1, §3.2/§5) — READ over the off-vault durable user model ──
+      case 'recall_memory': {
+        if (!deps.memoryRecall) return { memories: [] };
+        try { return await deps.memoryRecall(str(args.query), num(args.k)); }
+        catch { return { memories: [] }; }
       }
       case 'log_decision': {
         const title = str(args.title);

@@ -29,6 +29,7 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 import { chatStream, describeImages, foldAttachmentsIntoText, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
 import { transcribeAudio, describeVideo } from './media-transcribe.js';
 import { buildAgentToolset, buildExecuteAgentTool } from './agent-tools.js';
+import { buildCoreMemoryBlock, recallMemory } from './memory-store.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
   ollamaStatus,
@@ -1149,6 +1150,7 @@ function registerIpcHandlers(config: AppConfig) {
         searchEngine, store, decayEngine, vaultPath: currentVaultPath,
         coreReady: () => coreReady, afterWrite,
         getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+        memoryRecall: (query: string, k?: number) => recallMemory(query, k), // P1: READ-only durable memory
       });
       agentOpts = {
         agentOn: true,
@@ -1190,6 +1192,9 @@ function registerIpcHandlers(config: AppConfig) {
         ragOn: !!req.ragOn,
         signal: controller.signal,
         searchEngine, // module-level; may be null → engine null-guards
+        // Agent MEMORY (P1, §3.2/§4.5): always-injected pinned user facts, pre-scanned + capped.
+        // Injected for EVERY provider (agent + cloud/single-shot). '' when the store is empty.
+        coreMemory: buildCoreMemoryBlock(),
         ...agentOpts,
         onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
         onDone: (citations, fullText: string) => {
@@ -1293,6 +1298,10 @@ function registerIpcHandlers(config: AppConfig) {
     const executeTool = buildExecuteAgentTool({
       searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
       getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+      // §6 INT-2: distill gets READ memory deps (recall_memory works in the ingest loop too).
+      // NO memoryWrite here — distill auto-applies without a confirm gate, so a reflection/ingest
+      // loop must never perform an unattended durable-memory write (review-before-apply, §7-1).
+      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
     });
 
     try {

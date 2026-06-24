@@ -37,18 +37,35 @@ function makeDeps(over: any = {}) {
 }
 
 describe('agent-tools — toolset metadata', () => {
-  it('exposes the 11 tools (7 read + 4 write) and marks the writes correctly', () => {
+  it('exposes the 12 tools (8 read + 4 write) and marks the writes correctly', () => {
     expect([...AGENT_VALID_NAMES].sort()).toEqual([
       'append_note', 'create_note', 'detect_gaps', 'find_decisions', 'get_related', 'learning_path',
-      'link_note', 'list_topics', 'log_decision', 'read_note', 'search_vault',
+      'link_note', 'list_topics', 'log_decision', 'read_note', 'recall_memory', 'search_vault',
     ]);
-    // 12 schemas = 11 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
+    // 13 schemas = 12 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
     // model but intentionally NOT in AGENT_VALID_NAMES — runAgentLoop intercepts it).
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(12);
+    // P1 memory ceiling (§5): 13 advertised tools ≤ 14 cap; recall_memory is the ONLY P1 add.
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(13);
     expect(AGENT_VALID_NAMES.has('set_plan')).toBe(false);
     expect((AGENT_TOOL_SCHEMAS as any[]).some((s) => s.function?.name === 'set_plan')).toBe(true);
     for (const w of ['log_decision', 'create_note', 'append_note', 'link_note']) expect(isAgentWriteTool(w)).toBe(true);
-    for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path']) expect(isAgentWriteTool(r)).toBe(false);
+    // recall_memory is a READ tool — NEVER a write (no confirm gate, never in AGENT_WRITE_NAMES).
+    for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path', 'recall_memory']) expect(isAgentWriteTool(r)).toBe(false);
+  });
+
+  it('recall_memory dispatches to the injected memoryRecall (READ; empty + payload paths)', async () => {
+    // No dep wired → graceful {memories:[]} (never throws unknown-tool).
+    const bare = buildExecuteAgentTool(makeDeps());
+    expect(await bare('recall_memory', { query: 'prefs' })).toEqual({ memories: [] });
+    // Dep wired → returns the recalled facts; the query+k flow through.
+    const memoryRecall = vi.fn(async (_q: string, _k?: number) => ({ memories: [{ tag: 'pref', text: 'likes gemma4', provenance: 'user' }] }));
+    const exec = buildExecuteAgentTool(makeDeps({ memoryRecall }));
+    const res: any = await exec('recall_memory', { query: 'preferences', k: 3 });
+    expect(memoryRecall).toHaveBeenCalledWith('preferences', 3);
+    expect(res.memories[0].text).toBe('likes gemma4');
+    // A throwing backend degrades to empty (never surfaces an error to the model loop).
+    const exec2 = buildExecuteAgentTool(makeDeps({ memoryRecall: vi.fn(async () => { throw new Error('boom'); }) }));
+    expect(await exec2('recall_memory', { query: 'x' })).toEqual({ memories: [] });
   });
 });
 
