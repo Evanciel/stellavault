@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import type { AppSettings } from '../../../shared/ipc-types.js';
 
 type Bookmark = AppSettings['bookmarks'][number];
@@ -33,6 +34,7 @@ export async function bookmarkCurrentNote(): Promise<void> {
 }
 
 export function BookmarksSection() {
+  const t = useT();
   const bookmarks = useSettingsStore((s) => s.settings.bookmarks);
   const update = useSettingsStore((s) => s.update);
   const openFile = useAppStore((s) => s.openFile);
@@ -66,14 +68,14 @@ export function BookmarksSection() {
         style={headerButtonStyle}
       >
         <span style={{ marginRight: 8 }}>{collapsed ? '▸' : '▾'}</span>
-        Bookmarks
+        {t('sidebar.bookmarksTitle')}
       </button>
 
       {!collapsed && (
         bookmarks.length === 0 ? (
           <div style={emptyCardStyle}>
             <p style={{ fontSize: 12, color: 'var(--ink-faint)', margin: 0 }}>
-              No bookmarks yet — use &quot;Bookmark current note&quot; from the command palette.
+              {t('sidebar.bookmarksEmpty')}
             </p>
           </div>
         ) : (
@@ -98,7 +100,7 @@ export function BookmarksSection() {
                   </span>
                 </button>
                 <button
-                  aria-label={`Remove bookmark ${bm.label}`}
+                  aria-label={`${t('sidebar.removeBookmark')} ${bm.label}`}
                   onClick={() => handleRemove(bm)}
                   style={removeButtonStyle}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--ink)'; }}

@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { tagsList, type TagCount } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 
 interface TagNode {
   name: string;       // segment name, e.g. 'b' for tag 'a/b'
@@ -55,6 +56,7 @@ function subtreeCount(node: TagNode): number {
 }
 
 export function TagsPanel() {
+  const t = useT();
   const [tags, setTags] = useState<TagCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -109,7 +111,7 @@ export function TagsPanel() {
           {hasChildren ? (
             <span
               onClick={(e) => { e.stopPropagation(); toggleCollapsed(node.fullTag); }}
-              aria-label={isCollapsed ? 'Expand' : 'Collapse'}
+              aria-label={isCollapsed ? t('common.expand') : t('common.collapse')}
               style={{ width: 12, fontSize: 9, color: 'var(--ink-faint)', flexShrink: 0, textAlign: 'center' }}
             >
               {isCollapsed ? '▸' : '▾'}
@@ -119,7 +121,7 @@ export function TagsPanel() {
           )}
           <span
             onClick={() => openSearchWithQuery(`tag:${node.fullTag}`)}
-            title={`Search tag:${node.fullTag}`}
+            title={t('panel.tags.searchTooltip', { tag: node.fullTag })}
             style={{
               flex: 1,
               overflow: 'hidden',
@@ -162,7 +164,7 @@ export function TagsPanel() {
             borderRadius: 4, cursor: 'pointer', background: 'var(--hover)', color: 'var(--ink-dim)',
           }}
         >
-          Retry
+          {t('common.retry')}
         </button>
       </div>
     );
@@ -171,16 +173,18 @@ export function TagsPanel() {
   if (tags === null) {
     return (
       <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-        Loading tags…
+        {t('panel.tags.loading')}
       </div>
     );
   }
 
   if (tree.length === 0) {
     return (
-      <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20, lineHeight: 1.7 }}>
-        No tags indexed yet.<br />Tags appear after the vault is indexed.
-      </div>
+      <div
+        style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20, lineHeight: 1.7 }}
+        // Static, developer-authored i18n string (no user input) — safe to render as HTML.
+        dangerouslySetInnerHTML={{ __html: t('panel.tags.empty') }}
+      />
     );
   }
 

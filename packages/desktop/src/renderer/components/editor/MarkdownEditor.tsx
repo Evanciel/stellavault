@@ -38,6 +38,8 @@ import { BubbleMenuBar, TEXT_COLORS, HIGHLIGHT_COLORS } from './BubbleMenuBar.js
 import { TableControls } from './TableControls.js';
 import { PromptModal } from '../ui/Modal.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { showToast } from '../../lib/toast.js';
+import { useT } from '../../lib/i18n.js';
 
 const lowlight = createLowlight(common);
 
@@ -66,6 +68,24 @@ const VaultImage = Image.extend({
   },
 });
 
+/** Reading-mode markdown-link open: route by href. http(s) → external browser
+ *  (vetted https/loopback allowlist in main); file:// or a local/abs path → OS
+ *  default app (shell:open-path — vault-restricted in main, so out-of-vault paths
+ *  are rejected there). Failures are logged, never thrown. */
+async function openMarkdownLink(href: string): Promise<void> {
+  try {
+    if (/^https?:\/\//i.test(href)) {
+      await ipc('shell:open-external', href);
+      return;
+    }
+    let path = href;
+    if (path.startsWith('file://')) path = decodeURI(path.replace(/^file:\/\/+/, ''));
+    await ipc('shell:open-path', path);
+  } catch (err) {
+    console.error('[link] open failed:', href, err);
+  }
+}
+
 interface Props {
   // W1-7: markdown BODY source (never HTML, never frontmatter — EditorArea
   // splits/recombines the YAML block via lib/frontmatter.ts).
@@ -74,9 +94,14 @@ interface Props {
   // T2-3: Reading mode — render the document read-only with no editing chrome
   // (toolbar/bubble/table controls hidden). Wikilink click-nav still works.
   readOnly?: boolean;
+  // Optional per-editor wikilink click override (the preview panel routes body link
+  // clicks into recenter + graph-explore instead of opening a tab). Return true if
+  // handled; falsy → default open/create-in-tab behaviour.
+  onWikilinkClick?: (target: string, alias: string | null) => boolean;
 }
 
-export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
+export function MarkdownEditor({ content, onChange, readOnly = false, onWikilinkClick }: Props) {
+  const t = useT();
   const [imagePromptOpen, setImagePromptOpen] = useState(false);
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);
   // Toolbar dropdown palettes (text color / highlight / callout type)
@@ -94,8 +119,8 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
       CodeBlockLowlight
         .extend({ addNodeView() { return ReactNodeViewRenderer(CodeBlockView); } })
         .configure({ lowlight, HTMLAttributes: { class: 'sv-code-block' } }),
-      Placeholder.configure({ placeholder: 'Start writing... (type / for commands)' }),
-      Link.configure({ openOnClick: false, autolink: true }),
+      Placeholder.configure({ placeholder: t('editor.placeholder') }),
+      Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { title: t('editor.link.title') } }),
       Table.configure({ resizable: true }),
       TableRow,
       TableCell,
@@ -177,10 +202,29 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         }
         return false;
       },
+      handleClick: (_view, _pos, event) => {
+        const a = (event.target as HTMLElement | null)?.closest?.('a');
+        const href = a?.getAttribute('href');
+        if (!href) return false;
+        // Reading mode: plain click opens. Edit/Live: Ctrl/⌘+click opens (plain click
+        // keeps cursor placement for editing); a plain click on a link hints how to open.
+        if (readOnly || event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          void openMarkdownLink(href);
+          return true;
+        }
+        showToast(t('editor.link.hint'), 'info', 2200);
+        return false;
+      },
     },
   });
 
   useEffect(() => () => editor?.destroy(), [editor]);
+
+  // Wire the per-editor wikilink click override into the WikilinkNode storage.
+  useEffect(() => {
+    if (editor) editor.storage.wikilink.clickHandler = onWikilinkClick ?? null;
+  }, [editor, onWikilinkClick]);
 
   // ─── Stage C (W1-5, OutlinePanel) — scroll-to-heading listener ONLY ───
   // OutlinePanel dispatches CustomEvent('sv:scroll-to-heading', {detail:{text,index}})
@@ -257,11 +301,11 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         flexWrap: 'wrap',
       }}>
         {/* Text formatting */}
-        <ToolBtn active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} label="B" title="Bold (Ctrl+B)" style={{ fontWeight: 700 }} />
-        <ToolBtn active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} label="I" title="Italic (Ctrl+I)" style={{ fontStyle: 'italic' }} />
-        <ToolBtn active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()} label="U" title="Underline (Ctrl+U)" style={{ textDecoration: 'underline' }} />
-        <ToolBtn active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} label="S" title="Strikethrough" style={{ textDecoration: 'line-through' }} />
-        <ToolBtn active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} label="<>" title="Inline code (Ctrl+E)" style={{ fontFamily: 'monospace', fontSize: '10px' }} />
+        <ToolBtn active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} label="B" title={t('editor.tooltip.bold')} style={{ fontWeight: 700 }} />
+        <ToolBtn active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} label="I" title={t('editor.tooltip.italic')} style={{ fontStyle: 'italic' }} />
+        <ToolBtn active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()} label="U" title={t('editor.tooltip.underline')} style={{ textDecoration: 'underline' }} />
+        <ToolBtn active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} label="S" title={t('editor.tooltip.strikethrough')} style={{ textDecoration: 'line-through' }} />
+        <ToolBtn active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} label="<>" title={t('editor.tooltip.code')} style={{ fontFamily: 'monospace', fontSize: '10px' }} />
 
         <Sep />
 
@@ -271,7 +315,7 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
             active={openPalette === 'color' || !!editor.getAttributes('textStyle').color}
             onClick={() => setOpenPalette(openPalette === 'color' ? null : 'color')}
             label="A"
-            title="Text color"
+            title={t('editor.tooltip.textColor')}
             style={{ color: (editor.getAttributes('textStyle').color as string) || undefined, fontWeight: 700 }}
           />
           {openPalette === 'color' && (
@@ -280,7 +324,7 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
                 <button key={c.value} className="sv-swatch" title={c.name} aria-label={`Text color ${c.name}`} style={{ background: c.value }}
                   onClick={() => { editor.chain().focus().setTextColor(c.value).run(); setOpenPalette(null); }} />
               ))}
-              <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetTextColor().run(); setOpenPalette(null); }}>Reset</button>
+              <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetTextColor().run(); setOpenPalette(null); }}>{t('common.reset')}</button>
             </Palette>
           )}
         </div>
@@ -289,18 +333,18 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
             active={openPalette === 'highlight' || editor.isActive('highlight')}
             onClick={() => setOpenPalette(openPalette === 'highlight' ? null : 'highlight')}
             label="H"
-            title="Highlight color"
+            title={t('editor.tooltip.highlightColor')}
             style={{ background: '#fbbf2440', padding: '3px 7px' }}
           />
           {openPalette === 'highlight' && (
             <Palette>
-              <button className="sv-swatch" title="Default (==text==)" aria-label="Default highlight" style={{ background: '#fbbf2480' }}
+              <button className="sv-swatch" title={t('editor.toolbar.highlightDefault')} aria-label="Default highlight" style={{ background: '#fbbf2480' }}
                 onClick={() => { editor.chain().focus().setHighlight().run(); setOpenPalette(null); }} />
               {HIGHLIGHT_COLORS.map((c) => (
                 <button key={c.value} className="sv-swatch" title={c.name} aria-label={`Highlight ${c.name}`} style={{ background: c.value }}
                   onClick={() => { editor.chain().focus().setHighlight({ color: c.value }).run(); setOpenPalette(null); }} />
               ))}
-              <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenPalette(null); }}>Reset</button>
+              <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenPalette(null); }}>{t('common.reset')}</button>
             </Palette>
           )}
         </div>
@@ -309,88 +353,88 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
 
         {/* Headings */}
         {([1, 2, 3] as const).map((level) => (
-          <ToolBtn key={level} active={editor.isActive('heading', { level })} onClick={() => editor.chain().focus().toggleHeading({ level }).run()} label={`H${level}`} title={`Heading ${level}`} />
+          <ToolBtn key={level} active={editor.isActive('heading', { level })} onClick={() => editor.chain().focus().toggleHeading({ level }).run()} label={`H${level}`} title={t(`editor.toolbar.heading${level}` as const)} />
         ))}
 
         <Sep />
 
         {/* Lists */}
-        <ToolBtn active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} label="•" title="Bullet list" />
-        <ToolBtn active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} label="1." title="Numbered list" />
-        <ToolBtn active={editor.isActive('taskList')} onClick={() => editor.chain().focus().toggleTaskList().run()} label="☑" title="Task list" />
+        <ToolBtn active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} label="•" title={t('editor.toolbar.bulletList')} />
+        <ToolBtn active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} label="1." title={t('editor.toolbar.numberedList')} />
+        <ToolBtn active={editor.isActive('taskList')} onClick={() => editor.chain().focus().toggleTaskList().run()} label="☑" title={t('editor.toolbar.taskList')} />
 
         <Sep />
 
         {/* Blocks */}
-        <ToolBtn active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} label="❝" title="Quote" />
+        <ToolBtn active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} label="❝" title={t('editor.toolbar.quote')} />
         <div style={{ position: 'relative' }}>
           <ToolBtn
             active={openPalette === 'callout' || editor.isActive('callout')}
             onClick={() => setOpenPalette(openPalette === 'callout' ? null : 'callout')}
             label="💡"
-            title="Callout (info / warning / tip)"
+            title={t('editor.toolbar.callout')}
           />
           {openPalette === 'callout' && (
             <Palette>
-              {CALLOUT_TYPES.map((t) => (
+              {CALLOUT_TYPES.map((ct) => (
                 <button
-                  key={t}
+                  key={ct}
                   className="sv-swatch-reset"
                   onClick={() => {
-                    if (editor.isActive('callout')) editor.chain().focus().setCalloutType(t).run();
-                    else editor.chain().focus().toggleCallout(t).run();
+                    if (editor.isActive('callout')) editor.chain().focus().setCalloutType(ct).run();
+                    else editor.chain().focus().toggleCallout(ct).run();
                     setOpenPalette(null);
                   }}
                 >
-                  {t === 'info' ? 'ℹ️' : t === 'warning' ? '⚠️' : '💡'} {t}
+                  {ct === 'info' ? 'ℹ️' : ct === 'warning' ? '⚠️' : '💡'} {t(`editor.callout.${ct}` as const)}
                 </button>
               ))}
               {editor.isActive('callout') && (
                 <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().toggleCallout().run(); setOpenPalette(null); }}>
-                  Remove
+                  {t('common.remove')}
                 </button>
               )}
             </Palette>
           )}
         </div>
-        <ToolBtn active={editor.isActive('codeBlock')} onClick={() => editor.chain().focus().toggleCodeBlock().run()} label="{}" title="Code block" style={{ fontFamily: 'monospace', fontSize: '10px' }} />
-        <ToolBtn active={false} onClick={() => editor.chain().focus().setHorizontalRule().run()} label="—" title="Horizontal rule" />
+        <ToolBtn active={editor.isActive('codeBlock')} onClick={() => editor.chain().focus().toggleCodeBlock().run()} label="{}" title={t('editor.toolbar.codeBlock')} style={{ fontFamily: 'monospace', fontSize: '10px' }} />
+        <ToolBtn active={false} onClick={() => editor.chain().focus().setHorizontalRule().run()} label="—" title={t('editor.toolbar.horizontalRule')} />
 
         <Sep />
 
         {/* Table — row/col controls live in the TableControls context bar below */}
-        <ToolBtn active={editor.isActive('table')} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} label="⊞" title="Insert table" />
+        <ToolBtn active={editor.isActive('table')} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} label="⊞" title={t('editor.toolbar.table')} />
 
         <Sep />
 
         {/* Alignment */}
-        <ToolBtn active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()} label="≡L" title="Align left" />
-        <ToolBtn active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()} label="≡C" title="Align center" />
-        <ToolBtn active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()} label="≡R" title="Align right" />
+        <ToolBtn active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()} label="≡L" title={t('editor.toolbar.alignLeft')} />
+        <ToolBtn active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()} label="≡C" title={t('editor.toolbar.alignCenter')} />
+        <ToolBtn active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()} label="≡R" title={t('editor.toolbar.alignRight')} />
 
         <Sep />
 
         {/* Link */}
-        <ToolBtn active={editor.isActive('link')} onClick={() => setLinkPromptOpen(true)} label="🔗" title="Insert / edit link" />
+        <ToolBtn active={editor.isActive('link')} onClick={() => setLinkPromptOpen(true)} label="🔗" title={t('editor.toolbar.link')} />
 
         {/* Image — URL, or local file copied into vault assets/ */}
-        <ToolBtn active={false} onClick={() => setImagePromptOpen(true)} label="🖼" title="Insert image from URL (or paste/drop)" />
-        <ToolBtn active={false} onClick={() => fileInputRef.current?.click()} label="🖼+" title="Insert image from local file (copied to assets/)" style={{ fontSize: '10px' }} />
+        <ToolBtn active={false} onClick={() => setImagePromptOpen(true)} label="🖼" title={t('editor.toolbar.imageUrl')} />
+        <ToolBtn active={false} onClick={() => fileInputRef.current?.click()} label="🖼+" title={t('editor.toolbar.imageLocal')} style={{ fontSize: '10px' }} />
 
         {/* Super/subscript */}
-        <ToolBtn active={editor.isActive('superscript')} onClick={() => editor.chain().focus().toggleSuperscript().run()} label="x²" title="Superscript" style={{ fontSize: '10px' }} />
-        <ToolBtn active={editor.isActive('subscript')} onClick={() => editor.chain().focus().toggleSubscript().run()} label="x₂" title="Subscript" style={{ fontSize: '10px' }} />
+        <ToolBtn active={editor.isActive('superscript')} onClick={() => editor.chain().focus().toggleSuperscript().run()} label="x²" title={t('editor.toolbar.superscript')} style={{ fontSize: '10px' }} />
+        <ToolBtn active={editor.isActive('subscript')} onClick={() => editor.chain().focus().toggleSubscript().run()} label="x₂" title={t('editor.toolbar.subscript')} style={{ fontSize: '10px' }} />
 
         <Sep />
 
         {/* Math — inserts a real display-math block (click to edit raw $$…$$) */}
         <ToolBtn active={editor.isActive('mathBlock')} onClick={() => {
           editor.chain().focus().insertMathBlock('E = mc^2').run();
-        }} label="∑" title="Insert math block (KaTeX)" />
+        }} label="∑" title={t('editor.toolbar.math')} />
 
         {/* Slash hint */}
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ink-faint)', alignSelf: 'center', paddingRight: 4 }}>
-          Type / for commands
+          {t('editor.toolbar.slashHint')}
         </span>
       </div>
       )}
@@ -407,7 +451,7 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         type="file"
         accept="image/*"
         style={{ display: 'none' }}
-        aria-label="Import local image"
+        aria-label={t('editor.imageInput.ariaLabel')}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) void importLocalImage(file);
@@ -419,19 +463,19 @@ export function MarkdownEditor({ content, onChange, readOnly = false }: Props) {
         open={imagePromptOpen}
         onClose={() => setImagePromptOpen(false)}
         onSubmit={(url) => editor.chain().focus().setImage({ src: url }).run()}
-        title="Insert image"
-        placeholder="https://… image URL"
-        submitLabel="Insert"
+        title={t('editor.modal.insertImage.title')}
+        placeholder={t('editor.modal.insertImage.placeholder')}
+        submitLabel={t('common.insert')}
       />
 
       <PromptModal
         open={linkPromptOpen}
         onClose={() => setLinkPromptOpen(false)}
         onSubmit={(url) => editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()}
-        title="Insert link"
-        placeholder="https://… URL"
+        title={t('editor.modal.insertLink.title')}
+        placeholder={t('editor.modal.insertLink.placeholder')}
         defaultValue={(editor.getAttributes('link').href as string) ?? ''}
-        submitLabel="Apply"
+        submitLabel={t('common.apply')}
       />
 
       <style>{`

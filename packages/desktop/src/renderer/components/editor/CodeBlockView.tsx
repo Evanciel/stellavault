@@ -9,6 +9,7 @@
 
 import { NodeViewContent, NodeViewWrapper, type ReactNodeViewProps } from '@tiptap/react';
 import { useState } from 'react';
+import { useT } from '../../lib/i18n.js';
 
 // A short, high-traffic language list for the picker. 'auto' → no language attr
 // (lowlight auto-detects). Any language already on a node but missing here is
@@ -21,6 +22,7 @@ const TOP_LANGUAGES = [
 
 export function CodeBlockView(props: ReactNodeViewProps) {
   const { node, updateAttributes, extension } = props;
+  const t = useT();
   const language: string = (node.attrs.language as string) || 'auto';
   const [copied, setCopied] = useState(false);
 
@@ -44,7 +46,7 @@ export function CodeBlockView(props: ReactNodeViewProps) {
         <select
           className="sv-code-lang"
           value={language}
-          aria-label="Code block language"
+          aria-label={t('editor.codeBlock.languageAriaLabel')}
           // Stop the editor from intercepting key/mouse while choosing.
           onMouseDown={(e) => e.stopPropagation()}
           onChange={(e) => {
@@ -60,9 +62,9 @@ export function CodeBlockView(props: ReactNodeViewProps) {
           type="button"
           className="sv-code-copy"
           onClick={onCopy}
-          aria-label="Copy code"
+          aria-label={t('editor.codeBlock.copyAriaLabel')}
         >
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? t('common.copied') : t('common.copy')}
         </button>
       </div>
       <pre className={extension.options.HTMLAttributes?.class as string | undefined}>

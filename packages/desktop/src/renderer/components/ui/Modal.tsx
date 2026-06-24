@@ -1,6 +1,7 @@
 // Modal primitive — replaces prompt()/alert()/confirm() which freeze Electron.
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import { useT } from '../../lib/i18n.js';
 
 interface ModalProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface ModalProps {
 
 export function Modal({ open, onClose, title, children, width = 420 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +40,10 @@ export function Modal({ open, onClose, title, children, width = 420 }: ModalProp
         zIndex: 10000,
         display: 'flex',
         justifyContent: 'center',
+        // Hug the content height — without this the box stretches (align-items
+        // defaults to stretch) down to maxHeight:60vh, so a one-line confirm
+        // renders as a tall half-empty panel.
+        alignItems: 'flex-start',
         paddingTop: '18vh',
       }}
     >
@@ -66,7 +72,7 @@ export function Modal({ open, onClose, title, children, width = 420 }: ModalProp
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{title}</span>
             <button
               onClick={onClose}
-              aria-label="Close dialog"
+              aria-label={t('dialog.close')}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -100,8 +106,9 @@ interface PromptModalProps {
   submitLabel?: string;
 }
 
-export function PromptModal({ open, onClose, onSubmit, title, placeholder, defaultValue = '', submitLabel = 'Create' }: PromptModalProps) {
+export function PromptModal({ open, onClose, onSubmit, title, placeholder, defaultValue = '', submitLabel }: PromptModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 50);
@@ -135,10 +142,10 @@ export function PromptModal({ open, onClose, onSubmit, title, placeholder, defau
       />
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onClose} style={{ padding: '6px 14px', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)', cursor: 'pointer', fontSize: 12 }}>
-          Cancel
+          {t('common.cancel')}
         </button>
         <button onClick={handleSubmit} style={{ padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 12 }}>
-          {submitLabel}
+          {submitLabel ?? t('common.create')}
         </button>
       </div>
     </Modal>
@@ -157,20 +164,21 @@ interface ConfirmModalProps {
   danger?: boolean;
 }
 
-export function ConfirmModal({ open, onClose, onConfirm, title, message, confirmLabel = 'Confirm', danger = false }: ConfirmModalProps) {
+export function ConfirmModal({ open, onClose, onConfirm, title, message, confirmLabel, danger = false }: ConfirmModalProps) {
+  const t = useT();
   return (
     <Modal open={open} onClose={onClose} title={title} width={360}>
       <p style={{ fontSize: 13, color: 'var(--ink-dim)', lineHeight: 1.6, marginBottom: 16 }}>{message}</p>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onClose} style={{ padding: '6px 14px', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)', cursor: 'pointer', fontSize: 12 }}>
-          Cancel
+          {t('common.cancel')}
         </button>
         <button onClick={() => { onConfirm(); onClose(); }} style={{
           padding: '6px 14px',
           background: danger ? '#ef4444' : 'var(--accent)',
           border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 12,
         }}>
-          {confirmLabel}
+          {confirmLabel ?? t('common.confirm')}
         </button>
       </div>
     </Modal>

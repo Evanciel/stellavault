@@ -138,7 +138,11 @@ export function makePointsMaterial(opacity: number, additive: boolean): THREE.Sh
       void main() {
         vColor = color;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (220.0 / -mvPosition.z);
+        // Clamp the perspective size: an aggressive zoom-in drives -mvPosition.z toward
+        // zero, which without a cap explodes each point into a screen-filling additive
+        // blob (the "white clump" zoom bug). A ceiling also keeps dense / 2D views from
+        // saturating to white. min keeps far-away nodes from vanishing entirely.
+        gl_PointSize = clamp(size * (220.0 / -mvPosition.z), 1.5, 44.0);
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
@@ -297,8 +301,11 @@ export function applyHoverToBuffers(
         r = Math.min(r * 1.6, 1); g = Math.min(g * 1.6, 1); b = Math.min(b * 1.6, 1);
         s *= 1.5; gs *= 1.8;
       } else {
-        r *= 0.06; g *= 0.06; b *= 0.06;
-        s *= 0.4; gs *= 0.25;
+        // Gentle de-emphasis only — keep non-neighbours clearly VISIBLE (same position,
+        // near-same size). The old ×0.06 colour / ×0.4 size made them vanish, so hovering
+        // a central hub made the whole graph look like it "collapsed" into that hub.
+        r *= 0.45; g *= 0.45; b *= 0.45;
+        s *= 0.9; gs *= 0.65;
       }
     }
     cCol.setXYZ(i, r, g, b);
@@ -312,7 +319,70 @@ export function applyHoverToBuffers(
   gSz.needsUpdate = true;
 }
 
+// "Explore connections" progressive lighting — like applyHoverToBuffers but for a
+// GROWING set of pulse-visited nodes. The start node is brightest, visited nodes
+// brighten, the rest gently dim (kept visible, not vanished). Restore via base by
+// calling applyHoverToBuffers(..., null, ...). Ported feel from @stellavault/graph.
+export function applyPulseLitToBuffers(
+  core: THREE.Points | null,
+  glow: THREE.Points | null,
+  base: BaseBuffers,
+  lit: Set<number>,
+  startIdx: number,
+  count: number,
+): void {
+  if (!core || !glow) return;
+  const cCol = core.geometry.getAttribute('color') as THREE.BufferAttribute;
+  const cSz = core.geometry.getAttribute('size') as THREE.BufferAttribute;
+  const gCol = glow.geometry.getAttribute('color') as THREE.BufferAttribute;
+  const gSz = glow.geometry.getAttribute('size') as THREE.BufferAttribute;
+  const { col, sz, gsz } = base;
+  for (let i = 0; i < count; i++) {
+    let r = col[i * 3], g = col[i * 3 + 1], b = col[i * 3 + 2];
+    let s = sz[i], gs = gsz[i];
+    if (i === startIdx) {
+      r = 1; g = 1; b = 1; s *= 2.2; gs *= 2.2;
+    } else if (lit.has(i)) {
+      r = Math.min(r * 1.7, 1); g = Math.min(g * 1.7, 1); b = Math.min(b * 1.7, 1);
+      s *= 1.45; gs *= 1.7;
+    } else {
+      r *= 0.5; g *= 0.5; b *= 0.5; s *= 0.8; gs *= 0.6;
+    }
+    cCol.setXYZ(i, r, g, b); cSz.setX(i, s);
+    gCol.setXYZ(i, r, g, b); gSz.setX(i, gs);
+  }
+  cCol.needsUpdate = true; cSz.needsUpdate = true;
+  gCol.needsUpdate = true; gSz.needsUpdate = true;
+}
+
 // ─── BFS for local graph ─────────────────────────────
+
+// BFS visit ORDER from a start node (capped) — the sequence the explore pulse walks.
+// (bfsFilter returns the depth-bounded SET; this returns the ordered traversal.)
+export function bfsVisitOrder(
+  startId: string,
+  edges: Array<{ source: string; target: string }>,
+  cap = 50,
+): string[] {
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!adj.has(e.source)) adj.set(e.source, []);
+    if (!adj.has(e.target)) adj.set(e.target, []);
+    adj.get(e.source)!.push(e.target);
+    adj.get(e.target)!.push(e.source);
+  }
+  const visited = new Set<string>([startId]);
+  const order: string[] = [];
+  const queue = [startId];
+  while (queue.length > 0 && order.length < cap) {
+    const id = queue.shift()!;
+    order.push(id);
+    for (const nid of adj.get(id) ?? []) {
+      if (!visited.has(nid)) { visited.add(nid); queue.push(nid); }
+    }
+  }
+  return order;
+}
 
 export function bfsFilter(nodes: GraphNode[], edges: GraphEdge[], startId: string, depth: number): {
   nodes: GraphNode[];

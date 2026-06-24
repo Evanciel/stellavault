@@ -2,9 +2,11 @@
 // Design Ref: §6.2 — K-Means 클러스터링
 
 import type { VectorStore } from '../store/types.js';
-import type { GraphNode, GraphEdge, Cluster, GraphData } from '../types/graph.js';
+import type {
+  GraphNode, GraphEdge, Cluster, GraphData,
+  ClusterSuperNode, MetaEdge, ClusterLevelGraph, ClusterMembersGraph,
+} from '../types/graph.js';
 import { createHash } from 'node:crypto';
-import { cosineSimilarity, euclideanDist, normalizeVector, dotProduct } from '../utils/math.js';
 
 const CLUSTER_COLORS = [
   '#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
@@ -19,6 +21,7 @@ export interface BuildGraphOptions {
   edgeThreshold?: number;      // default: 0.15
   maxEdgesPerNode?: number;    // default: 5
   clusterCount?: number;       // 0 = auto (Elbow)
+  nodeCap?: number;            // max notes fed into the O(n²) edge/cluster pass (default 2000)
 }
 
 export async function buildGraphData(
@@ -26,7 +29,9 @@ export async function buildGraphData(
   options: BuildGraphOptions = {},
 ): Promise<GraphData> {
   const {
-    edgeThreshold = 0.15,
+    // 0.35: 384-dim 임베딩에서 의미있는 코사인 임계. 0.15는 사실상 모든 페어가 통과 →
+    // 중간 neighbor 배열이 수백만 객체로 폭증(빌드 지연) + 시각적으로 과밀한 엣지 거미줄.
+    edgeThreshold = 0.35,
     maxEdgesPerNode = 5,
   } = options;
 
@@ -36,35 +41,47 @@ export async function buildGraphData(
   //   getDocumentsMeta() 로 교체(다운스트림 17개 content 소비자는 getAllDocuments 그대로 유지).
   //   임베딩 상한은 env 로 조절(기본 20000 = 현재 11k 볼트 전부 커버 → 과거 10k 하드캡의 무음
   //   truncation 버그 해소). 초과 시 경고.
-  const EMB_CAP = Math.max(1000, Math.floor(Number(process.env.GRAPH_EMBEDDING_CAP) || 20000));
-  const [docs, embeddings] = await Promise.all([
-    store.getDocumentsMeta(),
-    store.getDocumentEmbeddings(EMB_CAP),
-  ]);
-  if (docs.length > EMB_CAP) {
-    console.warn(`[graph] docs ${docs.length} > embedding cap ${EMB_CAP} — 엣지/클러스터가 상위 ${EMB_CAP}개로 제한됨. GRAPH_EMBEDDING_CAP 상향 권장(메모리/빌드시간 trade-off).`);
-  }
+  // 1. content-free 메타만 먼저 로드(경량). 임베딩은 최근성 랭킹 후 NODE_CAP 만큼만 로드.
+  //   ★PERF(측정 38×): 전체 12k 임베딩을 vec0 가상테이블에서 읽으면 ~11s, 실제 렌더하는
+  //   ~1.5k만 chunk_id PK로 스코프 로드하면 ~0.3s. 본문은 그래프에 불요(OOM 회피 유지).
+  const docs = await store.getDocumentsMeta();
 
-  // 2. k-NN 엣지 생성 — 인메모리 brute-force (getDocumentEmbeddings로 이미 전부 로드됨)
-  // 이전 HNSW 전략은 1,215× 개별 SQL KNN 쿼리 → 60초 소요. 인메모리 dot product O(n²/2)이
-  // 1K~5K 규모에서는 SQL 왕복 없이 ~2초로 완료됨.
   const edges: GraphEdge[] = [];
   const edgeCounts = new Map<string, number>();
 
-  const docsWithVecs = docs.filter(d => embeddings.has(d.id));
-  const normalizedVecs = new Map<string, number[]>();
-  for (const doc of docsWithVecs) {
-    normalizedVecs.set(doc.id, normalizeVector([...embeddings.get(doc.id)!]));
+  // Bound the O(n²) edge loop + k-means. Rank by recency (importance proxy), cap to
+  // nodeCap, and scoped-load ONLY those embeddings (not all 12k — that read dominated
+  // the build and froze the Electron main process).
+  const NODE_CAP = Math.max(200, Math.floor(options.nodeCap ?? (Number(process.env.GRAPH_NODE_CAP) || 1500)));
+  const ranked = [...docs].sort((a, b) => String(b.lastModified ?? '').localeCompare(String(a.lastModified ?? '')));
+  if (docs.length > NODE_CAP) {
+    console.warn(`[graph] capped to ${NODE_CAP} most-recent notes (of ${docs.length}) — raise GRAPH_NODE_CAP to include more.`);
   }
+  const embeddings = await store.getDocumentEmbeddingsByIds(ranked.slice(0, NODE_CAP).map((d) => d.id));
+  const docsWithVecs = ranked.filter((d) => embeddings.has(d.id)).slice(0, NODE_CAP);
 
-  const docIds = [...normalizedVecs.keys()];
-  const vecArray = docIds.map(id => normalizedVecs.get(id)!);
+  // 2. k-NN 엣지 — 정규화 벡터를 하나의 연속 Float32Array 로 패킹 후 인라인 코사인(단위벡터→내적).
+  // 페어당 함수콜/배열 스프레드를 제거 → 1.5k 노드 (~1.1M 페어)도 빠르게 처리.
+  const docIds = docsWithVecs.map((d) => d.id);
   const n = docIds.length;
+  const dim = n > 0 ? embeddings.get(docIds[0])!.length : 0;
+  const flat = new Float32Array(n * dim);
+  for (let i = 0; i < n; i++) {
+    const v = embeddings.get(docIds[i])!;
+    let mag = 0;
+    for (let d = 0; d < dim; d++) mag += v[d] * v[d];
+    mag = Math.sqrt(mag) || 1;
+    const off = i * dim;
+    for (let d = 0; d < dim; d++) flat[off + d] = v[d] / mag;
+  }
 
   const neighbors: Array<Array<{ peer: number; sim: number }>> = Array.from({ length: n }, () => []);
   for (let i = 0; i < n; i++) {
+    const oi = i * dim;
     for (let j = i + 1; j < n; j++) {
-      const sim = dotProduct(vecArray[i], vecArray[j]);
+      const oj = j * dim;
+      let sim = 0;
+      for (let d = 0; d < dim; d++) sim += flat[oi + d] * flat[oj + d];
       if (sim >= edgeThreshold) {
         neighbors[i].push({ peer: j, sim });
         neighbors[j].push({ peer: i, sim });
@@ -120,18 +137,23 @@ export async function buildGraphData(
       nodeCount: folderCounts.get(i) ?? 0,
     }));
   } else {
-    // 시맨틱 기반: K-means
-    const docIds = docs.filter(d => embeddings.has(d.id)).map(d => d.id);
-    const vectors = docIds.map(id => embeddings.get(id)!);
-    const k = Math.min(Math.max(5, Math.round(Math.sqrt(docIds.length / 5))), 10);
-    const assignments = kMeans(vectors, k);
+    // 시맨틱 기반: K-means over the SAME capped, recency-ranked set as the edge loop
+    // (docsWithVecs) so clustering is bounded too. maxIter 50→15 (converges well before).
+    const clusterIds = docIds; // identical order to `flat` (the normalized vectors)
+    // clusterCount > 0 overrides the auto heuristic — the cluster-first LOD path asks
+    // for many more communities (≈40–80) than the default ≤10.
+    const k = (options.clusterCount && options.clusterCount > 0)
+      ? Math.floor(options.clusterCount)
+      : Math.min(Math.max(5, Math.round(Math.sqrt(clusterIds.length / 5))), 10);
+    const assignments = kMeans(flat, n, dim, Math.min(k, clusterIds.length || 1), 10);
 
-    // 클러스터별 문서 수집 (id + title)
+    // 클러스터별 문서 수집 (id + title) — Map lookup, not O(docs²) docs.find
+    const docById = new Map(docsWithVecs.map(d => [d.id, d] as const));
     const clusterDocInfos = new Map<number, Array<{ id: string; title: string }>>();
-    for (let i = 0; i < docIds.length; i++) {
+    for (let i = 0; i < clusterIds.length; i++) {
       const cId = assignments[i];
       if (!clusterDocInfos.has(cId)) clusterDocInfos.set(cId, []);
-      const doc = docs.find(d => d.id === docIds[i]);
+      const doc = docById.get(clusterIds[i]);
       if (doc) clusterDocInfos.get(cId)!.push({ id: doc.id, title: doc.title });
     }
 
@@ -158,8 +180,8 @@ export async function buildGraphData(
     }
 
     assignmentMap = new Map<string, number>();
-    for (let i = 0; i < docIds.length; i++) {
-      assignmentMap.set(docIds[i], assignments[i]);
+    for (let i = 0; i < clusterIds.length; i++) {
+      assignmentMap.set(clusterIds[i], assignments[i]);
     }
   }
 
@@ -172,7 +194,7 @@ export async function buildGraphData(
   }
   const maxConnections = Math.max(1, ...connectionCounts.values());
 
-  const nodes: GraphNode[] = docs.map(doc => {
+  const nodes: GraphNode[] = docsWithVecs.map(doc => {
     const conns = connectionCounts.get(doc.id) ?? 0;
     const ratio = conns / maxConnections; // 0~1
     // 지수 스케일: 상위 노드만 극적으로 커짐 (ratio^0.5 → 중심부 강조)
@@ -208,67 +230,308 @@ export async function buildGraphData(
   };
 }
 
+// ─── Wave 1: cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md) ───
+
+export interface BuildClusteredOptions {
+  mode?: GraphMode;
+  /** Max notes folded into the galaxy (default 3000, env GRAPH_CLUSTER_CAP). */
+  clusterCap?: number;
+  /** # of super-nodes (default ≈sqrt(cap/2.5), capped 80). */
+  clusterCount?: number;
+  edgeThreshold?: number;
+  maxEdgesPerNode?: number;
+}
+
+export interface ClusteredGraph {
+  clusterLevel: ClusterLevelGraph;
+  /** clusterId → members payload (served by graph:expand-cluster). */
+  members: Map<number, ClusterMembersGraph>;
+}
+
+/**
+ * Build the tiered cluster-first graph: a small set of cluster "super-nodes" for the
+ * first paint, plus a per-cluster member map streamed on drill-in. Reuses the optimized
+ * buildGraphData (scoped embedding load + flat edge loop + inline k-means) with a higher
+ * node cap and more clusters, then aggregates the result.
+ */
+export async function buildClusteredGraph(
+  store: VectorStore,
+  options: BuildClusteredOptions = {},
+): Promise<ClusteredGraph> {
+  const mode = options.mode ?? 'semantic';
+  const clusterCap = Math.max(200, Math.floor(options.clusterCap ?? (Number(process.env.GRAPH_CLUSTER_CAP) || 3000)));
+  const clusterCount = Math.max(1, Math.floor(
+    options.clusterCount ?? Math.min(80, Math.max(6, Math.round(Math.sqrt(clusterCap / 2.5)))),
+  ));
+
+  const data = await buildGraphData(store, {
+    mode, nodeCap: clusterCap, clusterCount,
+    edgeThreshold: options.edgeThreshold, maxEdgesPerNode: options.maxEdgesPerNode,
+  });
+
+  // node → cluster, and member lists per cluster.
+  const nodeCluster = new Map<string, number>();
+  const byCluster = new Map<number, GraphNode[]>();
+  for (const node of data.nodes) {
+    const cid = node.clusterId ?? 0;
+    nodeCluster.set(node.id, cid);
+    (byCluster.get(cid) ?? byCluster.set(cid, []).get(cid)!).push(node);
+  }
+
+  // Connection degree → representative selection + super-node size.
+  const degree = new Map<string, number>();
+  for (const e of data.edges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+
+  // Split edges into intra-cluster vs rolled-up meta-edges.
+  const intraByCluster = new Map<number, GraphEdge[]>();
+  const metaMap = new Map<string, MetaEdge>();
+  for (const e of data.edges) {
+    const ca = nodeCluster.get(e.source), cb = nodeCluster.get(e.target);
+    if (ca == null || cb == null) continue;
+    if (ca === cb) {
+      (intraByCluster.get(ca) ?? intraByCluster.set(ca, []).get(ca)!).push(e);
+    } else {
+      const lo = Math.min(ca, cb), hi = Math.max(ca, cb);
+      const key = `${lo}:${hi}`;
+      const m = metaMap.get(key);
+      if (m) { m.weight += e.weight; m.count += 1; }
+      else metaMap.set(key, { sourceCluster: lo, targetCluster: hi, weight: e.weight, count: 1 });
+    }
+  }
+
+  const clusterLabel = new Map<number, string>();
+  for (const c of data.clusters) clusterLabel.set(c.id, c.label);
+
+  const superNodes: ClusterSuperNode[] = [];
+  for (const [cid, mem] of byCluster) {
+    let rep = mem[0], repDeg = -1;
+    for (const m of mem) {
+      const d = degree.get(m.id) ?? 0;
+      if (d > repDeg) { repDeg = d; rep = m; }
+    }
+    superNodes.push({
+      clusterId: cid,
+      // strip buildGraphData's trailing " (N)" — memberCount is a separate field.
+      label: (clusterLabel.get(cid) ?? `Cluster ${cid + 1}`).replace(/\s*\(\d+\)\s*$/, ''),
+      color: CLUSTER_COLORS[cid % CLUSTER_COLORS.length],
+      memberCount: mem.length,
+      position: [0, 0, 0], // assigned below by Fibonacci rank
+      size: 2 + Math.min(12, Math.sqrt(mem.length)),
+      representativeId: rep?.id ?? '',
+    });
+  }
+  superNodes.sort((a, b) => b.memberCount - a.memberCount);
+  // Semantic galaxy layout: a short force-settle of JUST the super-nodes places CONNECTED
+  // clusters NEAR each other → short, non-crossing meta-edges. Fibonacci alone is evenly
+  // spread but semantic-blind (related clusters can land on opposite poles → long crossing
+  // chords = the "messy" look). Seeded from Fibonacci for determinism; the renderer freezes
+  // the live sim for the galaxy so this precomputed layout stays put.
+  layoutSuperNodes(superNodes, metaMap);
+
+  // Per-cluster member payloads for graph:expand-cluster.
+  const members = new Map<number, ClusterMembersGraph>();
+  for (const [cid, mem] of byCluster) {
+    const boundaryEdges: ClusterMembersGraph['boundaryEdges'] = [];
+    for (const e of data.edges) {
+      const ca = nodeCluster.get(e.source), cb = nodeCluster.get(e.target);
+      if (ca === cid && cb !== cid && cb != null) boundaryEdges.push({ source: e.source, targetCluster: cb, weight: e.weight });
+      else if (cb === cid && ca !== cid && ca != null) boundaryEdges.push({ source: e.target, targetCluster: ca, weight: e.weight });
+    }
+    members.set(cid, { clusterId: cid, members: mem, intraEdges: intraByCluster.get(cid) ?? [], boundaryEdges });
+  }
+
+  // Declutter the galaxy: every-cluster-↔-every-other is a hairball. Keep only each
+  // cluster's 2 strongest meta-edges → a clean skeleton. With the semantic layout above
+  // these connect NEARBY clusters, so the kept edges are short and barely cross.
+  const META_PER_CLUSTER = 2;
+  const metaByCluster = new Map<number, MetaEdge[]>();
+  for (const m of metaMap.values()) {
+    (metaByCluster.get(m.sourceCluster) ?? metaByCluster.set(m.sourceCluster, []).get(m.sourceCluster)!).push(m);
+    (metaByCluster.get(m.targetCluster) ?? metaByCluster.set(m.targetCluster, []).get(m.targetCluster)!).push(m);
+  }
+  const keptMeta = new Set<MetaEdge>();
+  for (const list of metaByCluster.values()) {
+    list.sort((a, b) => b.weight - a.weight);
+    for (const m of list.slice(0, META_PER_CLUSTER)) keptMeta.add(m);
+  }
+
+  return {
+    clusterLevel: {
+      level: 'galaxy',
+      superNodes,
+      metaEdges: [...keptMeta],
+      totalNodes: data.nodes.length,
+      totalEdges: data.edges.length,
+      layoutVersion: mode,
+    },
+    members,
+  };
+}
+
+// Evenly-spaced point i of n on a sphere (Fibonacci lattice) — deterministic, no clumping.
+function fibonacciSphere(i: number, n: number, radius: number): [number, number, number] {
+  const phi = Math.acos(1 - (2 * (i + 0.5)) / Math.max(1, n));
+  const theta = Math.PI * (1 + Math.sqrt(5)) * i; // golden angle
+  return [
+    radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.sin(phi) * Math.sin(theta),
+    radius * Math.cos(phi),
+  ];
+}
+
+// Galaxy super-node layout. A short, deterministic 3D force-settle of the (tiny, ≤~40)
+// super-node set so CONNECTED clusters sit NEAR each other and their meta-edges stay short
+// and barely cross. Seeded from a Fibonacci sphere (deterministic, well-spread start →
+// stable result, no Math.random) then recentred + scaled to a fixed radius so the galaxy
+// is always a consistent size regardless of force tuning. n is small so the O(n²) all-pairs
+// repulsion over ~600 iters is sub-millisecond.
+function layoutSuperNodes(superNodes: ClusterSuperNode[], metaMap: Map<string, MetaEdge>): void {
+  const n = superNodes.length;
+  if (n === 0) return;
+  if (n === 1) { superNodes[0].position = [0, 0, 0]; return; }
+
+  const idx = new Map<number, number>();
+  superNodes.forEach((s, i) => idx.set(s.clusterId, i));
+  const links: Array<[number, number, number]> = [];
+  let maxW = 0;
+  for (const m of metaMap.values()) {
+    const a = idx.get(m.sourceCluster), b = idx.get(m.targetCluster);
+    if (a == null || b == null || a === b) continue;
+    links.push([a, b, m.weight]);
+    if (m.weight > maxW) maxW = m.weight;
+  }
+  const wn = maxW > 0 ? 1 / maxW : 1; // normalize weights to 0..1
+
+  const pos = new Float32Array(n * 3);
+  const vel = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const p = fibonacciSphere(i, n, 100);
+    pos[i * 3] = p[0]; pos[i * 3 + 1] = p[1]; pos[i * 3 + 2] = p[2];
+  }
+
+  const REST = 42, CHARGE = 900, ITERS = 600, DAMP = 0.9, CENTER = 0.012;
+  for (let it = 0; it < ITERS; it++) {
+    const alpha = 1 - it / ITERS; // linear cool to 0
+    // Repulsion — all pairs (n is tiny).
+    for (let i = 0; i < n; i++) {
+      const ix = pos[i * 3], iy = pos[i * 3 + 1], iz = pos[i * 3 + 2];
+      for (let j = i + 1; j < n; j++) {
+        let dx = pos[j * 3] - ix, dy = pos[j * 3 + 1] - iy, dz = pos[j * 3 + 2] - iz;
+        let d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 0.01) { dx = ((i - j) % 3) * 0.1 || 0.1; dy = 0.1; dz = 0.1; d2 = dx * dx + dy * dy + dz * dz; }
+        const f = (CHARGE * alpha) / d2;
+        const fx = dx * f, fy = dy * f, fz = dz * f;
+        vel[i * 3] -= fx; vel[i * 3 + 1] -= fy; vel[i * 3 + 2] -= fz;
+        vel[j * 3] += fx; vel[j * 3 + 1] += fy; vel[j * 3 + 2] += fz;
+      }
+    }
+    // Link springs — pull connected clusters toward REST (heavier links pull harder).
+    for (const [a, b, w] of links) {
+      let dx = pos[b * 3] - pos[a * 3], dy = pos[b * 3 + 1] - pos[a * 3 + 1], dz = pos[b * 3 + 2] - pos[a * 3 + 2];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
+      const strength = 0.6 * (0.3 + 0.7 * w * wn);
+      const f = ((dist - REST) / dist) * alpha * strength;
+      const fx = dx * f, fy = dy * f, fz = dz * f;
+      vel[a * 3] += fx; vel[a * 3 + 1] += fy; vel[a * 3 + 2] += fz;
+      vel[b * 3] -= fx; vel[b * 3 + 1] -= fy; vel[b * 3 + 2] -= fz;
+    }
+    // Centering + integrate (damp, velocity cap, move).
+    for (let i = 0; i < n; i++) {
+      vel[i * 3] -= pos[i * 3] * CENTER * alpha;
+      vel[i * 3 + 1] -= pos[i * 3 + 1] * CENTER * alpha;
+      vel[i * 3 + 2] -= pos[i * 3 + 2] * CENTER * alpha;
+      let vx = vel[i * 3] * DAMP, vy = vel[i * 3 + 1] * DAMP, vz = vel[i * 3 + 2] * DAMP;
+      const sp2 = vx * vx + vy * vy + vz * vz;
+      if (sp2 > 64) { const k = 8 / Math.sqrt(sp2); vx *= k; vy *= k; vz *= k; }
+      vel[i * 3] = vx; vel[i * 3 + 1] = vy; vel[i * 3 + 2] = vz;
+      pos[i * 3] += vx; pos[i * 3 + 1] += vy; pos[i * 3 + 2] += vz;
+    }
+  }
+
+  // Recenter to centroid, then scale so the furthest node sits at a fixed radius.
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i++) { cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2]; }
+  cx /= n; cy /= n; cz /= n;
+  let maxR = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = pos[i * 3] - cx, dy = pos[i * 3 + 1] - cy, dz = pos[i * 3 + 2] - cz;
+    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (r > maxR) maxR = r;
+  }
+  const scale = maxR > 1 ? 125 / maxR : 1;
+  for (let i = 0; i < n; i++) {
+    superNodes[i].position = [
+      (pos[i * 3] - cx) * scale,
+      (pos[i * 3 + 1] - cy) * scale,
+      (pos[i * 3 + 2] - cz) * scale,
+    ];
+  }
+}
+
 // --- 유틸리티 ---
 
 // Imported from shared utils — see utils/math.ts
 
-function kMeans(vectors: number[][], k: number, maxIter: number = 50): number[] {
-  if (vectors.length === 0) return [];
-  const dims = vectors[0].length;
+// Spherical k-means over a contiguous Float32Array of UNIT-normalized vectors —
+// inline squared-distance (no euclideanDist call, no sqrt, no number[][] indirection).
+// ~10× faster than the old number[][] version on 1.5k×384 (≈4s → sub-second).
+function kMeans(flat: Float32Array, n: number, dims: number, k: number, maxIter = 50): number[] {
+  if (n === 0 || dims === 0) return [];
+  k = Math.max(1, Math.min(k, n));
+  const centroids = new Float32Array(k * dims);
 
-  // K-means++ 초기화
-  const centroids: number[][] = [vectors[Math.floor(Math.random() * vectors.length)].slice()];
+  // k-means++ init, carrying the running min-distance so each step only measures
+  // against the newest centroid (O(n·k) total, not O(n·k²)).
+  centroids.set(flat.subarray(0, dims), 0); // seed (data order is already shuffled by recency)
+  const minDist = new Float64Array(n).fill(Infinity);
   for (let c = 1; c < k; c++) {
-    const dists = vectors.map(v => {
-      let minD = Infinity;
-      for (const cent of centroids) {
-        const d = euclideanDist(v, cent);
-        if (d < minD) minD = d;
-      }
-      return minD;
-    });
-    const totalDist = dists.reduce((a, b) => a + b, 0);
-    let r = Math.random() * totalDist;
-    for (let i = 0; i < dists.length; i++) {
-      r -= dists[i];
-      if (r <= 0) { centroids.push(vectors[i].slice()); break; }
+    const ocPrev = (c - 1) * dims;
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const oi = i * dims;
+      let d = 0;
+      for (let z = 0; z < dims; z++) { const diff = flat[oi + z] - centroids[ocPrev + z]; d += diff * diff; }
+      if (d < minDist[i]) minDist[i] = d;
+      total += minDist[i];
     }
-    if (centroids.length <= c) centroids.push(vectors[Math.floor(Math.random() * vectors.length)].slice());
+    let r = Math.random() * total;
+    let pick = n - 1;
+    for (let i = 0; i < n; i++) { r -= minDist[i]; if (r <= 0) { pick = i; break; } }
+    centroids.set(flat.subarray(pick * dims, pick * dims + dims), c * dims);
   }
 
-  const assignments = new Array<number>(vectors.length).fill(0);
-
+  const assignments = new Array<number>(n).fill(0);
+  const sums = new Float64Array(k * dims);
+  const counts = new Uint32Array(k);
   for (let iter = 0; iter < maxIter; iter++) {
     let changed = false;
-
-    // Assign
-    for (let i = 0; i < vectors.length; i++) {
+    for (let i = 0; i < n; i++) {
+      const oi = i * dims;
       let bestC = 0, bestD = Infinity;
       for (let c = 0; c < k; c++) {
-        const d = euclideanDist(vectors[i], centroids[c]);
+        const oc = c * dims;
+        let d = 0;
+        for (let z = 0; z < dims; z++) { const diff = flat[oi + z] - centroids[oc + z]; d += diff * diff; }
         if (d < bestD) { bestD = d; bestC = c; }
       }
       if (assignments[i] !== bestC) { assignments[i] = bestC; changed = true; }
     }
-
     if (!changed) break;
-
-    // Update centroids — accumulate in-place instead of filter + reduce per cluster
-    const sums = Array.from({ length: k }, () => new Float64Array(dims));
-    const counts = new Uint32Array(k);
-    for (let i = 0; i < vectors.length; i++) {
-      const c = assignments[i];
-      counts[c]++;
-      const s = sums[c], v = vectors[i];
-      for (let d = 0; d < dims; d++) s[d] += v[d];
+    sums.fill(0); counts.fill(0);
+    for (let i = 0; i < n; i++) {
+      const c = assignments[i]; counts[c]++;
+      const oi = i * dims, oc = c * dims;
+      for (let z = 0; z < dims; z++) sums[oc + z] += flat[oi + z];
     }
     for (let c = 0; c < k; c++) {
       if (counts[c] === 0) continue;
-      const s = sums[c];
-      for (let d = 0; d < dims; d++) centroids[c][d] = s[d] / counts[c];
+      const oc = c * dims;
+      for (let z = 0; z < dims; z++) centroids[oc + z] = sums[oc + z] / counts[c];
     }
   }
-
   return assignments;
 }
 

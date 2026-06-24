@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useUiStore } from '../../lib/commands.js';
+import { useT } from '../../lib/i18n.js';
 
 const HIGHLIGHT_NAME = 'sv-find';
 const HIGHLIGHT_ACTIVE = 'sv-find-active';
@@ -52,6 +53,7 @@ function collectTextNodes(root: Node): Text[] {
 }
 
 export function FindReplace() {
+  const t = useT();
   const mode = useUiStore((s) => s.findReplaceMode);
   const setMode = useUiStore((s) => s.setFindReplaceMode);
 
@@ -253,8 +255,8 @@ export function FindReplace() {
   }, [close, go]);
 
   const countLabel = useMemo(
-    () => (find ? (matchCount === 0 ? 'No results' : `${current}/${matchCount}`) : ''),
-    [find, matchCount, current],
+    () => (find ? (matchCount === 0 ? t('editor.findReplace.noResults') : `${current}/${matchCount}`) : ''),
+    [find, matchCount, current, t],
   );
 
   if (!open) return null;
@@ -276,7 +278,7 @@ export function FindReplace() {
       `}</style>
       <div
         role="dialog"
-        aria-label="Find and replace"
+        aria-label={t('editor.findReplace.ariaLabel')}
         style={{
           position: 'absolute', top: 12, right: 24, zIndex: 50, width: 320,
           background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8,
@@ -292,8 +294,8 @@ export function FindReplace() {
             value={find}
             onChange={(e) => setFind(e.target.value)}
             onKeyDown={onFindKeyDown}
-            placeholder="Find"
-            aria-label="Find"
+            placeholder={t('editor.findReplace.findPlaceholder')}
+            aria-label={t('editor.findReplace.findPlaceholder')}
             style={inputStyle}
           />
           <span style={{ fontSize: 10, color: 'var(--ink-faint)', minWidth: 48, textAlign: 'right' }}>
@@ -302,13 +304,13 @@ export function FindReplace() {
         </div>
 
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <button onClick={() => go(-1)} disabled={matchCount === 0} title="Previous (Shift+Enter)" aria-label="Previous match" style={btnStyle}>↑</button>
-          <button onClick={() => go(1)} disabled={matchCount === 0} title="Next (Enter)" aria-label="Next match" style={btnStyle}>↓</button>
+          <button onClick={() => go(-1)} disabled={matchCount === 0} title={t('editor.findReplace.previous')} aria-label={t('editor.findReplace.previousAriaLabel')} style={btnStyle}>↑</button>
+          <button onClick={() => go(1)} disabled={matchCount === 0} title={t('editor.findReplace.next')} aria-label={t('editor.findReplace.nextAriaLabel')} style={btnStyle}>↓</button>
           <button
             onClick={() => setCaseSensitive((v) => !v)}
-            title="Match case"
+            title={t('editor.findReplace.matchCase')}
             aria-pressed={caseSensitive}
-            aria-label="Match case"
+            aria-label={t('editor.findReplace.matchCase')}
             style={{
               ...btnStyle, fontWeight: 700,
               color: caseSensitive ? 'var(--accent-2)' : 'var(--ink-faint)',
@@ -318,7 +320,7 @@ export function FindReplace() {
             Aa
           </button>
           <span style={{ flex: 1 }} />
-          <button onClick={close} title="Close (Esc)" aria-label="Close find" style={btnStyle}>✕</button>
+          <button onClick={close} title={t('editor.findReplace.close')} aria-label={t('editor.findReplace.closeAriaLabel')} style={btnStyle}>✕</button>
         </div>
 
         {mode === 'replace' && (
@@ -328,12 +330,12 @@ export function FindReplace() {
               value={replace}
               onChange={(e) => setReplace(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-              placeholder="Replace"
-              aria-label="Replace with"
+              placeholder={t('editor.findReplace.replacePlaceholder')}
+              aria-label={t('editor.findReplace.replaceAriaLabel')}
               style={inputStyle}
             />
-            <button onClick={replaceCurrent} disabled={matchCount === 0} title="Replace" aria-label="Replace" style={btnStyle}>Replace</button>
-            <button onClick={replaceAll} disabled={matchCount === 0} title="Replace all" aria-label="Replace all" style={btnStyle}>All</button>
+            <button onClick={replaceCurrent} disabled={matchCount === 0} title={t('editor.findReplace.replace')} aria-label={t('editor.findReplace.replace')} style={btnStyle}>{t('editor.findReplace.replace')}</button>
+            <button onClick={replaceAll} disabled={matchCount === 0} title={t('editor.findReplace.replaceAll')} aria-label={t('editor.findReplace.replaceAll')} style={btnStyle}>All</button>
           </div>
         )}
       </div>

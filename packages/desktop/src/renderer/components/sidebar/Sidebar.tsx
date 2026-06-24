@@ -8,8 +8,10 @@ import { Button } from '../ui/Button.js';
 import { PromptModal } from '../ui/Modal.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { createNote } from './file-ops.js';
+import { useT } from '../../lib/i18n.js';
 
 export function Sidebar() {
+  const t = useT();
   const [filter, setFilter] = useState('');
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const setFileTree = useAppStore((s) => s.setFileTree);
@@ -24,7 +26,7 @@ export function Sidebar() {
       {/* Search / filter */}
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
         <Input
-          placeholder="Filter files..."
+          placeholder={t('sidebar.filterPlaceholder')}
           aria-label="Filter files in sidebar"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -43,16 +45,16 @@ export function Sidebar() {
         display: 'flex',
         gap: 6,
       }}>
-        <Button onClick={() => void handleRefresh()} size="sm">Refresh</Button>
-        <Button onClick={() => setNewNoteOpen(true)} size="sm">+ Note</Button>
+        <Button onClick={() => void handleRefresh()} size="sm">{t('common.refresh')}</Button>
+        <Button onClick={() => setNewNoteOpen(true)} size="sm">{t('sidebar.newNote')}</Button>
       </div>
 
       {/* New Note modal — replaces prompt() which freezes Electron */}
       <PromptModal
         open={newNoteOpen}
         onClose={() => setNewNoteOpen(false)}
-        title="Create new note"
-        placeholder="Note title..."
+        title={t('sidebar.createNoteTitle')}
+        placeholder={t('sidebar.noteTitlePlaceholder')}
         onSubmit={(name) => {
           void (async () => {
             const vp = await ipc('vault:get-path');

@@ -8,6 +8,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { runCommand, getCommand } from '../../lib/commands.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { bindingFor, formatChord } from '../../lib/hotkeys.js';
+import { useT, type MsgKey } from '../../lib/i18n.js';
 
 // Electron-only CSS property for frameless-window drag regions.
 declare module 'react' {
@@ -17,76 +18,76 @@ declare module 'react' {
 }
 
 type MenuItem =
-  | { kind: 'item'; label: string; commandId: string; fallbackId?: string }
+  | { kind: 'item'; label: MsgKey; commandId: string; fallbackId?: string }
   | { kind: 'separator' };
 
 interface MenuSection {
-  label: string;
+  label: MsgKey;
   items: MenuItem[];
 }
 
 const sep: MenuItem = { kind: 'separator' };
-const item = (label: string, commandId: string, fallbackId?: string): MenuItem =>
+const item = (label: MsgKey, commandId: string, fallbackId?: string): MenuItem =>
   ({ kind: 'item', label, commandId, fallbackId });
 
 const MENU: MenuSection[] = [
   {
-    label: 'File',
+    label: 'menu.file',
     items: [
-      item('New note', 'file.new-note'),
-      item('New folder', 'file.new-folder'),
-      item('New daily note', 'file.daily-note'),
+      item('action.newNote', 'file.new-note'),
+      item('action.newFolder', 'file.new-folder'),
+      item('action.newDailyNote', 'file.daily-note'),
       sep,
-      item('Open vault folder in Explorer', 'file.open-vault-folder'),
+      item('action.openVaultFolder', 'file.open-vault-folder'),
       sep,
-      item('Settings', 'app.open-settings'),
+      item('action.settings', 'app.open-settings'),
     ],
   },
   {
-    label: 'View',
+    label: 'menu.view',
     items: [
-      item('Toggle sidebar', 'view.toggle-sidebar'),
-      item('Toggle right panel', 'view.toggle-right-panel'),
+      item('action.toggleSidebar', 'view.toggle-sidebar'),
+      item('action.toggleRightPanel', 'view.toggle-right-panel'),
       sep,
-      item('Search panel', 'panel.search'),
-      item('Graph panel', 'panel.graph'),
-      item('AI panel', 'panel.ai'),
-      item('Backlinks panel', 'panel.backlinks'),
-      item('Outline panel', 'panel.outline'),
-      item('Tags panel', 'panel.tags'),
+      item('command.searchPanel', 'panel.search'),
+      item('command.open3dGraph', 'panel.graph'),
+      item('command.openAiPanel', 'panel.ai'),
+      item('command.openBacklinks', 'panel.backlinks'),
+      item('command.outlinePanel', 'panel.outline'),
+      item('command.tagsPanel', 'panel.tags'),
       sep,
       // Full graph view if the graph agent registered it; falls back to the panel.
-      item('Open Graph view', 'graph.open-view', 'panel.graph'),
+      item('action.openGraphView', 'graph.open-view', 'panel.graph'),
       sep,
-      item('Toggle theme', 'view.toggle-theme'),
+      item('action.toggleTheme', 'view.toggle-theme'),
       sep,
-      item('Zoom in', 'view.zoom-in'),
-      item('Zoom out', 'view.zoom-out'),
-      item('Reset zoom', 'view.zoom-reset'),
+      item('action.zoomIn', 'view.zoom-in'),
+      item('action.zoomOut', 'view.zoom-out'),
+      item('action.resetZoom', 'view.zoom-reset'),
     ],
   },
   {
-    label: 'Tools',
+    label: 'menu.tools',
     items: [
-      item('Re-index vault', 'vault.reindex'),
+      item('action.reindexVault', 'vault.reindex'),
       sep,
       // T3-9: multi-vault — quick add (the switcher lives in the titlebar).
-      item('Add a vault…', 'vault.add'),
+      item('action.addVault', 'vault.add'),
       sep,
       // T3-7: local read-only Publish server (opens in the OS browser).
-      item('Publish: start read-only server', 'publish.start'),
-      item('Publish: stop server', 'publish.stop'),
+      item('action.publishStart', 'publish.start'),
+      item('action.publishStop', 'publish.stop'),
       sep,
-      item('Command palette', 'app.command-palette'),
-      item('Keyboard shortcuts', 'app.keyboard-shortcuts'),
+      item('action.commandPalette', 'app.command-palette'),
+      item('action.keyboardShortcuts', 'app.keyboard-shortcuts'),
     ],
   },
   {
-    label: 'Help',
+    label: 'menu.help',
     items: [
-      item('About Stellavault', 'help.about'),
-      item('Check for updates', 'help.check-updates'), // T3-12
-      item('GitHub', 'help.github'),
+      item('action.aboutStellavault', 'help.about'),
+      item('action.checkForUpdates', 'help.check-updates'), // T3-12
+      item('common.github', 'help.github'),
     ],
   },
 ];
@@ -98,6 +99,7 @@ function shortcutFor(commandId: string, hotkeys: Record<string, string>): string
 }
 
 export function AppMenu() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [activeTop, setActiveTop] = useState(0);
   const [subOpen, setSubOpen] = useState(false);
@@ -197,7 +199,7 @@ export function AppMenu() {
     >
       <button
         onClick={() => (open ? closeAll() : setOpen(true))}
-        title="Menu"
+        title={t('menu.button')}
         aria-label="Application menu"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -255,13 +257,13 @@ export function AppMenu() {
                 background: activeTop === ti ? 'var(--selection)' : 'transparent',
               }}
             >
-              <span>{section.label}</span>
+              <span>{t(section.label)}</span>
               <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--ink-faint)' }}>&#9656;</span>
 
               {subOpen && activeTop === ti && (
                 <div
                   role="menu"
-                  aria-label={section.label}
+                  aria-label={t(section.label)}
                   style={{
                     position: 'absolute',
                     top: -5,
@@ -299,7 +301,7 @@ export function AppMenu() {
                           background: activeSub === si ? 'var(--selection)' : 'transparent',
                         }}
                       >
-                        <span>{mi.label}</span>
+                        <span>{t(mi.label)}</span>
                         <span style={{ fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'inherit' }}>
                           {shortcutFor(mi.commandId, hotkeys)}
                         </span>

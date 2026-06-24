@@ -21,6 +21,15 @@
   /* Settings-driven vars (W1-1/W1-2) — App.tsx overrides these inline. */
   --editor-font-size: 15px;
   --editor-line-width: 720px;
+
+  /* Chat code syntax-highlight tokens (lowlight/hljs classes) — dark palette. */
+  --hl-keyword: #c678dd;
+  --hl-string: #98c379;
+  --hl-number: #d19a66;
+  --hl-comment: #6a6a85;
+  --hl-func: #61afef;
+  --hl-attr: #e06c75;
+  --hl-type: #56b6c2;
 }
 
 [data-theme="light"] {
@@ -39,4 +48,107 @@
   --tab-active: #ffffff;
   --hover: rgba(0, 0, 0, 0.04);
   --selection: rgba(99, 102, 241, 0.15);
+
+  /* Chat code syntax-highlight tokens — light palette (GitHub-ish). */
+  --hl-keyword: #a626a4;
+  --hl-string: #50a14f;
+  --hl-number: #b76b01;
+  --hl-comment: #9b9bab;
+  --hl-func: #4078f2;
+  --hl-attr: #e45649;
+  --hl-type: #0184bc;
 }
+
+/* ── Themed scrollbars — replace the default chunky OS scrollbar (theme-adaptive) ── */
+* {
+  scrollbar-width: thin;                              /* Gecko fallback */
+  scrollbar-color: var(--ink-faint) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  border-radius: 8px;
+  border: 2px solid transparent;                      /* inset → slimmer thumb */
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-dim);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Themed <select> dropdowns ────────────────────────────────────────────
+   Chromium renders <option> with a default (white) background; in dark mode it
+   clashes with --ink (light text) so the open list is invisible. Force an opaque
+   themed background + ink on the options so they're readable in BOTH themes. */
+select option,
+select optgroup {
+  background-color: var(--bg-2);
+  color: var(--ink);
+}
+
+/* ── Explore-pulse arrival popup ──────────────────────────────────────────
+   A hologram-style title card that pops above each node the explore comet
+   reaches. Positioned imperatively (left/top) by GraphView; the keyframe does
+   the snap-in + fade-out so a key remount per arrival replays it. */
+.sv-pulse-pop {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  pointer-events: none;
+  z-index: 30;
+  max-width: 220px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #eaf2ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: linear-gradient(180deg, rgba(40,70,140,0.92), rgba(18,32,74,0.92));
+  border: 1px solid rgba(120,190,255,0.75);
+  border-radius: 7px;
+  box-shadow: 0 0 16px rgba(90,170,255,0.55), 0 4px 14px rgba(0,0,0,0.5);
+  animation: svPulsePop 1.2s ease-out forwards;
+}
+@keyframes svPulsePop {
+  0%   { opacity: 0; transform: translate(-50%, -118%) scale(0.6); }
+  16%  { opacity: 1; transform: translate(-50%, -140%) scale(1.06); }
+  28%  { transform: translate(-50%, -140%) scale(1); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -162%) scale(1); }
+}
+
+/* ── Chat: syntax highlighting (lowlight/hljs classes, theme-adaptive) ── */
+.sv-hl .hljs-keyword, .sv-hl .hljs-built_in, .sv-hl .hljs-selector-tag { color: var(--hl-keyword); }
+.sv-hl .hljs-string, .sv-hl .hljs-regexp, .sv-hl .hljs-meta-string { color: var(--hl-string); }
+.sv-hl .hljs-number, .sv-hl .hljs-literal { color: var(--hl-number); }
+.sv-hl .hljs-comment, .sv-hl .hljs-quote { color: var(--hl-comment); font-style: italic; }
+.sv-hl .hljs-title, .sv-hl .hljs-function .hljs-title, .sv-hl .hljs-section { color: var(--hl-func); }
+.sv-hl .hljs-attr, .sv-hl .hljs-attribute, .sv-hl .hljs-variable, .sv-hl .hljs-template-variable, .sv-hl .hljs-name, .sv-hl .hljs-tag { color: var(--hl-attr); }
+.sv-hl .hljs-type, .sv-hl .hljs-class .hljs-title, .sv-hl .hljs-symbol, .sv-hl .hljs-bullet, .sv-hl .hljs-link { color: var(--hl-type); }
+.sv-hl .hljs-emphasis { font-style: italic; }
+.sv-hl .hljs-strong { font-weight: 700; }
+
+/* ── Chat: assistant markdown polish (sv-chat-md) ── */
+.sv-chat-md { font-size: inherit; }
+.sv-chat-md > :first-child { margin-top: 0; }
+.sv-chat-md > :last-child { margin-bottom: 0; }
+.sv-chat-md p { margin: 0 0 0.7em; }
+.sv-chat-md h1, .sv-chat-md h2, .sv-chat-md h3, .sv-chat-md h4 { margin: 1.1em 0 0.5em; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; }
+.sv-chat-md h1 { font-size: 1.4em; }
+.sv-chat-md h2 { font-size: 1.22em; }
+.sv-chat-md h3 { font-size: 1.08em; }
+.sv-chat-md h4 { font-size: 1em; color: var(--ink-dim); }
+.sv-chat-md ul, .sv-chat-md ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+.sv-chat-md li { margin: 0.2em 0; }
+.sv-chat-md li > ul, .sv-chat-md li > ol { margin: 0.2em 0; }
+.sv-chat-md a { color: var(--accent-2); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent-2) 35%, transparent); }
+.sv-chat-md a:hover { border-bottom-color: var(--accent-2); }
+.sv-chat-md blockquote { margin: 0.7em 0; padding: 0.1em 0 0.1em 0.9em; border-left: 3px solid var(--border); color: var(--ink-dim); }
+.sv-chat-md hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+.sv-chat-md table { border-collapse: collapse; margin: 0.7em 0; font-size: 0.94em; display: block; overflow-x: auto; }
+.sv-chat-md th, .sv-chat-md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+.sv-chat-md th { background: var(--hover); font-weight: 650; }
+.sv-chat-md img { max-width: 100%; border-radius: 8px; }

@@ -86,6 +86,13 @@ export class ForceSim {
     this.alphaTarget = 0;
   }
 
+  /** Freeze immediately — no motion this run. The galaxy uses a precomputed static
+   *  (Fibonacci) layout, so the live sim must NOT collapse it into a hub-and-spoke. */
+  freeze(): void {
+    this.alpha = 0;
+    this.alphaTarget = 0;
+  }
+
   /**
    * T2-9: enter/leave 2D mode. On entering, immediately flatten z so the switch
    * is instant; the per-tick constraint then keeps it flat. Re-heats so the
@@ -98,6 +105,15 @@ export class ForceSim {
       for (let i = 0; i < this.n; i++) {
         this.pos[i * 3 + 2] = 0;
         this.vel[i * 3 + 2] = 0;
+      }
+    } else {
+      // Leaving 2D: every node sits at z=0, so dz=0 for all pairs → the z-axis
+      // repulsion is zero and the layout would stay stuck FLAT (a vertical sheet).
+      // Nudge z off the plane (deterministic hash, no Math.random) so 3D repulsion
+      // can re-inflate it into a volume.
+      for (let i = 0; i < this.n; i++) {
+        const h = (Math.imul(i + 1, 2654435761) >>> 0) / 4294967296; // 0..1
+        this.pos[i * 3 + 2] += (h - 0.5) * 10;
       }
     }
     this.reheat(0.3);
@@ -199,7 +215,11 @@ export class ForceSim {
     }
 
     // ── Center gravity ──
-    const centerK = settings.center * 0.1; // slider 0–1 → effective 0–0.1 (d3-ish)
+    // Cluster-first LOD renders a SMALL graph (≤~35 super-nodes, ~100 expanded members),
+    // not the old 1,500-node hairball. 0.07 keeps it compact + evenly balled (repulsion
+    // spreads within, centering pulls scattered leaves back) instead of a sprawling
+    // hub-and-spoke whose far leaves look disconnected from the central hubs.
+    const centerK = settings.center * 0.07;
     if (centerK > 0) {
       for (let i = 0; i < n; i++) {
         vel[i * 3] -= pos[i * 3] * centerK * alpha;

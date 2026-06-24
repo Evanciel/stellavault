@@ -6,6 +6,7 @@
 
 import { useMemo } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
+import { useT } from '../../lib/i18n.js';
 
 export interface OutlineHeading {
   level: number;        // 1..6
@@ -62,7 +63,8 @@ export function parseHeadings(markdown: string): OutlineHeading[] {
 }
 
 export function OutlinePanel() {
-  const activeTab = useAppStore((s) => s.tabs.find((t) => t.id === s.activeTabId));
+  const t = useT();
+  const activeTab = useAppStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId));
 
   const headings = useMemo(
     () => parseHeadings(activeTab?.content ?? ''),
@@ -72,7 +74,7 @@ export function OutlinePanel() {
   if (!activeTab) {
     return (
       <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-        Open a note to see its outline.
+        {t('panel.outline.noNote')}
       </div>
     );
   }
@@ -80,7 +82,7 @@ export function OutlinePanel() {
   if (headings.length === 0) {
     return (
       <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-        No headings in this note.
+        {t('panel.outline.noHeadings')}
       </div>
     );
   }

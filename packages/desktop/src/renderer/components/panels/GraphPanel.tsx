@@ -10,6 +10,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { useAppStore } from '../../stores/app-store.js';
 import {
   type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
@@ -74,6 +75,14 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
 
   // Base buffers — signature recipe: palette by cluster + brightness boost by size.
   const base = useMemo(() => buildBaseBuffers(nodes), [nodes]);
+  // Stable copies of the mutable hover buffers (color/size). Inline new Float32Array
+  // in <bufferAttribute args> gets rebuilt by R3F on every hover re-render, resetting
+  // the imperative hover highlight (review: low). position uses base.pos directly —
+  // this panel is static (no sim), so positions need no copy. Mirrors GraphView.
+  const coreCol = useMemo(() => new Float32Array(base.col), [base]);
+  const coreSz = useMemo(() => new Float32Array(base.sz), [base]);
+  const glowCol = useMemo(() => new Float32Array(base.col), [base]);
+  const glowSz = useMemo(() => new Float32Array(base.gsz), [base]);
 
   const coreMat = useMemo(() => makePointsMaterial(0.95, false), []);
   const glowMat = useMemo(() => makePointsMaterial(0.28, true), []);
@@ -202,8 +211,8 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         <points key={`glow-${nodes.length}`} ref={glowRef} material={glowMat} raycast={() => null}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.gsz), 1]} />
+            <bufferAttribute attach="attributes-color" args={[glowCol, 3]} />
+            <bufferAttribute attach="attributes-size" args={[glowSz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -238,8 +247,8 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         >
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[base.pos, 3]} />
-            <bufferAttribute attach="attributes-color" args={[new Float32Array(base.col), 3]} />
-            <bufferAttribute attach="attributes-size" args={[new Float32Array(base.sz), 1]} />
+            <bufferAttribute attach="attributes-color" args={[coreCol, 3]} />
+            <bufferAttribute attach="attributes-size" args={[coreSz, 1]} />
           </bufferGeometry>
         </points>
       )}
@@ -266,8 +275,10 @@ export function GraphPanel() {
   const [mode, setMode] = useState<'global' | 'local'>('global');
   const [depth, setDepth] = useState(1);
   const [fitSignal, setFitSignal] = useState(0);
+  const [indexing, setIndexing] = useState(false);
   const [hover, setHover] = useState<{ title: string; x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   const coreReady = useAppStore((s) => s.coreReady);
   const openFile = useAppStore((s) => s.openFile);
@@ -357,7 +368,7 @@ export function GraphPanel() {
   if (!coreReady || loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
-        {coreReady ? 'Building graph...' : 'Waiting for AI engine...'}
+        {coreReady ? t('panel.graph.building') : t('panel.graph.waitingForAi')}
       </div>
     );
   }
@@ -365,7 +376,29 @@ export function GraphPanel() {
   if (allNodes.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
-        No documents indexed. Run re-index from the AI panel.
+        <div style={{ marginBottom: 12 }}>{t('panel.graph.noDocuments')}</div>
+        <button
+          disabled={indexing}
+          onClick={async () => {
+            setIndexing(true);
+            try {
+              await ipc('core:index');
+              const data = await ipc('graph:build', 'semantic') as unknown as { nodes: CoreGraphNode[]; edges: GraphEdge[] };
+              setAllNodes(mapCoreNodes(data.nodes ?? []));
+              setAllEdges((data.edges ?? []) as GraphEdge[]);
+            } catch (err) {
+              console.error('[graph] index failed:', err);
+            } finally {
+              setIndexing(false);
+            }
+          }}
+          style={{
+            padding: '6px 14px', background: 'var(--accent)', border: 'none', borderRadius: 4,
+            color: '#fff', fontSize: 12, cursor: indexing ? 'default' : 'pointer', opacity: indexing ? 0.6 : 1,
+          }}
+        >
+          {indexing ? t('panel.graph.indexing') : t('panel.graph.runIndex')}
+        </button>
       </div>
     );
   }
@@ -421,14 +454,14 @@ export function GraphPanel() {
         background: 'rgba(10,10,20,0.7)',
       }}>
         <button style={toggleButtonStyle(mode === 'global')} onClick={() => setMode('global')}>
-          Global
+          {t('panel.graph.modeGlobal')}
         </button>
         <button style={toggleButtonStyle(mode === 'local')} onClick={() => setMode('local')}>
-          Local
+          {t('panel.graph.modeLocal')}
         </button>
         {mode === 'local' && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--ink-dim)' }}>
-            Depth
+            {t('panel.graph.depthLabel')}
             <input
               type="range"
               min={1}
@@ -443,10 +476,10 @@ export function GraphPanel() {
         )}
         <button
           style={toggleButtonStyle(false)}
-          title="Zoom to fit"
+          title={t('panel.graph.fitTooltip')}
           onClick={() => setFitSignal((s) => s + 1)}
         >
-          Fit
+          {t('panel.graph.fitButton')}
         </button>
       </div>
 
@@ -462,7 +495,7 @@ export function GraphPanel() {
           fontSize: 12,
           pointerEvents: 'none',
         }}>
-          Open an indexed note to see its local graph.
+          {t('panel.graph.noLocalNote')}
         </div>
       )}
 
@@ -495,9 +528,10 @@ export function GraphPanel() {
         fontSize: 10,
         color: 'rgba(200,200,255,0.4)',
       }}>
-        {visibleNodes.length} nodes · {visibleEdges.length} edges
-        {mode === 'global' && allNodes.length > MAX_GLOBAL_NODES && ` (top ${MAX_GLOBAL_NODES} of ${allNodes.length})`}
+        {visibleNodes.length} {t('panel.graph.nodeEdgeCount', { edgeCount: visibleEdges.length })}
+        {mode === 'global' && allNodes.length > MAX_GLOBAL_NODES && ` ${t('panel.graph.globalCapped', { maxGlobalNodes: MAX_GLOBAL_NODES, allNodesCount: allNodes.length })}`}
       </div>
     </div>
   );
 }
+

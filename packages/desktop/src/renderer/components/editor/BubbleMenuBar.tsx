@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { BubbleMenu, type Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
+import { useT } from '../../lib/i18n.js';
 
 // Shared palettes (also used by MarkdownEditor's toolbar dropdowns).
 // Naver-style preset palette: 8 text colors + 8 highlight colors.
@@ -34,6 +35,7 @@ export const HIGHLIGHT_COLORS = [
 type Panel = 'color' | 'highlight' | 'link' | null;
 
 export function BubbleMenuBar({ editor }: { editor: Editor }) {
+  const t = useT();
   const [panel, setPanel] = useState<Panel>(null);
   const [linkValue, setLinkValue] = useState('');
 
@@ -71,11 +73,11 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
       }}
     >
       <div className="sv-bubble">
-        <BubbleBtn active={editor.isActive('bold')} title="Bold (Ctrl+B)" onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></BubbleBtn>
-        <BubbleBtn active={editor.isActive('italic')} title="Italic (Ctrl+I)" onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></BubbleBtn>
-        <BubbleBtn active={editor.isActive('underline')} title="Underline (Ctrl+U)" onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></BubbleBtn>
-        <BubbleBtn active={editor.isActive('strike')} title="Strikethrough" onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></BubbleBtn>
-        <BubbleBtn active={editor.isActive('code')} title="Inline code (Ctrl+E)" onClick={() => editor.chain().focus().toggleCode().run()}>
+        <BubbleBtn active={editor.isActive('bold')} title={t('editor.tooltip.bold')} onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></BubbleBtn>
+        <BubbleBtn active={editor.isActive('italic')} title={t('editor.tooltip.italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></BubbleBtn>
+        <BubbleBtn active={editor.isActive('underline')} title={t('editor.tooltip.underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></BubbleBtn>
+        <BubbleBtn active={editor.isActive('strike')} title={t('editor.tooltip.strikethrough')} onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></BubbleBtn>
+        <BubbleBtn active={editor.isActive('code')} title={t('editor.tooltip.code')} onClick={() => editor.chain().focus().toggleCode().run()}>
           <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{'<>'}</span>
         </BubbleBtn>
 
@@ -83,14 +85,14 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
 
         <BubbleBtn
           active={panel === 'color' || !!editor.getAttributes('textStyle').color}
-          title="Text color"
+          title={t('editor.tooltip.textColor')}
           onClick={() => setPanel(panel === 'color' ? null : 'color')}
         >
           <span style={{ color: (editor.getAttributes('textStyle').color as string) || 'var(--ink)' }}>A</span>
         </BubbleBtn>
         <BubbleBtn
           active={panel === 'highlight' || editor.isActive('highlight')}
-          title="Highlight color"
+          title={t('editor.tooltip.highlightColor')}
           onClick={() => setPanel(panel === 'highlight' ? null : 'highlight')}
         >
           <span style={{ background: '#facc1555', padding: '0 3px', borderRadius: 2 }}>A</span>
@@ -98,8 +100,8 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
 
         <span className="sv-bubble-sep" />
 
-        <BubbleBtn active={editor.isActive('link') || panel === 'link'} title="Add / edit link" onClick={openLink}>🔗</BubbleBtn>
-        <BubbleBtn active={false} title="Clear formatting" onClick={() => editor.chain().focus().unsetAllMarks().run()}>
+        <BubbleBtn active={editor.isActive('link') || panel === 'link'} title={t('editor.bubble.link')} onClick={openLink}>🔗</BubbleBtn>
+        <BubbleBtn active={false} title={t('editor.bubble.clearFormatting')} onClick={() => editor.chain().focus().unsetAllMarks().run()}>
           <span style={{ fontSize: 11 }}>⌫A</span>
         </BubbleBtn>
 
@@ -116,7 +118,7 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
               />
             ))}
             <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetTextColor().run(); setPanel(null); }}>
-              Reset
+              {t('common.reset')}
             </button>
           </div>
         )}
@@ -134,7 +136,7 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
               />
             ))}
             <button className="sv-swatch-reset" onClick={() => { editor.chain().focus().unsetHighlight().run(); setPanel(null); }}>
-              Reset
+              {t('common.reset')}
             </button>
           </div>
         )}
@@ -149,11 +151,11 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
                 if (e.key === 'Enter') { e.preventDefault(); applyLink(); }
                 if (e.key === 'Escape') setPanel(null);
               }}
-              placeholder="https://… (empty = remove)"
+              placeholder={t('editor.bubble.linkPlaceholder')}
               aria-label="Link URL"
               className="sv-bubble-input"
             />
-            <button className="sv-swatch-reset" onClick={applyLink}>Apply</button>
+            <button className="sv-swatch-reset" onClick={applyLink}>{t('common.apply')}</button>
           </div>
         )}
       </div>

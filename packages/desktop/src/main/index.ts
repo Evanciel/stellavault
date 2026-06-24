@@ -3,18 +3,57 @@
 
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
 import { pathToFileURL } from 'node:url';
-import { join, relative, resolve, dirname, basename, extname } from 'node:path';
+import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { homedir, tmpdir } from 'node:os';
 import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
-import { assertInsideVault, sanitizeAssetName, assertAssetSize } from './path-safety.js';
+import { SecretStore } from './secret-store.js';
+import { migrateLegacyApiKey } from './migrate-legacy-api-key.js';
+import { assertInsideVault, sanitizeAssetName, assertAssetSize, ALLOWED_IMAGE_EXT, MAX_CHAT_IMAGE_BYTES, assertImageMatches, sniffMediaType, ALLOWED_MEDIA_EXT, MAX_CHAT_MEDIA_BYTES, assertMediaMatches } from './path-safety.js';
+import { OrchestrationEngine } from './orchestration/engine.js';
+import { createQueueDao } from './orchestration/queue-dao.js';
+import type { CaptureRequest } from '../shared/ipc-types.js';
+import type { ClusteredGraph } from '@stellavault/core';
 import { validateSettingsPatch } from './settings-validate.js';
+import { redactSecrets } from './redact-secrets.js';
 // T3-2 / T3-1: LLM synthesizer (Anthropic Messages API over net.request). Built
 // from desktop-settings.ai when an API key is configured; null → extractive.
-import { makeSynthesizer } from './llm-synthesizer.js';
+import { makeSynthesizer, type LlmConfig } from './llm-synthesizer.js';
+import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvider } from '../shared/ai-providers.js';
+// SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) — streaming engine + plaintext
+// session store. chatStream calls the configured provider DIRECTLY (net.request), the
+// store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
+import { chatStream, describeImages, foldAttachmentsIntoText, parseReflectionCandidates, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
+import { transcribeAudio, describeVideo } from './media-transcribe.js';
+import { buildAgentToolset, buildExecuteAgentTool, isAgentForceConfirmTool } from './agent-tools.js';
+import {
+  buildCoreMemoryBlock, recallMemory, coreMemoryAppend, coreMemoryReplace,
+  listBlocks, getBlock, deleteBlock, describeMemoryWrite, looksLikeSecret, type MemoryBlockMeta,
+} from './memory-store.js';
+import { scanForInjection } from './injection-scan.js';
+import {
+  buildSkillCatalogue, loadSkillBody, listAllSkills, setSkillPromoted, type SkillMeta,
+} from './skill-store.js';
+// "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
+import {
+  ollamaStatus,
+  startOllama,
+  getOllamaVersion,
+  checkCompat,
+  downloadAndInstallOllama,
+} from './ollama-manager.js';
+import {
+  saveSession as chatSaveSession,
+  loadSession as chatLoadSession,
+  listSessions as chatListSessions,
+  renameSession as chatRenameSession,
+  deleteSession as chatDeleteSession,
+  isUuid as chatIsUuid,
+} from './chat-session-store.js';
+import type { ChatMessage, ChatAttachment, ReflectionCandidate } from '../shared/ipc-types.js';
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -69,24 +108,47 @@ function loadAppConfig(): AppConfig {
 // lifecycle from the vault bootstrap config above (§4-B). Created in whenReady.
 
 let settingsStore: SettingsStore | null = null;
+// T2-Task2: API keys are read from SecretStore (safeStorage-backed), NEVER from
+// desktop-settings.json at runtime. secretStore is null until app.whenReady()
+// (safeStorage is only valid after the app is ready).
+let secretStore: SecretStore | null = null;
 
 // T2-18: windows whose dirty-close round-trip has been confirmed (renderer said
 // proceed). The 'close' handler lets these through instead of re-prompting.
 const closeConfirmed = new WeakSet<BrowserWindow>();
 
+// A vault switch deferred until the dirty-close round-trip confirms. Writing the
+// bootstrap config then calling app.quit() races the dirty-close guard: the guard
+// can veto the quit (Cancel / save-fail), leaving ~/.stellavault.json pointing at a
+// vault the running session never loaded. We instead stash the target here and
+// commit it in window:confirm-close, i.e. ONLY on a path that actually relaunches.
+let pendingVaultSwitch: { id: string; path: string; dbPath?: string } | null = null;
+
 function broadcastSettingsChanged(settings: AppSettings): void {
+  // Redact secrets BEFORE sending to any renderer window — the broadcast path
+  // is as dangerous as settings:get if left unguarded.
+  const safe = redactSecrets(
+    settings,
+    (p) => !!secretStore?.hasSecret(p),
+    secretStore?.isPersistent() ?? false,
+  );
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send('settings:changed', settings);
+    win.webContents.send('settings:changed', safe);
   }
 }
 
-// T3-2: read the persisted AI provider/key from desktop-settings. Returns the
-// raw {provider, apiKey, model} or undefined. NEVER log the result — the key is
-// only ever handed to makeSynthesizer (which sends it to api.anthropic.com).
-function getAiConfig(): { provider: 'anthropic' | 'none'; apiKey: string; model: string } | undefined {
+// T3-2 / multi-provider: read the persisted AI provider/model/baseURL from
+// desktop-settings, but the apiKey from SecretStore (safeStorage-backed).
+// NEVER log the result — the key is only ever handed to makeSynthesizer (which sends
+// it to the selected provider's endpoint).
+function getAiConfig(): LlmConfig | undefined {
   try {
     if (!settingsStore) settingsStore = new SettingsStore();
-    return settingsStore.get().ai;
+    const ai = settingsStore.get().ai as Omit<LlmConfig, 'apiKey'> & { apiKey?: string } | undefined;
+    if (!ai) return undefined;
+    const provider = ai.provider;
+    const apiKey = provider ? (secretStore?.getSecret(provider) ?? '') : '';
+    return { ...ai, apiKey } as LlmConfig;
   } catch {
     return undefined;
   }
@@ -104,6 +166,119 @@ let coreChunkOptions: { maxTokens: number; overlap: number; minTokens: number } 
 // T3-3: the active vault path, captured at initCore — passed to the embedded MCP
 // server (vaultPath-dependent tools like decision-journal need it).
 let currentVaultPath = '';
+// Second-brain auto-capture engine (Design §6.1) — created at the end of initCore.
+let engine: OrchestrationEngine | null = null;
+
+// ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3) ────────────────────────
+// In-flight chat streams keyed by renderer-supplied streamId. Each entry pins the
+// AbortController (for chat:abort + before-quit) and the originating webContents id
+// (wcId) so abort/cap can be authorised against the owner. Created BEFORE the RAG
+// await in chat:send so an in-flight search is cancellable; deleted in finally with
+// an identity guard. NEVER carries the API key.
+interface ChatStreamEntry { controller: AbortController; wcId: number; }
+const chatStreamRegistry = new Map<string, ChatStreamEntry>();
+
+// Agent (SP-D): a write tool pauses the loop on a per-stream approval promise; the
+// renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
+// Cleaned up on resolve / abort / chat:send finally so a blocked await never leaks the
+// cap-of-2 slot. Default on any teardown = DENY.
+const pendingApprovals = new Map<string, { resolve: (v: boolean) => void; wcId: number }>();
+const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CHAT_MAX_MESSAGES = 100;
+const CHAT_MAX_MSG_CHARS = 24_000;
+const CHAT_MAX_TOTAL_CHARS = 120_000;
+const CHAT_MAX_IMAGES_PER_MSG = 6;
+const CHAT_MAX_ATTACHMENT_CHARS = 14_000_000; // ~10MB raw → base64 expansion headroom
+const CHAT_MAX_TOTAL_ATTACHMENT_CHARS = 40_000_000; // aggregate base64 across ALL turns (~30MB)
+const CHAT_ATTACHMENT_DATAURL_RE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+const IMAGE_FAMILIES = new Set(['png', 'jpeg', 'gif', 'webp']);
+// SP4: ext → MIME for audio/video (Whisper Blob type + Gemini inlineData mimeType).
+const MEDIA_MIME: Record<string, string> = {
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.webm': 'video/webm', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+};
+
+// Validate + sanitise a renderer chat:send request. Returns the cleaned turns
+// (renderer-supplied 'system' roles DROPPED — main owns the system prompt) or a
+// rejection reason. Caps message count / per-message length / total length.
+function validateChatReq(
+  req: any,
+): { ok: true; clean: ChatMessage[] } | { ok: false; msg: string } {
+  if (!req || typeof req.streamId !== 'string' || !CHAT_UUID_RE.test(req.streamId)) {
+    return { ok: false, msg: 'bad streamId' };
+  }
+  if (chatStreamRegistry.has(req.streamId)) return { ok: false, msg: 'duplicate streamId' };
+  if (typeof req.sessionId !== 'string' || !chatIsUuid(req.sessionId)) {
+    return { ok: false, msg: 'bad sessionId' };
+  }
+  if (!Array.isArray(req.messages) || req.messages.length === 0 || req.messages.length > CHAT_MAX_MESSAGES) {
+    return { ok: false, msg: 'bad messages' };
+  }
+  let total = 0;
+  let attachTotal = 0; // aggregate base64 chars across ALL turns (DoS bound)
+  const clean: ChatMessage[] = [];
+  for (const m of req.messages) {
+    if (!m || typeof m.text !== 'string') return { ok: false, msg: 'bad message text' };
+    // role whitelist: a 'system' turn must NEVER come from the renderer.
+    if (m.role !== 'user' && m.role !== 'assistant') return { ok: false, msg: 'bad role' };
+    if (m.text.length > CHAT_MAX_MSG_CHARS) return { ok: false, msg: 'message too long' };
+    total += m.text.length;
+    // SP2: image attachments. The chat:send path is RENDERER-controlled (unlike the trusted
+    // dialog), so re-validate at the CONTENT level — not just the lexical data-URL shape: a
+    // compromised renderer could forge `data:image/png;base64,<non-image bytes>` past a regex.
+    // Decode → magic-byte sniff → the declared mime MUST match the sniffed family; derive the
+    // stored mimeType from the SNIFF (never the attacker label); enforce per-image + aggregate
+    // byte caps (DoS bound).
+    let attachments: ChatAttachment[] | undefined;
+    if (m.attachments !== undefined) {
+      if (!Array.isArray(m.attachments) || m.attachments.length > CHAT_MAX_IMAGES_PER_MSG) {
+        return { ok: false, msg: 'bad attachments' };
+      }
+      attachments = [];
+      for (const a of m.attachments) {
+        if (!a) return { ok: false, msg: 'bad attachment' };
+        // SP4 audio/video: carry a TEXT transcript (no media blob). The transcript is just
+        // text injected into the prompt (like user text) — cap its length, no decode needed.
+        if (a.type === 'audio' || a.type === 'video') {
+          const transcript = typeof a.transcript === 'string' ? a.transcript : '';
+          // An empty transcript carries no signal and folds to an empty turn (which some
+          // providers reject) — drop it, mirroring the picker's 'empty-transcript' skip.
+          if (transcript.trim().length === 0) return { ok: false, msg: 'empty transcript' };
+          if (transcript.length > CHAT_MAX_MSG_CHARS) return { ok: false, msg: 'transcript too long' };
+          total += transcript.length;
+          attachments.push({
+            type: a.type, mimeType: String(a.mimeType ?? ''), transcript,
+            fileName: String(a.fileName ?? a.type), size: Number(a.size) || 0,
+          });
+          continue;
+        }
+        if (a.type !== 'image' || typeof a.dataUrl !== 'string') return { ok: false, msg: 'bad attachment' };
+        if (a.dataUrl.length > CHAT_MAX_ATTACHMENT_CHARS) return { ok: false, msg: 'attachment too large' };
+        if (!CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl)) return { ok: false, msg: 'bad attachment data' };
+        attachTotal += a.dataUrl.length;
+        if (attachTotal > CHAT_MAX_TOTAL_ATTACHMENT_CHARS) return { ok: false, msg: 'attachments too large' };
+        let decoded: Buffer;
+        try { decoded = Buffer.from(a.dataUrl.replace(/^data:[^,]*,/, ''), 'base64'); }
+        catch { return { ok: false, msg: 'bad attachment data' }; }
+        if (decoded.length === 0 || decoded.length > MAX_CHAT_IMAGE_BYTES) return { ok: false, msg: 'attachment too large' };
+        const family = sniffMediaType(decoded); // 'png' | 'jpeg' | 'gif' | 'webp' | … | null
+        if (!family || !IMAGE_FAMILIES.has(family)) return { ok: false, msg: 'bad attachment data' };
+        const mimeType = `image/${family}`;
+        if (!a.dataUrl.startsWith(`data:${mimeType};base64,`)) return { ok: false, msg: 'attachment type mismatch' };
+        attachments.push({
+          type: 'image', mimeType, dataUrl: a.dataUrl, // mimeType from the SNIFF, not a.mimeType
+          fileName: String(a.fileName ?? 'image'), size: decoded.length,
+        });
+      }
+    }
+    clean.push({
+      id: String(m.id ?? ''), role: m.role, text: m.text, ts: Number(m.ts) || Date.now(),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    });
+  }
+  if (total > CHAT_MAX_TOTAL_CHARS) return { ok: false, msg: 'conversation too long' };
+  return { ok: true, clean };
+}
 
 // ─── Agent Memory / MCP server (T3-3) ────────────────
 // The embedded MCP server ("Agent Memory") lets a local agent (Claude) read/write
@@ -198,9 +373,13 @@ async function stopMcpServer(): Promise<void> {
 let graphCacheVersion = 0;
 const graphBuildCache = new Map<string, { nodes: unknown[]; edges: unknown[] }>();
 const graphBuildInflight = new Map<string, Promise<{ nodes: unknown[]; edges: unknown[] }>>();
+// Wave 1 cluster-first LOD: cache the tiered ClusteredGraph per (mode, version).
+const clusteredCache = new Map<string, ClusteredGraph>();
+const clusteredInflight = new Map<string, Promise<ClusteredGraph | null>>();
 function bumpGraphCacheVersion(): void {
   graphCacheVersion++;
   graphBuildCache.clear();
+  clusteredCache.clear();
   // In-flight builds for the old version still resolve their own callers; they
   // just won't be cached under the new key (their finally only deletes the old
   // inflight entry). Next call rebuilds against the fresh index.
@@ -239,7 +418,13 @@ async function initCore(config: AppConfig): Promise<void> {
     coreChunkOptions = { ...coreChunkOptions, ...hubConfig.chunking };
     const hub = core.createKnowledgeHub(hubConfig);
     await hub.store.initialize();
-    await hub.embedder.initialize();
+    // ★PERF: do NOT block coreReady on the ~470MB model load (~30-50s). The graph,
+    // file tree, and editor need zero embeddings → make them usable in seconds and warm
+    // the model in the background. embed()/embedBatch() lazy-init the (memoized) pipeline,
+    // so capture/search/ask arriving before it's ready simply await the in-flight load.
+    void hub.embedder.initialize().catch((err) => {
+      console.error('[main] embedder background init failed (AI features retry on use):', err);
+    });
     store = hub.store;
     searchEngine = hub.searchEngine;
     embedder = hub.embedder;
@@ -257,12 +442,63 @@ async function initCore(config: AppConfig): Promise<void> {
         const dbInstance = store.getDb();
         if (dbInstance) decayEngine = new core.DecayEngine(dbInstance);
       }
-      if (decayEngine) await decayEngine.initializeNewDocuments();
+      // ★PERF: seed FSRS decay in the BACKGROUND. initializeNewDocuments loads every
+      // missing doc's FULL content (line decay-engine.ts:249) — on a 12k-note / cold-disk
+      // vault that's tens of seconds, and it was awaited here BEFORE coreReady, blocking
+      // the whole app ("Waiting for AI engine…"). It gates nothing the graph/editor need.
+      if (decayEngine) void decayEngine.initializeNewDocuments().catch((e: unknown) => console.error('[main] decay seed skipped:', e));
     } catch (err) {
       console.error('[main] DecayEngine init skipped:', err);
     }
 
     coreReady = true;
+
+    // ─── Second-brain auto-capture engine (Design §6.1) ───
+    // Wires the persisted capture queue + classify DAO (same index DB) to the reused
+    // core funnel (ingest → classify → index → decay). Frontmatter mode: classification
+    // is recorded in the DAO; existing vault files are never moved.
+    try {
+      const captureDb = store.getDb();
+      if (captureDb) {
+        const captureVaultPath = config.vaultPath;
+        engine = new OrchestrationEngine({
+          vaultPath: captureVaultPath,
+          queue: createQueueDao(captureDb),
+          classifyDao: core.createClassifyDao(captureDb),
+          cfg: core.DEFAULT_CLASSIFY_CONFIG,
+          ingest: (vaultPath, input) => core.ingest(vaultPath, input),
+          extractFile: async (p) => {
+            const ex = await core.extractFileContent(p);
+            return { text: ex.text, title: ex.metadata?.title, sourceFormat: ex.sourceFormat };
+          },
+          classify: (ctx, cats, cfg) => core.classifyLocal(ctx, cats, cfg),
+          embed: (text: string) => embedder.embed(text),
+          indexFile: async (abs: string) => {
+            noteSelfWrite(abs); // W1-15 echo guard — our own write
+            if (typeof (core as any).indexFiles === 'function') {
+              await (core as any).indexFiles(captureVaultPath, [abs], { store, embedder, chunkOptions: coreChunkOptions });
+            } else {
+              await core.indexVault(captureVaultPath, { store, embedder, chunkOptions: coreChunkOptions });
+            }
+            bumpVaultFsVersion();
+            bumpGraphCacheVersion();
+          },
+          recordCapture: (abs: string) => {
+            if (decayEngine) {
+              const documentId = docIdForFile(captureVaultPath, abs);
+              void decayEngine.recordAccess({ documentId, type: 'view', timestamp: new Date().toISOString() }).catch(() => {});
+            }
+          },
+          emit: (channel: string, payload: unknown) => {
+            for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
+          },
+          isReady: () => coreReady,
+        });
+        engine.start();
+      }
+    } catch (err) {
+      console.error('[main] capture engine init skipped:', err);
+    }
   } catch (err) {
     console.error('[main] Core init failed:', err);
   }
@@ -283,6 +519,14 @@ async function initCore(config: AppConfig): Promise<void> {
 /** Vault-relative path with forward slashes — matches core's documents.file_path. */
 function toVaultRel(vaultPath: string, filePath: string): string {
   return relative(resolve(vaultPath), resolve(filePath)).replace(/\\/g, '/');
+}
+
+/** Resolve a write-tool's note path (vault-relative or absolute) to an absolute path inside the
+ *  active vault — what the renderer's "Filed" chip passes to vault:read-file → openFile. */
+function absVaultPath(p?: string): string | undefined {
+  if (!p) return undefined;
+  const abs = isAbsolute(p) ? p : join(currentVaultPath, p);
+  try { return assertInsideVault(currentVaultPath, abs); } catch { return undefined; }
 }
 
 /** Map a core SearchResult (chunk+document) to the IPC SearchResult shape (absolute path). */
@@ -307,6 +551,54 @@ function docIdForFile(vaultPath: string, filePath: string): string {
     if (row?.id) return row.id;
   } catch { /* fall through to hash */ }
   return createHash('sha256').update(rel).digest('hex').slice(0, 16);
+}
+
+// ── plan-act-reflect agent read tools (part B) — trimmed, id-free results for the agent ──
+/** Related notes for a note (filePath-keyed): docIdForFile → store.getDocument → search by its
+ *  title+content. Reimplements handleGetRelated inline (it is NOT in the core barrel). */
+async function agentGetRelated(filePath: string, limit: number): Promise<unknown> {
+  if (!coreReady || !store || !searchEngine) return { error: 'index not ready' };
+  const id = docIdForFile(currentVaultPath, filePath);
+  const doc = await store.getDocument(id);
+  if (!doc) return { error: 'note not found in index' };
+  const query = `${doc.title ?? ''} ${String(doc.content ?? '').slice(0, 200)}`;
+  const results = await searchEngine.search({ query, limit: limit + 1 });
+  return results
+    .filter((r: any) => r.document?.id !== id)
+    .slice(0, limit)
+    .map((r: any) => ({ title: r.document?.title, filePath: r.document?.filePath, score: Math.round((r.score ?? 0) * 1000) / 1000, tags: r.document?.tags }));
+}
+/** Whole-vault knowledge gaps (weakly-connected clusters). Reuses the Coach pipeline; trimmed. */
+async function agentDetectGaps(): Promise<unknown> {
+  if (!coreReady || !store) return { totalGaps: 0, gaps: [] };
+  const core = await import('@stellavault/core');
+  let graphData: any;
+  try { graphData = typeof (core as any).buildGraphData === 'function' ? await (core as any).buildGraphData(store, { mode: 'semantic' }) : undefined; } catch { graphData = undefined; }
+  const report = typeof (core as any).detectKnowledgeGaps === 'function' ? await (core as any).detectKnowledgeGaps(store, graphData) : { totalGaps: 0, gaps: [] };
+  return {
+    totalGaps: report?.totalGaps ?? 0,
+    gaps: (report?.gaps ?? []).slice(0, 10).map((g: any) => ({ between: [g.clusterA ?? '', g.clusterB ?? ''], suggestedTopic: g.suggestedTopic ?? '', severity: g.severity ?? 'low' })),
+  };
+}
+/** Prioritised review queue (spaced-repetition decay). Trimmed to title/filePath/reason — no id. */
+async function agentLearningPath(limit: number): Promise<unknown> {
+  if (!coreReady || !store || !decayEngine) return { items: [] };
+  const core = await import('@stellavault/core');
+  if (typeof (core as any).generateLearningPath !== 'function') return { items: [] };
+  const decayReport = await decayEngine.computeAll();
+  const path = (core as any).generateLearningPath({ decayReport, gaps: [] }, limit);
+  const resolve = (documentId: string): { filePath: string; title: string } => {
+    try {
+      const row = store?.getDb?.()?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(documentId) as { file_path?: string; title?: string } | undefined;
+      return { filePath: row?.file_path ? join(currentVaultPath, row.file_path) : '', title: row?.title ?? '' };
+    } catch { return { filePath: '', title: '' }; }
+  };
+  return {
+    items: (path?.items ?? []).map((it: any) => {
+      const f = it.documentId ? resolve(it.documentId) : { filePath: '', title: '' };
+      return { title: it.title || f.title || 'Untitled', filePath: f.filePath, reason: it.reason ?? '', priority: it.priority ?? 'suggested', category: it.category ?? 'review', score: it.score ?? 0 };
+    }),
+  };
 }
 
 /** Shared DecayItem mapping for core:decay-top / core:decay-list. */
@@ -810,6 +1102,515 @@ function registerIpcHandlers(config: AppConfig) {
     }
   });
 
+  // ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3, §4) ────────────────────
+  // Streaming chat: the renderer invokes 'chat:send' with the turn history; tokens
+  // stream back via the targeted 'chat:chunk'/'chat:done'/'chat:error' EVENTS
+  // (e.sender, never broadcast). The API key is read in main (getAiConfig) and NEVER
+  // crosses to the renderer or a log. chat-engine calls the provider directly — RAG is
+  // injected here via the module-level searchEngine (may be null on an unindexed vault,
+  // in which case the engine degrades to no grounding).
+  ipcMain.handle('chat:send', async (e, req: any): Promise<void> => {
+    const wcId = e.sender.id;
+    const v = validateChatReq(req);
+    if (!v.ok) throw new Error(`chat: ${v.msg}`);
+    // Concurrency = hard-reject-at-2 (queue DEFERRED, §4). Count this sender's
+    // in-flight streams; the cap lives ONLY here (single source of truth).
+    let owned = 0;
+    for (const ent of chatStreamRegistry.values()) if (ent.wcId === wcId) owned++;
+    if (owned >= MAX_CONCURRENT) throw new Error('chat: concurrent stream cap reached');
+
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => {
+      if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
+    };
+    // 'openai-compatible' (Ollama/LM Studio) may legitimately have no key. Every other
+    // provider requires one — surface a categorised error instead of a stuck bubble.
+    if (!cfg || (!cfg.apiKey && cfg.provider !== 'openai-compatible')) {
+      safeSend('chat:error', { streamId: req.streamId, message: 'No AI provider configured', category: 'key-missing' });
+      return;
+    }
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    // Register BEFORE any await so an in-flight RAG search is cancellable via
+    // chat:abort / before-quit.
+    chatStreamRegistry.set(req.streamId, entry);
+
+    // ─── Agent wiring (SP-D, Design Ref §5.3) ───
+    // When the renderer asks for agent mode, inject the in-process toolset + executeTool
+    // built from THIS process's vault singletons + a write-confirm broker. chat-engine
+    // only takes the agent branch when the provider is local-ollama-with-tools (it
+    // re-checks), so these are harmless to pass for a non-agent/non-local request.
+    let agentOpts: Record<string, unknown> = {};
+    if (req.agentOn) {
+      const afterWrite = async (saved: string) => {
+        const safe = assertInsideVault(currentVaultPath, saved); // re-assert (defence in depth)
+        noteSelfWrite(safe); // W1-15 echo guard
+        const core = await import('@stellavault/core');
+        if (typeof (core as any).indexFiles === 'function') {
+          await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+        }
+        bumpVaultFsVersion();
+        bumpGraphCacheVersion();
+      };
+      const executeTool = buildExecuteAgentTool({
+        searchEngine, store, decayEngine, vaultPath: currentVaultPath,
+        coreReady: () => coreReady, afterWrite,
+        getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+        memoryRecall: (query: string, k?: number) => recallMemory(query, k), // P1: READ-only durable memory
+        // P2 (§3.3): force-confirm WRITE backends — only the chat:send site gets these (NOT distill,
+        // §6 INT-2). The force-confirm gate ensures they run only after the user approves.
+        memoryAppend: (text: string) => coreMemoryAppend(text),
+        memoryReplace: (id: string, oldStr: string, newStr: string) => coreMemoryReplace(id, oldStr, newStr),
+      });
+      // P3 (§4.2): build the catalogue once; advertise invoke_skill ONLY when ≥1 skill is promoted
+      // (review #4 — don't burn a gemma4:e4b tool slot on an unusable tool when there are no skills).
+      const skillCatalogue = buildSkillCatalogue(currentVaultPath);
+      agentOpts = {
+        agentOn: true,
+        // P3 (§4.3): the toolset's loadSkill resolves a PROMOTED skill body (vault-relative +
+        // provenance gate + Steps-only scan/cap live in skill-store). The catalogue (Level-1) is
+        // injected separately as skillCatalogue (agent-loop only, §4.5).
+        toolset: buildAgentToolset({
+          loadSkill: (name: string) => loadSkillBody(currentVaultPath, name),
+          hasSkills: skillCatalogue !== '',
+        }),
+        executeTool,
+        skillCatalogue,
+        onSkill: (name: string) => safeSend('chat:skill-invoke', { streamId: req.streamId, name }),
+        onToolCall: (name: string, detailRedacted: string) =>
+          safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name: string, ok: boolean, summary: string, filePath?: string) =>
+          safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+        // Memory-relax (Part 1 §4): autonomous core_memory_append → push "remembered (undo)" toast.
+        // Wired ONLY here (interactive chat:send) — distill/reflect have no memoryAppend dep.
+        onMemoryWrite: (id: string, text: string) =>
+          safeSend('chat:memory-written', { streamId: req.streamId, id, text }),
+        onPlan: (steps: string[], done: number) =>
+          safeSend('chat:plan', { streamId: req.streamId, steps, doneCount: done }),
+      };
+      // Writes AUTO-APPLY by default (frictionless second-brain growth; every write is shown
+      // in the tool strip, stays inside the vault, and is undoable). Opt-in "review-before-
+      // apply": when req.confirmWrites is set, wire the human-approval broker so a write pauses
+      // the loop on a per-stream promise the renderer resolves via chat:tool-approve. An abort
+      // while waiting resolves DENY (no cap-of-2 slot leak).
+      // The approval broker is ALWAYS wired now (P2). A regular vault write still AUTO-APPLIES
+      // unless req.confirmWrites is set, but a force-confirm tool (core_memory_*) ALWAYS prompts
+      // regardless of confirmWrites (§3.3 / §6 INT-3) — durable memory is never written without
+      // explicit approval. The broker short-circuits (auto-approve) for a non-force write in
+      // auto-apply mode, so no chat:tool-confirm is surfaced for those.
+      agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) => {
+        const mustPrompt = !!req.confirmWrites || isAgentForceConfirmTool(name);
+        if (!mustPrompt) return Promise.resolve(true); // regular write, auto-apply mode
+        return new Promise<boolean>((resolve) => {
+          if (controller.signal.aborted) { resolve(false); return; }
+          const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
+          controller.signal.addEventListener('abort', onAbort, { once: true });
+          pendingApprovals.set(req.streamId, {
+            wcId,
+            resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
+          });
+          // SEC-7: a force-confirm memory write shows the FULL before/after fact + provenance
+          // (resolved in main), not just the raw {id,old,new} diff — so the user sees the
+          // fact-flip they are approving. Other writes keep the compact JSON arg preview.
+          let argsPreview = '';
+          try {
+            argsPreview = isAgentForceConfirmTool(name)
+              ? describeMemoryWrite(name, args).slice(0, 600)
+              : JSON.stringify(args).slice(0, 400);
+          } catch { argsPreview = '{…}'; }
+          safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
+        });
+      };
+    }
+
+    try {
+      await chatStream({
+        cfg,
+        messages: v.clean,
+        ragOn: !!req.ragOn,
+        signal: controller.signal,
+        searchEngine, // module-level; may be null → engine null-guards
+        // Agent MEMORY (P1, §3.2/§4.5): always-injected pinned user facts, pre-scanned + capped.
+        // Injected for EVERY provider (agent + cloud/single-shot). '' when the store is empty.
+        coreMemory: buildCoreMemoryBlock(),
+        ...agentOpts,
+        onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
+        onDone: (citations, fullText: string) => {
+          safeSend('chat:done', { streamId: req.streamId, citations });
+          const assistant: ChatMessage = {
+            id: randomUUID(),
+            role: 'assistant',
+            text: fullText,
+            ts: Date.now(),
+            citations,
+          };
+          // Persist the full turn (user turns + the new assistant turn). The store
+          // debounces, redacts, and strips citation snippet bodies at rest.
+          chatSaveSession(req.sessionId, [...v.clean, assistant]);
+        },
+        onError: (message: string, category?: ErrorCategory) =>
+          safeSend('chat:error', { streamId: req.streamId, message, category: category ?? 'generic' }),
+      });
+    } catch (err) {
+      // Generic message to the renderer; details stay console-only (and redacted by
+      // chat-engine's own logging — never the key).
+      console.error('[main] chat:send stream failed:', err);
+      safeSend('chat:error', { streamId: req.streamId, message: 'chat stream failed', category: 'generic' });
+    } finally {
+      // Identity guard: only delete if this exact entry still owns the slot (a reused
+      // streamId from a later send must not be clobbered).
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+      // Backstop: a still-pending write approval for this stream resolves DENY (no leak).
+      const pa = pendingApprovals.get(req.streamId);
+      if (pa) { pendingApprovals.delete(req.streamId); pa.resolve(false); }
+    }
+  });
+
+  // Agent (SP-D): the renderer approves/denies a pending write tool. Owner-checked by
+  // wcId so another window can't approve someone else's write. The renderer can ONLY
+  // approve/deny — it never names a tool or its args (the model + main decide that).
+  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean }): void => {
+    const sid = typeof payload?.streamId === 'string' ? payload.streamId : '';
+    const pa = pendingApprovals.get(sid);
+    if (!pa) return; // unknown / already-resolved
+    if (pa.wcId !== e.sender.id) return; // not the owning window
+    pendingApprovals.delete(sid);
+    pa.resolve(payload?.approve === true);
+  });
+
+  // Agent MEMORY management (P2, §6 / INT-8): the renderer lists / inspects / deletes durable
+  // memory blocks. The renderer NEVER names a tool or a path — it carries an opaque block UUID
+  // it received from memory:list. memory:delete id-validates (isMemoryId + must EXIST in the
+  // store), so a compromised renderer can only delete a real block by its UUID, never an
+  // arbitrary target. Memory is a single global store (no per-window ownership), so the
+  // chat:tool-approve wcId guard does not apply; id-validation is the containment control.
+  ipcMain.handle('memory:list', (): MemoryBlockMeta[] => listBlocks());
+  ipcMain.handle('memory:get', (_e, id: string): MemoryBlockMeta | null => getBlock(id));
+  ipcMain.handle('memory:delete', (_e, id: string): { ok: boolean } => ({ ok: deleteBlock(id) }));
+
+  // Agent SKILLS management (P3, §4.4): list the vault's Skills/*.md with their PROMOTED state and
+  // let the user promote/un-promote. Promotion is the consent gate — only a promoted skill enters
+  // the always-injected catalogue / is loadable by invoke_skill. The renderer carries a skill NAME
+  // (from skill:list); the promoted set lives OFF-VAULT so a synced .md can never self-promote.
+  ipcMain.handle('skill:list', (): SkillMeta[] => listAllSkills(currentVaultPath));
+  ipcMain.handle('skill:set-promoted', (_e, name: string, promoted: boolean): { promoted: boolean } =>
+    ({ promoted: setSkillPromoted(currentVaultPath, name, promoted === true) }));
+
+  // Karpathy auto-distillation (SP-I): after a chat turn, the renderer (when auto-distill is
+  // on) sends the just-finished conversation here. We run the SAME agent loop but with the
+  // INGEST system prompt — the agent folds the conversation's durable knowledge into the
+  // wiki (atomic notes, [[links]], log). Writes auto-apply; no chat bubble is produced (the
+  // distillation prose is discarded — only the tool activity + a short summary surface).
+  ipcMain.handle('chat:distill', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
+    const wcId = e.sender.id;
+    if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
+    if (typeof req.streamId !== 'string' || !req.streamId) return;
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
+    // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
+    if (!cfg || cfg.provider !== 'openai-compatible') { safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }); return; }
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    chatStreamRegistry.set(req.streamId, entry);
+
+    const transcript = req.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      // SP4: fold audio/video transcripts in so the distiller files them too.
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
+      .join('\n\n')
+      .slice(0, 12_000);
+
+    // SP3 attachment distillation: gemma4 can't see images while tools are present, so describe
+    // any conversation images with a VISION-ONLY pass first, then fold that text into the
+    // transcript the tool-using ingest loop distills. Failure/abort → text-only (graceful).
+    // This handler does NOT go through validateChatReq, so bound the images inline (shape +
+    // per-image size) before decoding — a stale/compromised renderer can't drive memory here.
+    const images = req.messages
+      .flatMap((m) => (m.attachments ?? []))
+      .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
+        && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
+      .slice(0, 4)
+      .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
+    let imageBlock = '';
+    if (images.length > 0) {
+      // Cap the model-generated description (untrusted: a prompt-injected image could make it
+      // huge) so it can't bypass the 12k transcript bound and bloat the ingest prompt.
+      const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
+      if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
+    }
+    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
+
+    const afterWrite = async (saved: string) => {
+      const safe = assertInsideVault(currentVaultPath, saved);
+      noteSelfWrite(safe);
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).indexFiles === 'function') {
+        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+      }
+      bumpVaultFsVersion();
+      bumpGraphCacheVersion();
+    };
+    const executeTool = buildExecuteAgentTool({
+      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
+      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+      // §6 INT-2: distill gets READ memory deps (recall_memory works in the ingest loop too).
+      // NO memoryWrite here — distill auto-applies without a confirm gate, so a reflection/ingest
+      // loop must never perform an unattended durable-memory write (review-before-apply, §7-1).
+      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+    });
+
+    try {
+      await chatStream({
+        cfg,
+        messages: [ingestTurn],
+        ragOn: false,            // distillation does its own search; no RAG pre-injection
+        signal: controller.signal,
+        searchEngine,
+        agentOn: true,
+        distill: true,           // → agent loop uses the Karpathy INGEST prompt
+        toolset: buildAgentToolset(),
+        executeTool,             // writes auto-apply (no onToolConfirm)
+        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+        onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
+        onDone: (_citations, fullText) => safeSend('chat:distill-done', { streamId: req.streamId, summary: fullText.slice(0, 300) }),
+        onError: () => safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }),
+      });
+    } catch (err) {
+      console.error('[main] chat:distill failed:', err);
+      safeSend('chat:distill-done', { streamId: req.streamId, summary: '' });
+    } finally {
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
+  // Reflection follow-up (§A2): run the SAME agent loop READ-ONLY to PROPOSE durable-memory
+  // candidates. Two fail-closed layers keep it write-free (review-before-apply, §7-1 / SEC-2):
+  //   (1) executeTool gets READ deps only — NO memoryWrite (dispatcher → 'memory write
+  //       unavailable here' if the model tries core_memory_*);
+  //   (2) onToolConfirm is a DENY-ALL broker — every write tool (vault create_note/append_note
+  //       AND core_memory_*) is refused, so the pass cannot mutate anything at all.
+  // The model's JSON is parsed (chat-engine), then each candidate is dedup'd vs the existing
+  // store and injection/secret-scanned BEFORE it is emitted as a chip (1st gate; the real write
+  // re-scans in memory:apply-candidate, §A3). Explicit trigger only — no auto-trigger (§10-d).
+  ipcMain.handle('chat:reflect', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
+    const wcId = e.sender.id;
+    if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
+    if (typeof req.streamId !== 'string' || !req.streamId) return;
+    const cfg = getAiConfig();
+    const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
+    const emitDone = (candidates: ReflectionCandidate[]): void => safeSend('chat:reflect-done', { streamId: req.streamId, candidates });
+    if (!cfg || cfg.provider !== 'openai-compatible') { emitDone([]); return; }
+
+    const controller = new AbortController();
+    const entry: ChatStreamEntry = { controller, wcId };
+    chatStreamRegistry.set(req.streamId, entry);
+
+    const transcript = req.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
+      .join('\n\n')
+      .slice(0, 12_000);
+    const reflectTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Review this finished conversation and propose durable user-memory facts:\n\n${transcript}`, ts: Date.now() };
+
+    // READ-only deps (recall_memory works; NO memoryWrite → fail-closed layer 1). afterWrite is a
+    // no-op: a vault write would need the deny-all broker (layer 2) to approve, which it never does.
+    const executeTool = buildExecuteAgentTool({
+      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady,
+      afterWrite: () => { /* reflection never writes (deny-all broker); never reached */ },
+      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+    });
+
+    try {
+      await chatStream({
+        cfg,
+        messages: [reflectTurn],
+        ragOn: false,
+        signal: controller.signal,
+        searchEngine,
+        agentOn: true,
+        reflect: true,                       // → agent loop uses the READ-ONLY REFLECT prompt
+        toolset: buildAgentToolset(),
+        executeTool,
+        onToolConfirm: async () => false,    // deny-all broker (fail-closed layer 2)
+        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
+        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+        onDelta: () => { /* reflection prose is not shown as a chat bubble */ },
+        onDone: (_citations, fullText) => {
+          // Dedupe vs the existing store + 1st-pass injection/secret scan, THEN emit chips.
+          const existing = new Set(listBlocks().map((b) => b.text.toLowerCase().replace(/\s+/g, ' ')));
+          const candidates = parseReflectionCandidates(fullText).filter((c) => {
+            const key = c.text.toLowerCase().replace(/\s+/g, ' ');
+            if (existing.has(key)) return false;
+            if (scanForInjection(c.text).blocked.length > 0) return false;
+            if (looksLikeSecret(c.text)) return false;
+            return true;
+          });
+          emitDone(candidates);
+        },
+        onError: () => emitDone([]),
+      });
+    } catch (err) {
+      console.error('[main] chat:reflect failed:', err);
+      emitDone([]);
+    } finally {
+      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
+    }
+  });
+
+  // Apply ONE user-approved reflection candidate (§A3) — append-only. The renderer carries the
+  // opaque candidate it got from chat:reflect-done; main NEVER trusts the queued text and re-runs
+  // BOTH detectors (injection-scan + looksLikeSecret) at write time, then routes through
+  // coreMemoryAppend (provenance 'user' — human review is the trust gate, §A3). The write inherits
+  // appendBlock's fail-closed bounds + secret drop; throws map to { ok:false }. This is a direct,
+  // user-gated write that bypasses the LLM, so the "reflection loop holds no write tool" invariant
+  // holds by construction.
+  ipcMain.handle('memory:apply-candidate', (_e, req: { streamId: string; candidate: ReflectionCandidate }): { ok: boolean; id?: string; reason?: string } => {
+    const text = String(req?.candidate?.text ?? '');
+    if (!text.trim()) return { ok: false, reason: 'empty' };
+    if (scanForInjection(text).blocked.length > 0) return { ok: false, reason: 'injection' };
+    if (looksLikeSecret(text)) return { ok: false, reason: 'secret' };
+    try {
+      const { id } = coreMemoryAppend(text);
+      return { ok: true, id };
+    } catch (err) {
+      console.error('[main] memory:apply-candidate failed:', err);
+      return { ok: false, reason: 'bounds-or-secret' };
+    }
+  });
+
+  // Abort an in-flight stream. Only the OWNING webContents may abort its own stream.
+  ipcMain.handle('chat:abort', (e, streamId: string): void => {
+    const entry = chatStreamRegistry.get(streamId);
+    if (!entry) return;
+    if (entry.wcId !== e.sender.id) return; // not your stream
+    entry.controller.abort();
+    chatStreamRegistry.delete(streamId);
+  });
+
+  // SP2: pick image file(s) to attach to a chat turn. The DIALOG is the only path to a file
+  // (renderer supplies nothing) — so an absolute path here is user-chosen, not renderer-forged.
+  // Each file is read, size-capped, and magic-byte ↔ ext verified BEFORE base64; a bad file is
+  // skipped (never sent to the model). Returns ready-to-display data: URLs.
+  ipcMain.handle('chat:pick-images', async (): Promise<{ attachments: ChatAttachment[] }> => {
+    const opts = {
+      title: 'Attach image(s)',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+    };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { attachments: [] };
+    const attachments: ChatAttachment[] = [];
+    for (const filePath of result.filePaths.slice(0, CHAT_MAX_IMAGES_PER_MSG)) {
+      try {
+        const ext = extname(filePath).toLowerCase();
+        if (!ALLOWED_IMAGE_EXT.has(ext)) continue;
+        const bytes = readFileSync(filePath); // absolute path from the trusted dialog
+        if (bytes.length === 0 || bytes.length > MAX_CHAT_IMAGE_BYTES) continue;
+        assertImageMatches(ext, bytes); // throws if the magic bytes don't match the ext
+        const family = sniffMediaType(bytes); // 'png' | 'jpeg' | 'gif' | 'webp'
+        const mimeType = `image/${family}`;
+        const dataUrl = `data:${mimeType};base64,${bytes.toString('base64')}`;
+        attachments.push({ type: 'image', mimeType, dataUrl, fileName: basename(filePath), size: bytes.length });
+      } catch {
+        // bad/oversized/mismatched file → skip it (don't fail the whole pick)
+        console.error('[chat] pick-images: skipped an invalid file');
+      }
+    }
+    return { attachments };
+  });
+
+  // SP4: pick audio/video → preprocess to TEXT in main (Whisper / Gemini) → return a transcript
+  // attachment (no media blob). The dedicated cloud key never leaves main. Per-file failures are
+  // skipped; if nothing succeeds, an error code is returned for the renderer to surface.
+  ipcMain.handle('chat:pick-media', async (_e, kind: 'audio' | 'video'): Promise<{ attachments: ChatAttachment[]; error?: string }> => {
+    const isAudio = kind === 'audio';
+    const key = secretStore?.getSecret(isAudio ? 'transcribeApiKey' : 'videoApiKey') ?? '';
+    if (!key) return { attachments: [], error: isAudio ? 'no-transcribe-key' : 'no-video-key' };
+    const exts = isAudio ? ['mp3', 'm4a', 'wav', 'ogg', 'webm'] : ['mp4', 'mov', 'webm'];
+    const opts = {
+      title: isAudio ? 'Attach audio' : 'Attach video',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      filters: [{ name: isAudio ? 'Audio' : 'Video', extensions: exts }],
+    };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { attachments: [] };
+    const attachments: ChatAttachment[] = [];
+    let lastError = '';
+    for (const filePath of result.filePaths.slice(0, 3)) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 130_000);
+      try {
+        const ext = extname(filePath).toLowerCase();
+        if (!ALLOWED_MEDIA_EXT.has(ext)) { lastError = 'unsupported'; continue; }
+        const bytes = readFileSync(filePath); // absolute path from the trusted dialog
+        if (bytes.length === 0 || bytes.length > MAX_CHAT_MEDIA_BYTES) { lastError = 'too-large'; continue; }
+        assertMediaMatches(ext, bytes); // magic-byte ↔ ext (throws on mismatch)
+        const mimeType = MEDIA_MIME[ext] ?? (isAudio ? 'audio/mpeg' : 'video/mp4');
+        const transcript = isAudio
+          ? await transcribeAudio(key, bytes, basename(filePath), mimeType, ac.signal)
+          : await describeVideo(key, bytes, mimeType, ac.signal);
+        if (!transcript) { lastError = 'empty-transcript'; continue; }
+        attachments.push({ type: kind, mimeType, transcript, fileName: basename(filePath), size: bytes.length });
+      } catch (err) {
+        lastError = 'transcribe-failed';
+        // err is a "whisper/gemini HTTP NNN" or network error — no secret in it.
+        console.error('[chat] pick-media transcription failed:', String((err as Error)?.message ?? 'error'));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return { attachments, ...(attachments.length === 0 && lastError ? { error: lastError } : {}) };
+  });
+
+  // Part5: export the current conversation VERBATIM as a vault note under Chats/. The
+  // second-brain "keep this whole chat" record (chat:distill is the extract-knowledge path).
+  ipcMain.handle('chat:export-note', async (_e, req: { messages: ChatMessage[]; title?: string }): Promise<{ filePath?: string; error?: string }> => {
+    if (!coreReady || !currentVaultPath) return { error: 'not-ready' };
+    const msgs = (req?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant');
+    if (msgs.length === 0) return { error: 'empty' };
+    try {
+      const rawTitle = (req.title || msgs.find((m) => m.role === 'user')?.text || 'Conversation').slice(0, 80);
+      const title = rawTitle.replace(/[\r\n]+/g, ' ').replace(/["\\]/g, '').trim() || 'Conversation';
+      const d = new Date();
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const slug = (title.replace(/[^a-zA-Z가-힣0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 50) || 'chat');
+      const body = `---\ntitle: "${title}"\ntags: [chat]\ncreated: ${date}\n---\n\n# ${title}\n\n`
+        + msgs.map((m) => `**${m.role === 'user' ? 'You' : 'Assistant'}:**\n\n${foldAttachmentsIntoText(m)}`).join('\n\n---\n\n')
+        + '\n';
+      const dir = join(currentVaultPath, 'Chats');
+      assertInsideVault(currentVaultPath, dir);
+      mkdirSync(dir, { recursive: true });
+      let filePath = join(dir, `${date}-${slug}.md`);
+      for (let i = 2; existsSync(filePath); i++) filePath = join(dir, `${date}-${slug}-${i}.md`);
+      const safe = assertInsideVault(currentVaultPath, filePath);
+      writeFileSync(safe, body, 'utf-8');
+      noteSelfWrite(safe);
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).indexFiles === 'function') {
+        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+      }
+      bumpVaultFsVersion();
+      bumpGraphCacheVersion();
+      return { filePath: safe };
+    } catch (err) {
+      console.error('[main] chat:export-note failed:', err);
+      return { error: 'write-failed' };
+    }
+  });
+
+  // Session CRUD (⑨) — delegate to the store. Filenames are UUIDs; the store's
+  // isUuid + assertInsideDir guards run on every op. rename writes a title FIELD.
+  ipcMain.handle('chat:list-sessions', () => chatListSessions());
+  ipcMain.handle('chat:load-session', (_e, id: string) => chatLoadSession(id));
+  ipcMain.handle('chat:rename-session', (_e, id: string, title: string) => chatRenameSession(id, title));
+  ipcMain.handle('chat:delete-session', (_e, id: string) => chatDeleteSession(id));
+
   // W1-16: related notes — mirrors core's get-related MCP tool (doc title +
   // content head as the query, self excluded). Unindexed notes → [].
   ipcMain.handle('core:related', async (_e, filePath: string, limit?: number): Promise<SearchResult[]> => {
@@ -1041,6 +1842,54 @@ function registerIpcHandlers(config: AppConfig) {
     return p;
   });
 
+  // ─── Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md) ───
+  // graph:clusters → ≤~80 cluster super-nodes for the first paint (tiny payload).
+  // graph:expand-cluster → one cluster's members (a Map lookup after the first build).
+  // Both read from a per-(mode, version) cached ClusteredGraph, in-flight coalesced.
+  const getClustered = async (safeMode: 'semantic' | 'folder'): Promise<ClusteredGraph | null> => {
+    const key = `clustered:${safeMode}@${graphCacheVersion}`;
+    const cached = clusteredCache.get(key);
+    if (cached) return cached;
+    const inflight = clusteredInflight.get(key);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const core = await import('@stellavault/core');
+        const g = await core.buildClusteredGraph(store!, { mode: safeMode });
+        clusteredCache.set(key, g);
+        return g;
+      } catch (err) {
+        console.error('[main] clustered graph build failed:', err);
+        return null;
+      } finally {
+        clusteredInflight.delete(key);
+      }
+    })();
+    clusteredInflight.set(key, p);
+    return p;
+  };
+  const emptyGalaxy = { level: 'galaxy' as const, superNodes: [], metaEdges: [], totalNodes: 0, totalEdges: 0, layoutVersion: '' };
+
+  ipcMain.handle('graph:clusters', async (_e, opts?: { mode?: string }) => {
+    if (!coreReady || !store) return emptyGalaxy;
+    const safeMode: 'semantic' | 'folder' = opts?.mode === 'folder' ? 'folder' : 'semantic';
+    const g = await getClustered(safeMode);
+    return g ? g.clusterLevel : emptyGalaxy;
+  });
+
+  ipcMain.handle('graph:expand-cluster', async (_e, opts: { mode?: string; clusterId: number }) => {
+    const clusterId = opts?.clusterId ?? 0;
+    const empty = { clusterId, members: [], intraEdges: [], boundaryEdges: [] };
+    if (!coreReady || !store) return empty;
+    const safeMode: 'semantic' | 'folder' = opts?.mode === 'folder' ? 'folder' : 'semantic';
+    const g = await getClustered(safeMode);
+    return g?.members.get(clusterId) ?? empty;
+  });
+
+  // Startup race guard: the renderer queries this on mount in case it registered its
+  // 'core:ready' listener AFTER the (now-fast) init already fired the event.
+  ipcMain.handle('core:get-ready', () => coreReady);
+
   // Backlinks — find notes that contain [[title]]
   // T2-8: async (fs.promises, bounded concurrency) + cached per FS version so a
   // note-open scans the vault once, then later opens in the same version are Map
@@ -1050,15 +1899,114 @@ function registerIpcHandlers(config: AppConfig) {
   // Settings (W1-1) — get/set + broadcast to all windows on change
   ipcMain.handle('settings:get', () => {
     if (!settingsStore) settingsStore = new SettingsStore();
-    return settingsStore.get();
+    // T3: Never return raw settings to the renderer — strip apiKey and replace
+    // with hasKey/keychainAvailable indicators (see redact-secrets.ts).
+    return redactSecrets(
+      settingsStore.get(),
+      (p) => !!secretStore?.hasSecret(p),
+      secretStore?.isPersistent() ?? false,
+    );
   });
   ipcMain.handle('settings:set', (_e, patch: Partial<AppSettings>) => {
     if (!settingsStore) settingsStore = new SettingsStore();
+    const rawPatch = patch ?? {};
+
+    // T3: Strip ai.apiKey from any incoming patch — keys are set-only via
+    // 'secret:set-key'. Silently drop so a rogue/buggy renderer can't write
+    // a key back into the plaintext settings file.
+    if (rawPatch.ai && typeof rawPatch.ai === 'object') {
+      // ai-namespace hardening: only accept known safe fields (provider/model/baseURL).
+      // This also blocks null-deletion of ai fields via deepMerge's null=delete
+      // sentinel (a renderer sending { ai: { provider: null } } would wipe the
+      // provider from the stored object — self-DoS, not a key leak, but unwanted).
+      const { provider, model, baseURL } = rawPatch.ai as Record<string, unknown>;
+      const safeAi: Record<string, unknown> = {};
+      // Only propagate known scalar fields; silently ignore null/unknown keys.
+      if (provider !== undefined && provider !== null) safeAi.provider = provider;
+      if (model !== undefined && model !== null) safeAi.model = model;
+      if (baseURL !== undefined && baseURL !== null) safeAi.baseURL = baseURL;
+      (rawPatch as Record<string, unknown>).ai = safeAi;
+    }
+
     // T1-13: drop invalid fields (negative window size, bad theme/accent) before
     // they persist + re-apply. Pure, unit-tested in tests/settings-validate.test.ts.
-    const merged = settingsStore.set(validateSettingsPatch(patch ?? {}));
+    const merged = settingsStore.set(validateSettingsPatch(rawPatch));
     broadcastSettingsChanged(merged);
-    return merged;
+    // Return redacted settings to the renderer (same contract as settings:get).
+    return redactSecrets(
+      merged,
+      (p) => !!secretStore?.hasSecret(p),
+      secretStore?.isPersistent() ?? false,
+    );
+  });
+
+  // AI model dropdown — fetch a provider's available models (main-side: the renderer
+  // can't hit the provider cross-origin under CSP).
+  // T5 security fix: the API key is loaded from secretStore here in the main process.
+  // The renderer ONLY passes provider + optional baseURL — it can no longer supply an
+  // arbitrary key (closes the SSRF-adjacent gap where a compromised renderer could
+  // trigger outbound HTTP requests with any key it crafted).
+  ipcMain.handle('ai:list-models', async (_e, opts: { provider: string; baseURL?: string }) => {
+    // I-1: reject arbitrary/unknown provider strings from the renderer.
+    if (!isValidProvider(opts.provider)) {
+      throw new Error(`Unknown provider: ${opts.provider}`);
+    }
+    // Load the stored key for this provider (undefined → no key saved yet).
+    const storedKey = secretStore?.getSecret(opts.provider) ?? '';
+    const req = modelsListRequest(opts.provider as AiProvider, storedKey, opts.baseURL ?? '');
+    if (!req) {
+      // Provider needs a key but none is stored yet — friendly error the UI surfaces.
+      const needsKey = ['anthropic', 'openai', 'google'].includes(opts.provider);
+      if (needsKey && !storedKey) throw new Error('No API key saved. Save a key first, then click Load.');
+      // No listing endpoint for this provider (e.g. 'none') or baseURL missing.
+      return [];
+    }
+    const res = await net.fetch(req.url, { headers: req.headers });
+    if (!res.ok) throw new Error(`Model list failed (${res.status})`);
+    return parseModelsResponse(opts.provider as AiProvider, await res.json());
+  });
+
+  // T4: Write-only key IPC (Design §6.3 / CRIT-03).
+  // The renderer can store, check, or clear a provider API key, but NEVER read it
+  // back — there is intentionally no ai:get-secret / ai:read-secret handler.
+  // I-1: validate provider against the known AiProvider whitelist.
+  // I-2: ai:set-secret throws when secretStore is null so the renderer can surface
+  //       the failure instead of silently believing the save succeeded.
+  ipcMain.handle('ai:set-secret', (_e, provider: string, key: string): void => {
+    if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
+    if (!secretStore) throw new Error('Secret store unavailable — key not saved'); // I-2
+    secretStore.setSecret(provider, key);
+  });
+  ipcMain.handle('ai:has-secret', (_e, provider: string): boolean => {
+    if (!isValidProvider(provider)) return false; // I-1: unknown provider → false
+    return secretStore?.hasSecret(provider) ?? false;
+  });
+
+  // ─── Local model server (Ollama) lifecycle ───
+  // "Start Ollama" UX: the renderer can ask whether the local server is up/installed
+  // and request a start. ollama:start spawns a FIXED binary (ollama-manager resolves it
+  // from PATH / known install dirs) — the renderer NEVER supplies a path or args; the
+  // optional baseURL is used only for the HTTP reachability probe.
+  ipcMain.handle('ollama:status', (_e, opts?: { baseURL?: string }) =>
+    ollamaStatus(opts?.baseURL ?? ''),
+  );
+  ipcMain.handle('ollama:start', (_e, opts?: { baseURL?: string }) =>
+    startOllama(opts?.baseURL ?? ''),
+  );
+  // Compat check + auto-download (button-prompt). Like ollama:start, the renderer supplies
+  // NOTHING to these — the version is read from the resolved binary, and the download is a
+  // FIXED GitHub release + FIXED per-platform asset (see ollama-manager security note).
+  ipcMain.handle('ollama:version', async () => ({ version: await getOllamaVersion() }));
+  ipcMain.handle('ollama:compat', () => checkCompat());
+  ipcMain.handle('ollama:download', (e) =>
+    // Stream download progress to the requesting renderer only (e.sender, never broadcast).
+    downloadAndInstallOllama((p) => {
+      if (!e.sender.isDestroyed()) e.sender.send('ollama:download-progress', p);
+    }),
+  );
+  ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
+    if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
+    secretStore?.clearSecret(provider);
   });
 
   // Window controls
@@ -1099,11 +2047,35 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('window:confirm-close', (e, proceed: boolean) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
-    if (proceed) {
-      closeConfirmed.add(win);
-      win.destroy();
+    if (!proceed) {
+      // Close vetoed (Cancel / save failed). Abandon any deferred vault switch so a
+      // later ordinary close never silently applies it; the 'close' handler already
+      // preventDefaulted, so the session stays on the current vault.
+      pendingVaultSwitch = null;
+      return;
     }
-    // proceed=false → nothing to do; the 'close' handler already preventDefaulted.
+    // Commit a deferred vault switch now that close is confirmed (dirty tabs were
+    // handled by the renderer guard). This rewrites the bootstrap pointer ONLY here,
+    // never on a vetoed close — fixing the write-then-veto inconsistency.
+    if (pendingVaultSwitch) {
+      const sw = pendingVaultSwitch;
+      pendingVaultSwitch = null;
+      try {
+        const list = settingsStore?.get().vaults ?? [];
+        settingsStore?.set({ vaults: list.map((v) => ({ ...v, active: v.id === sw.id })) });
+        writeFileSync(
+          join(homedir(), '.stellavault.json'),
+          JSON.stringify({ vaultPath: sw.path, dbPath: sw.dbPath }, null, 2),
+          'utf-8',
+        );
+        app.relaunch();
+      } catch (err) {
+        console.error('[main] vault:switch commit failed:', err);
+        return; // keep the session alive on the current vault rather than close into limbo
+      }
+    }
+    closeConfirmed.add(win);
+    win.destroy(); // → window-all-closed → app.quit() (+ relaunch if one was armed)
   });
 
   // ─── App menu (W2) — zoom + shell helpers ───────────
@@ -1187,6 +2159,7 @@ function registerIpcHandlers(config: AppConfig) {
   // `vp`/`config`/`store`/`embedder`/`settingsStore` closures above; nothing in
   // the blocks above is modified. See registerPublishVaultClip for the impl.
   registerPublishVaultClip(config);
+  registerCaptureHandlers();
   // ─── [end publish/multi-vault agent block] ─────────────────────────────
 
   // ─── [AI-synthesis agent owned block — T3-1 / T3-8 appended] ───────────
@@ -1479,6 +2452,71 @@ function ensureActiveVaultRegistered(config: AppConfig): VaultRegistryEntry[] {
   return list;
 }
 
+// ─── Second-brain auto-capture IPC (Design §6.4) ───
+// All handlers reference the module-level `engine` (created at the end of initCore;
+// null until core is ready → safe degraded responses). The renderer never receives
+// note bodies or centroids — only the wire-safe DTOs the engine produces.
+function registerCaptureHandlers(): void {
+  ipcMain.handle('vault:capture', (_e, req: CaptureRequest) => {
+    if (!engine) return { id: '' };
+    // A file dropped in the renderer arrives as base64 (the renderer has no path).
+    // Stage it to a tmp file so the engine's extractFileContent(path) reuse works,
+    // then enqueue the path. The tmp file is the engine's input; the vault copy is
+    // created by ingest(). (50MB cap is enforced renderer-side + in the engine.)
+    if (req.kind === 'file' && req.sourceMeta?.base64) {
+      try {
+        const named = sanitizeAssetName(req.sourceMeta.fileName ?? 'dropped');
+        const tmpPath = join(tmpdir(), `sv-cap-${Date.now()}-${Math.round(Math.random() * 1e9).toString(36)}-${named.base}${named.ext}`);
+        writeFileSync(tmpPath, Buffer.from(req.sourceMeta.base64, 'base64'));
+        const { base64: _omit, ...meta } = req.sourceMeta;
+        return engine.enqueue({ ...req, payload: tmpPath, sourceMeta: meta });
+      } catch (err) {
+        console.error('[capture] file staging failed:', err);
+        return { id: '' };
+      }
+    }
+    // SECURITY (Codex P1): a file capture by PATH must NOT come through this
+    // renderer-callable channel — a compromised renderer could read ANY local file
+    // (bypassing assertInsideVault) by enqueuing an arbitrary absolute path. Dropped
+    // files go through the preload-only 'capture:dropped-file' (path resolved by
+    // webUtils.getPathForFile, which a renderer can't forge); explicit picks go
+    // through dialog (capture:pick-files). Reject renderer-supplied paths here.
+    if (req.kind === 'file') {
+      console.warn('[capture] rejected file capture without staged bytes (path must use captureDroppedFile / pick-files)');
+      return { id: '' };
+    }
+    return engine.enqueue(req); // url / text — payload is content/uri, not a path
+  });
+  // Preload-only channel (deliberately NOT in the renderer ALLOWED_CHANNELS): the
+  // dropped File's real path, resolved by webUtils.getPathForFile inside preload.
+  // Trusted because a renderer can't fabricate a path via getPathForFile (a memory
+  // File yields ''), and generic invoke() rejects this channel. Codex P1.
+  ipcMain.handle('capture:dropped-file', (_e, filePath: string, meta?: { fileName?: string; mime?: string }) => {
+    if (!engine || typeof filePath !== 'string' || !filePath) return { id: '' };
+    return engine.enqueue({ kind: 'file', payload: filePath, source: 'drop', sourceMeta: meta });
+  });
+  ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));
+  ipcMain.handle('capture:set-paused', (_e, paused: boolean) => { engine?.setPaused(paused); });
+  ipcMain.handle('capture:counts', () => (engine ? engine.counts() : { capturedToday: 0, pendingReviewCount: 0, queueDepth: 0, watching: false }));
+  // Guaranteed capture path (works even if OS drag-drop delivery is flaky): native
+  // file picker → enqueue the real paths directly (no base64/tmp staging needed).
+  ipcMain.handle('capture:pick-files', async () => {
+    if (!engine) return { count: 0 };
+    const opts = { title: 'Choose files to capture', properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'> };
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { count: 0 };
+    for (const filePath of result.filePaths) {
+      engine.enqueue({ kind: 'file', payload: filePath, source: 'drop' });
+    }
+    return { count: result.filePaths.length };
+  });
+  ipcMain.handle('review:list', () => (engine ? engine.listReview() : []));
+  ipcMain.handle('review:confirm', (_e, id: string, categoryId: string | null, stage?: string) => { engine?.confirmReview(id, categoryId, stage); });
+  ipcMain.handle('review:skip', (_e, id: string) => { engine?.skipReview(id); });
+  ipcMain.handle('categories:list', () => (engine ? engine.listCategories() : []));
+}
+
 function registerPublishVaultClip(config: AppConfig): void {
   const vp = config.vaultPath;
   ensureActiveVaultRegistered(config);
@@ -1638,6 +2676,18 @@ function registerPublishVaultClip(config: AppConfig): void {
     return entry;
   });
 
+  // Pick a folder INSIDE the active vault → return its vault-relative path (for the
+  // daily-notes / templates folder pickers in Settings). Rejects folders outside.
+  ipcMain.handle('vault:pick-folder', async (): Promise<{ rel: string | null; outside?: boolean } | null> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const opts = { title: 'Select a folder inside your vault', defaultPath: vp, properties: ['openDirectory'] as Array<'openDirectory'> };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const rel = relative(vp, result.filePaths[0]).replace(/\\/g, '/');
+    if (rel.startsWith('..') || /^[a-zA-Z]:/.test(rel)) return { rel: null, outside: true };
+    return { rel: rel || '.' };
+  });
+
   ipcMain.handle('vault:remove-from-registry', (_e, id: string): VaultRegistryEntry[] => {
     if (!settingsStore) settingsStore = new SettingsStore();
     const list = settingsStore.get().vaults ?? [];
@@ -1651,23 +2701,25 @@ function registerPublishVaultClip(config: AppConfig): void {
   // re-init (native SQLite + embedder reload + DB swap) is heavy and the watcher/
   // asset-protocol/IPC closures are all bound to the boot vault path. A clean
   // restart is far safer than hot-swapping every closure mid-session.
-  ipcMain.handle('vault:switch', (_e, id: string): { restartRequired: boolean } => {
+  // Confirmation happens in the renderer (themed ConfirmModal) — when this is
+  // called the user already chose "Restart now". Rewrite the bootstrap config and
+  // relaunch into the chosen vault (heavy core re-init; closures bound to boot path).
+  ipcMain.handle('vault:switch', (e, id: string): { restartRequired: boolean } => {
     if (!settingsStore) settingsStore = new SettingsStore();
     const list = settingsStore.get().vaults ?? [];
     const target = list.find((v) => v.id === id);
     if (!target) throw new Error(`Unknown vault: ${id}`);
-    settingsStore.set({ vaults: list.map((v) => ({ ...v, active: v.id === id })) });
-    // Rewrite the bootstrap config so the next launch loads the chosen vault.
-    try {
-      writeFileSync(
-        join(homedir(), '.stellavault.json'),
-        JSON.stringify({ vaultPath: target.path, dbPath: target.dbPath }, null, 2),
-        'utf-8',
-      );
-    } catch (err) {
-      console.error('[main] vault:switch — failed to rewrite bootstrap config:', err);
-      throw new Error('Could not persist vault switch.');
+    // Defer the active-flag flip + bootstrap-config rewrite until the close round-trip
+    // confirms (window:confirm-close). This routes the switch through the existing
+    // dirty-tab guard — unsaved edits get the Save/Discard/Cancel prompt, and the
+    // config is committed ONLY if the user actually lets the app close + relaunch.
+    pendingVaultSwitch = { id, path: target.path, dbPath: target.dbPath };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) {
+      pendingVaultSwitch = null;
+      throw new Error('Could not resolve window for vault switch.');
     }
+    win.close(); // → 'close' guard → window:close-request → window:confirm-close commits it
     return { restartRequired: true };
   });
 
@@ -1823,7 +2875,11 @@ function registerAssetProtocol(config: AppConfig): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
     try {
       const url = new URL(request.url);
-      // app://vault/<relpath> — only the "vault" host is served.
+      // app://vault/<relpath> — only the "vault" host is served. CANONICAL host-pin
+      // policy, CASE-SENSITIVE: new URL() does NOT lowercase a custom-scheme host,
+      // so app://VAULT → hostname 'VAULT' → 404. Mirrored in the renderer — keep in
+      // lockstep with packages/desktop/src/renderer/lib/sanitize.ts (APP_VAULT_RE /
+      // enforceAppHost); tests/app-host-consistency.test.ts asserts both layers agree.
       if (url.hostname !== 'vault') {
         return new Response('Not found', { status: 404 });
       }
@@ -2110,6 +3166,21 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // T2-Task2: SecretStore requires safeStorage, which is only available after
+  // app ready. Instantiate here, then run the one-time plaintext-key migration.
+  try {
+    secretStore = new SecretStore();
+    if (!settingsStore) settingsStore = new SettingsStore();
+    const legacyAi = settingsStore.get().ai as Record<string, unknown> | undefined;
+    const patch = migrateLegacyApiKey(legacyAi, secretStore);
+    if (patch) {
+      settingsStore.set(patch as Parameters<typeof settingsStore.set>[0]);
+      console.log('[main] migrated legacy plaintext API key into SecretStore');
+    }
+  } catch (err) {
+    console.error('[main] SecretStore init or migration failed:', err);
+  }
+
   const config = loadAppConfig();
 
   if (!config.vaultPath) {
@@ -2138,6 +3209,37 @@ app.whenReady().then(async () => {
 
   const win = createWindow();
 
+  // ─── Memory diagnostics (OOM investigation) ──────────────────────────────
+  // Large vaults have OOM'd the MAIN process after extended runtime. Log heap +
+  // native memory (external/arrayBuffers) + suspect cache sizes every 30s so growth
+  // is visible and ATTRIBUTABLE: heapUsed climbing → a JS structure leaks; external/
+  // arrayBuffers climbing → native (the ONNX embedder / sqlite). Gate with
+  // STELLAVAULT_NO_MEM_LOG=1. Cheap (one line / 30s); unref'd so it never holds the app up.
+  if (process.env.STELLAVAULT_NO_MEM_LOG !== '1') {
+    const mb = (n: number) => Math.round(n / 1048576);
+    const memTimer = setInterval(() => {
+      const m = process.memoryUsage();
+      console.error(
+        `[mem] rss=${mb(m.rss)}MB heap=${mb(m.heapUsed)}/${mb(m.heapTotal)}MB ` +
+        `external=${mb(m.external)}MB arrayBuffers=${mb(m.arrayBuffers)}MB | ` +
+        `graphCache=${graphBuildCache.size} clusterCache=${clusteredCache.size} ` +
+        `selfWrites=${recentSelfWrites.size} mcpAct=${mcpActivity.length} ` +
+        `wins=${BrowserWindow.getAllWindows().length}`,
+      );
+    }, 30_000);
+    memTimer.unref?.();
+    app.on('before-quit', () => clearInterval(memTimer));
+  }
+
+  // Startup race guard: initCore now resolves FAST (embedder + decay moved off the
+  // critical path), so it can finish BEFORE the renderer registers its 'core:ready'
+  // listener — a one-shot send would be missed → permanent "Waiting for AI engine…".
+  // Re-emit when the renderer finishes loading, if core is already up. (The renderer
+  // also queries 'core:get-ready' on mount as a belt-and-suspenders.)
+  win.webContents.on('did-finish-load', () => {
+    if (coreReady) win.webContents.send('core:ready');
+  });
+
   // Init core in background — don't block window creation
   void initCore(config).then(() => {
     win.webContents.send('core:ready');
@@ -2162,6 +3264,16 @@ app.whenReady().then(async () => {
 // T3-3: stop the embedded MCP server on quit so its loopback port is released.
 app.on('before-quit', () => {
   void stopMcpServer();
+});
+
+// SP1 chat: abort every in-flight stream on quit so no net.request outlives the app
+// (no orphaned sockets, no send-after-destroy). SEPARATE listener — the two existing
+// before-quit handlers above are untouched.
+app.on('before-quit', () => {
+  for (const { controller } of chatStreamRegistry.values()) {
+    try { controller.abort(); } catch { /* already aborted */ }
+  }
+  chatStreamRegistry.clear();
 });
 
 app.on('window-all-closed', () => {

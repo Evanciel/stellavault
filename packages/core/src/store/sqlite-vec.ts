@@ -247,25 +247,49 @@ export function createSqliteVecStore(dbPath: string, dimensions: number = 384): 
     },
 
     async getDocumentEmbeddings(maxDocs = 10000): Promise<Map<string, number[]>> {
-      // 각 문서의 첫 청크 임베딩을 문서 대표 벡터로 사용
-      // maxDocs로 메모리 상한 설정 (10K docs × 384 floats ≈ 15MB)
-      const BATCH_SIZE = 500;
+      // 각 문서의 첫 청크 임베딩을 문서 대표 벡터로 사용.
+      // ★PERF: 단일 쿼리로 로드. 이전엔 LIMIT/OFFSET 배치 루프가 매 배치마다
+      // `SELECT MIN(id) ... GROUP BY document_id` 서브쿼리를 재실행 → 대형 볼트(수만 청크)에서
+      // O(배치수 × 청크수) 전체 스캔 → 그래프 빌드가 메인 프로세스를 수 초간 블록(앱 "응답 없음").
+      // 서브쿼리를 1회만 평가하도록 단일 SELECT + LIMIT 으로 교체(메모리: 10K docs×384f ≈ 15MB).
       const result = new Map<string, number[]>();
-      const stmt = db.prepare(`
-        SELECT c.document_id, ce.embedding
+      const rows = db.prepare(`
+        SELECT c.document_id AS document_id, ce.embedding AS embedding
         FROM chunks c
         JOIN chunk_embeddings ce ON ce.chunk_id = c.id
-        WHERE c.id IN (
-          SELECT MIN(id) FROM chunks GROUP BY document_id
-        )
-        LIMIT ? OFFSET ?
-      `);
+        WHERE c.id IN (SELECT MIN(id) FROM chunks GROUP BY document_id)
+        LIMIT ?
+      `).all(maxDocs) as Array<{ document_id: string; embedding: Buffer }>;
+      for (const row of rows) {
+        result.set(row.document_id, bufferToFloat32(row.embedding));
+      }
+      return result;
+    },
 
-      for (let offset = 0; offset < maxDocs; offset += BATCH_SIZE) {
-        const rows = stmt.all(Math.min(BATCH_SIZE, maxDocs - offset), offset) as Array<{ document_id: string; embedding: Buffer }>;
-        if (rows.length === 0) break;
-        for (const row of rows) {
-          result.set(row.document_id, bufferToFloat32(row.embedding));
+    async getDocumentEmbeddingsByIds(documentIds: string[]): Promise<Map<string, number[]>> {
+      const result = new Map<string, number[]>();
+      if (documentIds.length === 0) return result;
+      // ★PERF (measured 38×): only the requested docs. idx_chunks_document_id makes the
+      // per-doc MIN(id) fast, then read each first-chunk embedding from chunk_embeddings
+      // by its PK (chunk_id). Reading all 12k from the vec0 vtable ≈ 11s; the ~1.5k we
+      // actually render ≈ 0.3s. Chunk the IN-lists to stay under SQLite's variable limit.
+      const CHUNK = 800;
+      for (let off = 0; off < documentIds.length; off += CHUNK) {
+        const slice = documentIds.slice(off, off + CHUNK);
+        const ph = slice.map(() => '?').join(',');
+        const cidRows = db.prepare(
+          `SELECT document_id AS d, MIN(id) AS cid FROM chunks WHERE document_id IN (${ph}) GROUP BY document_id`,
+        ).all(...slice) as Array<{ d: string; cid: string }>;
+        if (cidRows.length === 0) continue;
+        const docByCid = new Map(cidRows.map((r) => [String(r.cid), r.d]));
+        const cids = cidRows.map((r) => r.cid);
+        const ph2 = cids.map(() => '?').join(',');
+        const embRows = db.prepare(
+          `SELECT chunk_id AS cid, embedding FROM chunk_embeddings WHERE chunk_id IN (${ph2})`,
+        ).all(...cids) as Array<{ cid: string; embedding: Buffer }>;
+        for (const row of embRows) {
+          const docId = docByCid.get(String(row.cid));
+          if (docId) result.set(docId, bufferToFloat32(row.embedding));
         }
       }
       return result;

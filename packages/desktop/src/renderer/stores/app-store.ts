@@ -19,13 +19,16 @@ export interface OpenTab {
   // updateTabFrontmatter (Properties edits). `content` stays authoritative —
   // EditorArea derives {frontmatter, body} from it via lib/frontmatter.ts.
   frontmatter?: Record<string, unknown>;
-  // Wave 2 additive: special tab kinds. 'note' (default, file-backed) or
-  // 'graph' (full main-pane GraphView — no file, never dirty, content unused).
-  kind?: 'note' | 'graph';
+  // Wave 2 additive: special tab kinds. 'note' (default, file-backed),
+  // 'graph' (full main-pane GraphView) or 'chat' (full main-pane AI chat) —
+  // the special kinds carry no file, never go dirty, and leave content unused.
+  kind?: 'note' | 'graph' | 'chat';
 }
 
 // Singleton id for the graph tab — at most one graph tab is ever open.
 export const GRAPH_TAB_ID = '__graph-view__';
+// Singleton id for the chat tab — at most one center chat tab is ever open.
+export const CHAT_TAB_ID = '__chat-view__';
 
 interface AppState {
   // Sidebar
@@ -39,8 +42,19 @@ interface AppState {
   activeTabId: string | null;
 
   // Panel (Stage C adds 'search' | 'outline' | 'tags' — W1-4/5/6)
-  rightPanel: 'none' | 'graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis'; // T2-6: 'coach'; T3-1: 'synthesis'
+  rightPanel: 'none' | 'graph' | 'note-graph' | 'ai' | 'backlinks' | 'search' | 'outline' | 'tags' | 'coach' | 'synthesis' | 'capture' | 'review' | 'categories' | 'note-preview'; // T2-6 coach; T3-1 synthesis; second-brain capture/review/categories; note-preview = web-style read-only preview; note-graph = note-focused 3D explore graph (Explore-in-graph button)
   rightPanelWidth: number;
+
+  // Note preview — clicking a graph node (or a link) streams a READ-ONLY note
+  // into the right panel instead of stealing the main pane (web/Obsidian style).
+  previewNote: { filePath: string; title: string; content: string; isDirty: boolean } | null;
+  // Explorer back/forward history (browser-style). Re-centering pushes the current
+  // note onto previewBack and clears previewFwd; goPreviewBack/Fwd walk the stacks.
+  previewBack: Array<{ filePath: string; title: string; content: string; isDirty: boolean }>;
+  previewFwd: Array<{ filePath: string; title: string; content: string; isDirty: boolean }>;
+  // "Explore connections" hand-off: the preview asks the main graph tab to focus a
+  // note (BFS neighbours + pulse). GraphView consumes it then clears it.
+  exploreTarget: { filePath: string; title: string } | null;
 
   // Stage C additive (W1-6): cross-panel search hand-off — TagsPanel (or any
   // caller) sets a query via openSearchWithQuery(); SearchPanel consumes it,
@@ -81,9 +95,25 @@ interface AppState {
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   // Wave 2 additive: open (or focus) the singleton full-pane graph tab.
   openGraphTab: () => void;
+  openChatTab: () => void;
 
   setRightPanel: (panel: AppState['rightPanel']) => void;
   setRightPanelWidth: (w: number) => void;
+  // Show a note in the right-panel explorer (graph node click / re-center) + flip
+  // the panel to 'note-preview'. Does NOT touch tabs/activeTabId → graph stays put.
+  setPreviewNote: (note: { filePath: string; title: string; content: string }) => void;
+  // Explorer Edit segment: mutate the preview note's body (isDirty=true) / clear.
+  updatePreviewContent: (content: string) => void;
+  markPreviewClean: () => void;
+  // Replace the current preview note's body in place (NO history push) — used by
+  // Back/Forward to overwrite the restored snapshot with fresh DISK content so
+  // navigation reflects disk truth, not a stale (possibly clean-looking) in-memory copy.
+  setPreviewNoteInPlace: (note: { filePath: string; title: string; content: string }) => void;
+  // Explorer history navigation (header ← / → buttons).
+  goPreviewBack: () => void;
+  goPreviewFwd: () => void;
+  // "Explore connections" → focus a note in the main graph tab.
+  setExploreTarget: (t: { filePath: string; title: string } | null) => void;
   // Stage C additive (W1-6).
   openSearchWithQuery: (query: string) => void;
   clearPendingSearchQuery: () => void;
@@ -102,7 +132,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTabId: null,
 
   rightPanel: 'none',
-  rightPanelWidth: 380,
+  rightPanelWidth: 480,
+  previewNote: null,
+  previewBack: [],
+  previewFwd: [],
+  exploreTarget: null,
   pendingSearchQuery: null,
 
   theme: 'dark',
@@ -197,8 +231,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { tabs: [...s.tabs, tab], activeTabId: tab.id };
   }),
 
+  // Center chat tab — singleton, mirrors openGraphTab. Brings AI chat into the
+  // main pane as a first-class view (not just the right AI-panel tab).
+  openChatTab: () => set((s) => {
+    const existing = s.tabs.find((t) => t.kind === 'chat');
+    if (existing) return { activeTabId: existing.id };
+    const tab: OpenTab = {
+      id: CHAT_TAB_ID, filePath: '', title: 'Chat',
+      isDirty: false, content: '', kind: 'chat',
+    };
+    return { tabs: [...s.tabs, tab], activeTabId: tab.id };
+  }),
+
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (w) => set({ rightPanelWidth: w }),
+  setPreviewNote: (note) => set((s) => {
+    // Re-centering onto the SAME note (re-clicking the centered node, or the
+    // LocalGraph centre node) must NOT push a duplicate history entry — that turns
+    // Back into a dead step. Refresh content in place; leave the stacks intact.
+    if (s.previewNote && s.previewNote.filePath === note.filePath) {
+      return { previewNote: { ...note, isDirty: false }, rightPanel: 'note-preview' };
+    }
+    return {
+      previewBack: s.previewNote ? [...s.previewBack, s.previewNote].slice(-50) : s.previewBack,
+      previewFwd: [],
+      previewNote: { ...note, isDirty: false },
+      rightPanel: 'note-preview',
+    };
+  }),
+  updatePreviewContent: (content) => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, content, isDirty: true } } : {}),
+  markPreviewClean: () => set((s) => s.previewNote ? { previewNote: { ...s.previewNote, isDirty: false } } : {}),
+  setPreviewNoteInPlace: (note) => set((s) => s.previewNote ? { previewNote: { ...note, isDirty: false } } : {}),
+  goPreviewBack: () => set((s) => {
+    if (s.previewBack.length === 0) return {};
+    const prev = s.previewBack[s.previewBack.length - 1];
+    return {
+      previewBack: s.previewBack.slice(0, -1),
+      previewFwd: s.previewNote ? [...s.previewFwd, s.previewNote] : s.previewFwd,
+      previewNote: prev,
+    };
+  }),
+  goPreviewFwd: () => set((s) => {
+    if (s.previewFwd.length === 0) return {};
+    const next = s.previewFwd[s.previewFwd.length - 1];
+    return {
+      previewFwd: s.previewFwd.slice(0, -1),
+      previewBack: s.previewNote ? [...s.previewBack, s.previewNote] : s.previewBack,
+      previewNote: next,
+    };
+  }),
+  setExploreTarget: (t) => set({ exploreTarget: t }),
   // Stage C additive (W1-6).
   openSearchWithQuery: (query) => set({ rightPanel: 'search', pendingSearchQuery: query }),
   clearPendingSearchQuery: () => set({ pendingSearchQuery: null }),

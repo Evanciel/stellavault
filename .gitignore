@@ -71,6 +71,10 @@ Autonomous_Knowledge_Foundry.pdf
 tmp-pw/
 packages/desktop/out/
 
+# Stray vault output when ingest/tests run from a package dir (compiled wiki + raw notes)
+packages/*/_wiki/
+packages/*/raw/
+
 # npm audit / dependency scratch dumps (ephemeral — never commit)
 audit.json
 audit_full.json

@@ -1,41 +1,39 @@
 // Stellavault Desktop — LLM Synthesizer (main process, T3-2 / T3-1)
 //
-// Implements core's pluggable `Synthesizer` interface (intelligence/ask-engine.ts)
-// using the Anthropic Messages API. Core never imports an LLM SDK or holds the key
-// — the desktop main process owns the API key (desktop-settings.json) and injects
-// this synthesizer into askVault / the synthesis handler when a key is configured.
+// Implements core's pluggable `Synthesizer` interface (intelligence/ask-engine.ts) for
+// Ask + Wiki Synthesis. Core never imports an LLM SDK or holds the key — the desktop
+// main process owns the API key (desktop-settings.json) and injects this synthesizer
+// when a provider is configured.
 //
-// No SDK dependency: we call the Messages API over Electron's `net.request`
-// (system-proxy aware). The answer is grounded in the retrieved vault sources and
-// cites them as [[Title]] wikilinks so the desktop renders clickable backlinks.
+// Multi-provider, SDK-less: all calls go over Electron's `net.request` (system-proxy
+// aware). One `postJson` helper serves Anthropic, OpenAI, any OpenAI-compatible server
+// (Ollama / LM Studio / Groq / OpenRouter / DeepSeek …), and Google Gemini.
 //
-// Security: the API key is read here and sent ONLY to api.anthropic.com over
-// https. It is NEVER logged (we log status codes / generic failures only) and
+// Security: the key is read here and sent ONLY to the selected provider's endpoint over
+// the URL's protocol. It is NEVER logged (status codes / generic failures only) and
 // never returned to the renderer.
 
 import { net } from 'electron';
 import type { Synthesizer, SynthesisSource } from '@stellavault/core';
+import {
+  ANTHROPIC_VERSION, DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, OPENAI_BASE_URL, type AiProvider,
+} from '../shared/ai-providers.js';
+
+// Re-export for back-compat (older imports referenced this from here).
+export { DEFAULT_ANTHROPIC_MODEL };
 
 export interface LlmConfig {
-  provider: 'anthropic' | 'none';
+  provider: AiProvider;
   apiKey: string;
   model: string;
+  baseURL?: string; // only used when provider === 'openai-compatible'
 }
 
-// Latest Claude model id (claude-api skill): default when provider=anthropic.
-// Fable 5 — thinking is always on, so the `thinking` param is OMITTED entirely
-// (an explicit {type:"disabled"} 400s; an explicit budget also 400s). No
-// temperature/top_p (removed on Fable 5 / Opus 4.7+). No assistant prefill.
-export const DEFAULT_ANTHROPIC_MODEL = 'claude-fable-5';
-
-const ANTHROPIC_HOST = 'api.anthropic.com';
-const ANTHROPIC_PATH = '/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_TOKENS = 2048;
 
 /** Build the grounding block from retrieved sources (title + snippet only). */
-function sourcesBlock(sources: SynthesisSource[]): string {
+export function sourcesBlock(sources: SynthesisSource[]): string {
   return sources
     .slice(0, 12)
     .map((s, i) => `[${i + 1}] ${s.title}\n${(s.snippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)}`)
@@ -66,26 +64,33 @@ function wikiPrompt(topic: string, sources: SynthesisSource[]): string {
   ].join('\n');
 }
 
-/** Single Messages API call over net.request. Resolves the assistant text, or
- *  rejects on transport / non-2xx / refusal so the caller can fall back. */
-function callAnthropic(cfg: LlmConfig, prompt: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const body = JSON.stringify({
-      model: cfg.model || DEFAULT_ANTHROPIC_MODEL,
-      max_tokens: MAX_TOKENS,
-      // Fable 5: thinking is always on — omit the `thinking` field. No sampling params.
-      messages: [{ role: 'user', content: prompt }],
-    });
-
+/** Generic JSON POST over net.request (system-proxy aware). Parses protocol/host/port/
+ *  path from `url`, so the SAME helper serves https://api.openai.com AND
+ *  http://localhost:11434 (local loopback uses plain http via the URL's protocol).
+ *  Resolves {status, body}; rejects on transport error / timeout. */
+function postJson(url: string, headers: Record<string, string>, bodyObj: unknown): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      reject(new Error('Invalid AI endpoint URL'));
+      return;
+    }
+    const protocol = u.protocol;
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      reject(new Error('Unsupported AI endpoint protocol'));
+      return;
+    }
     const request = net.request({
       method: 'POST',
-      protocol: 'https:',
-      hostname: ANTHROPIC_HOST,
-      path: ANTHROPIC_PATH,
+      protocol,
+      hostname: u.hostname,
+      port: u.port ? Number(u.port) : undefined,
+      path: u.pathname + u.search,
     });
     request.setHeader('content-type', 'application/json');
-    request.setHeader('anthropic-version', ANTHROPIC_VERSION);
-    request.setHeader('x-api-key', cfg.apiKey);
+    for (const [k, v] of Object.entries(headers)) request.setHeader(k, v);
 
     const timer = setTimeout(() => {
       try { request.abort(); } catch { /* already done */ }
@@ -97,59 +102,103 @@ function callAnthropic(cfg: LlmConfig, prompt: string): Promise<string> {
       response.on('data', (c) => chunks.push(Buffer.from(c)));
       response.on('end', () => {
         clearTimeout(timer);
-        const status = response.statusCode ?? 0;
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        if (status < 200 || status >= 300) {
-          // Do NOT log the key or full request — status + generic message only.
-          reject(new Error(`Anthropic API error ${status}`));
-          return;
-        }
-        try {
-          const parsed = JSON.parse(raw);
-          // Fable 5 may return stop_reason "refusal" (HTTP 200, empty/partial content).
-          if (parsed?.stop_reason === 'refusal') {
-            reject(new Error('LLM declined to answer'));
-            return;
-          }
-          const text = Array.isArray(parsed?.content)
-            ? parsed.content
-                .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-                .map((b: any) => b.text)
-                .join('')
-                .trim()
-            : '';
-          if (!text) {
-            reject(new Error('Empty LLM response'));
-            return;
-          }
-          resolve(text);
-        } catch {
-          reject(new Error('Failed to parse LLM response'));
-        }
+        resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf-8') });
       });
     });
     request.on('error', (err) => {
       clearTimeout(timer);
-      // err.message can include host but never the key; keep it generic anyway.
       reject(new Error(`LLM request failed: ${err.message}`));
     });
 
-    request.write(body);
+    request.write(JSON.stringify(bodyObj));
     request.end();
   });
 }
 
-/** Build a core Synthesizer from the desktop AI settings, or null when no key is
- *  configured (caller then uses the extractive fallback). */
+function callAnthropic(cfg: LlmConfig, prompt: string): Promise<string> {
+  return postJson(
+    'https://api.anthropic.com/v1/messages',
+    { 'anthropic-version': ANTHROPIC_VERSION, 'x-api-key': cfg.apiKey },
+    { model: cfg.model || DEFAULT_ANTHROPIC_MODEL, max_tokens: MAX_TOKENS, messages: [{ role: 'user', content: prompt }] },
+  ).then(({ status, body }) => {
+    if (status < 200 || status >= 300) throw new Error(`Anthropic API error ${status}`);
+    const parsed = JSON.parse(body);
+    if (parsed?.stop_reason === 'refusal') throw new Error('LLM declined to answer');
+    const text = Array.isArray(parsed?.content)
+      ? parsed.content.filter((b: any) => b?.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('').trim()
+      : '';
+    if (!text) throw new Error('Empty LLM response');
+    return text;
+  });
+}
+
+// Covers provider 'openai' (fixed baseURL) AND 'openai-compatible' (Ollama / LM Studio /
+// Groq / OpenRouter / DeepSeek / …). Authorization header set only when a key is present
+// (local servers need none).
+function callOpenAiCompatible(cfg: LlmConfig, prompt: string, baseURL: string): Promise<string> {
+  const headers: Record<string, string> = {};
+  const key = (cfg.apiKey ?? '').trim();
+  if (key) headers['authorization'] = `Bearer ${key}`;
+  const url = `${baseURL.replace(/\/+$/, '')}/chat/completions`;
+  return postJson(url, headers, {
+    model: cfg.model,
+    max_tokens: MAX_TOKENS,
+    messages: [{ role: 'user', content: prompt }],
+    stream: false,
+  }).then(({ status, body }) => {
+    if (status < 200 || status >= 300) throw new Error(`OpenAI-compatible API error ${status}`);
+    const parsed = JSON.parse(body);
+    const text = (parsed?.choices?.[0]?.message?.content ?? '').trim();
+    if (!text) throw new Error('Empty LLM response');
+    return text;
+  });
+}
+
+// Google Gemini — generativelanguage REST. The key goes in the URL query (?key=),
+// which is the documented scheme; never log the URL.
+function callGemini(cfg: LlmConfig, prompt: string): Promise<string> {
+  const model = cfg.model || DEFAULT_GEMINI_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  return postJson(url, {}, {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: MAX_TOKENS },
+  }).then(({ status, body }) => {
+    if (status < 200 || status >= 300) throw new Error(`Gemini API error ${status}`);
+    const parsed = JSON.parse(body);
+    const cand = parsed?.candidates?.[0];
+    if (cand?.finishReason === 'SAFETY') throw new Error('LLM declined to answer');
+    const text = (cand?.content?.parts ?? []).filter((p: any) => typeof p?.text === 'string').map((p: any) => p.text).join('').trim();
+    if (!text) throw new Error('Empty LLM response');
+    return text;
+  });
+}
+
+/** Build a core Synthesizer from the desktop AI settings, or null when no usable
+ *  provider is configured (caller then uses the extractive fallback). Signature
+ *  unchanged → Ask + Wiki Synthesis handlers need no edits. */
 export function makeSynthesizer(ai: LlmConfig | undefined | null): Synthesizer | null {
-  if (!ai || ai.provider !== 'anthropic') return null;
+  if (!ai || ai.provider === 'none') return null;
+  const provider = ai.provider;
   const apiKey = (ai.apiKey ?? '').trim();
-  if (!apiKey) return null;
-  const cfg: LlmConfig = { provider: 'anthropic', apiKey, model: (ai.model || DEFAULT_ANTHROPIC_MODEL).trim() };
+  const baseURL = (ai.baseURL ?? '').trim();
+
+  // Local openai-compatible servers may run keyless; everything else needs a key.
+  if (!apiKey && provider !== 'openai-compatible') return null;
+  if (provider === 'openai-compatible' && !baseURL) return null;
+
+  const model = (ai.model || DEFAULT_MODELS[provider] || '').trim();
+  const cfg: LlmConfig = { provider, apiKey, model, baseURL };
+
   return {
     async synthesize({ question, sources, mode }) {
       const prompt = mode === 'wiki' ? wikiPrompt(question, sources) : askPrompt(question, sources);
-      return callAnthropic(cfg, prompt);
+      switch (provider) {
+        case 'anthropic':         return callAnthropic(cfg, prompt);
+        case 'openai':            return callOpenAiCompatible(cfg, prompt, OPENAI_BASE_URL);
+        case 'openai-compatible': return callOpenAiCompatible(cfg, prompt, baseURL);
+        case 'google':            return callGemini(cfg, prompt);
+        default:                  throw new Error(`Unknown AI provider: ${String(provider)}`);
+      }
     },
   };
 }

@@ -15,6 +15,7 @@ export function getDefaults(): AppSettings {
   return {
     version: 1,
     theme: 'dark',
+    language: 'en', // i18n default; user switches in Settings → General
     accent: '#6366f1', // matches theme.css --accent (renderer default mirror)
     editor: { fontSize: 15, lineWidth: 720, spellcheck: false },
     hotkeys: {},
@@ -50,10 +51,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+// WARNING: null is a deletion sentinel — a null value in a patch REMOVES the key
+// from the stored object. Nullable AppSettings fields must therefore never be
+// patched with null via settingsStore.set (use deepMerge only with validated patches).
 function deepMerge<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
+    if (value === undefined) continue;                // undefined → skip (normal partial patch)
+    if (value === null) { delete out[key]; continue } // null → explicit delete
     if (isPlainObject(value) && isPlainObject(out[key])) {
       out[key] = deepMerge(out[key] as Record<string, unknown>, value);
     } else {

@@ -7,9 +7,12 @@ import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { invokeIpcRaw } from '../../lib/runtime-sync.js';
 import { registerCommand } from '../../lib/commands.js';
+import { useT } from '../../lib/i18n.js';
+import { ChatPanel } from '../chat/ChatPanel.js';
+import { MemorySkillsPanel } from './MemorySkillsPanel.js';
 import type { SearchResult, VaultStats, DecayItem } from '../../../shared/ipc-types.js';
 
-type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats';
+type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats' | 'chat' | 'manage';
 
 // ─── Cross-component tab requests (palette commands → panel) ───
 
@@ -49,6 +52,7 @@ function registerAiPanelCommands(): void {
 registerAiPanelCommands();
 
 export function AIPanel() {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>('ask');
   const coreReady = useAppStore((s) => s.coreReady);
   const requestedTab = useAiPanelUi((s) => s.requestedTab);
@@ -64,8 +68,8 @@ export function AIPanel() {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
         <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.3 }}>&#x2726;</div>
-        Loading AI engine...
-        <div style={{ marginTop: 8, fontSize: 10 }}>First run downloads ~30MB model</div>
+        {t('panel.ai.loadingAiEngine')}
+        <div style={{ marginTop: 8, fontSize: 10 }}>{t('panel.ai.firstRunHint')}</div>
       </div>
     );
   }
@@ -78,7 +82,7 @@ export function AIPanel() {
         borderBottom: '1px solid var(--border)',
         fontSize: 11,
       }}>
-        {(['ask', 'search', 'express', 'decay', 'stats'] as Tab[]).map((tab) => (
+        {(['ask', 'search', 'express', 'decay', 'stats', 'chat', 'manage'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -95,7 +99,7 @@ export function AIPanel() {
               fontSize: 11,
             }}
           >
-            {tab === 'ask' ? 'Ask' : tab === 'search' ? 'Search' : tab === 'express' ? 'Draft' : tab === 'decay' ? 'Memory' : 'Stats'}
+            {tab === 'ask' ? t('panel.ai.tabAsk') : tab === 'search' ? t('panel.ai.tabSearch') : tab === 'express' ? t('panel.ai.tabDraft') : tab === 'decay' ? t('panel.ai.tabMemory') : tab === 'stats' ? t('panel.ai.tabStats') : tab === 'chat' ? t('panel.ai.tabChat') : t('panel.ai.tabManage')}
           </button>
         ))}
       </div>
@@ -107,12 +111,15 @@ export function AIPanel() {
         {activeTab === 'express' && <ExpressDraft />}
         {activeTab === 'decay' && <ReviewQueue />}
         {activeTab === 'stats' && <VaultStatsView />}
+        {activeTab === 'chat' && <ChatPanel />}
+        {activeTab === 'manage' && <MemorySkillsPanel />}
       </div>
     </div>
   );
 }
 
 function AISearch() {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -134,7 +141,7 @@ function AISearch() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleSearch(); }}
-          placeholder="Ask your knowledge..."
+          placeholder={t('panel.ai.searchPlaceholder')}
           style={{
             flex: 1,
             background: 'var(--hover)',
@@ -159,7 +166,7 @@ function AISearch() {
             cursor: 'pointer',
           }}
         >
-          {loading ? '...' : 'Search'}
+          {loading ? '...' : t('panel.ai.searchButton')}
         </button>
       </div>
 
@@ -212,7 +219,7 @@ function AISearch() {
 
       {results.length === 0 && query && !loading && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          No results. Try different keywords.
+          {t('panel.ai.noSearchResults')}
         </div>
       )}
     </div>
@@ -227,6 +234,7 @@ interface AskResponse {
 }
 
 function AskVault() {
+  const t = useT();
   const [question, setQuestion] = useState('');
   const [response, setResponse] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -260,7 +268,7 @@ function AskVault() {
             void handleAsk();
           }
         }}
-        placeholder="Ask your vault a question... (Ctrl+Enter)"
+        placeholder={t('panel.ai.askPlaceholder')}
         aria-label="Ask your vault"
         rows={3}
         style={{
@@ -294,7 +302,7 @@ function AskVault() {
           opacity: loading || !question.trim() ? 0.5 : 1,
         }}
       >
-        {loading ? 'Thinking...' : 'Ask'}
+        {loading ? t('panel.ai.asking') : t('panel.ai.askButton')}
       </button>
 
       {/* Loading skeleton */}
@@ -339,7 +347,7 @@ function AskVault() {
           {response.citations.length > 0 && (
             <>
               <div style={{ marginTop: 12, marginBottom: 6, fontSize: 10, color: 'var(--ink-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                Sources ({response.citations.length})
+                {t('panel.ai.sourcesList', { count: response.citations.length })}
               </div>
               {response.citations.map((c) => (
                 <div
@@ -374,7 +382,7 @@ function AskVault() {
 
       {!response && !loading && !error && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          Answers are synthesized from your own notes, with citations.
+          {t('panel.ai.askHint')}
         </div>
       )}
     </div>
@@ -399,6 +407,7 @@ const GRADE_BUTTONS: { grade: 1 | 2 | 3 | 4; label: string; bg: string }[] = [
 ];
 
 function ReviewQueue() {
+  const t = useT();
   const [items, setItems] = useState<DecayItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const openFile = useAppStore((s) => s.openFile);
@@ -429,16 +438,16 @@ function ReviewQueue() {
   }, [refresh]);
 
   if (items === null) {
-    return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>Loading review queue...</div>;
+    return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>{t('panel.ai.loadingReviewQueue')}</div>;
   }
 
   return (
     <div>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--ink)' }}>
-        Review queue
+        {t('panel.ai.reviewQueueTitle')}
       </div>
       <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 12 }}>
-        Notes fading from memory, weakest first. Reviewing resets their decay.
+        {t('panel.ai.reviewQueueHint')}
       </div>
 
       {error && (
@@ -449,7 +458,7 @@ function ReviewQueue() {
 
       {items.length === 0 && !error && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          Nothing to review — your memory is fresh. ✦
+          {t('panel.ai.noReviewItems')}
         </div>
       )}
 
@@ -472,7 +481,7 @@ function ReviewQueue() {
                 {item.title}
               </div>
               <span style={{ fontSize: 9, color: 'var(--ink-faint)', flexShrink: 0 }}>
-                {overdueDays}d ago
+                {overdueDays}{t('panel.ai.daysAgo')}
               </span>
             </div>
 
@@ -495,7 +504,7 @@ function ReviewQueue() {
 
             <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
               <span style={{ fontSize: 9, color: pct < 50 ? '#e5484d' : 'var(--ink-faint)' }}>
-                {pct}% retained
+                {pct}{t('panel.ai.percentRetained')}
               </span>
               <button
                 onClick={async () => {
@@ -507,7 +516,7 @@ function ReviewQueue() {
                   background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--ink-dim)',
                 }}
               >
-                Open
+                {t('common.open')}
               </button>
             </div>
 
@@ -537,6 +546,7 @@ function ReviewQueue() {
 }
 
 function VaultStatsView() {
+  const t = useT();
   const [stats, setStats] = useState<VaultStats | null>(null);
 
   // P0 fix: move IPC call into useEffect (was firing on every render)
@@ -545,19 +555,19 @@ function VaultStatsView() {
     void ipc('core:get-stats').then(setStats).catch(() => {});
   }, [stats]);
 
-  if (!stats) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>Loading...</div>;
+  if (!stats) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11 }}>{t('panel.ai.loadingStats')}</div>;
 
   return (
     <div>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 16, color: 'var(--ink)' }}>
-        Vault statistics
+        {t('panel.ai.vaultStatsTitle')}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {[
-          { label: 'Documents', value: stats.documentCount },
-          { label: 'Chunks', value: stats.chunkCount },
-          { label: 'DB size', value: `${(stats.dbSizeBytes / 1024 / 1024).toFixed(1)}MB` },
-          { label: 'Last indexed', value: stats.lastIndexed ? new Date(stats.lastIndexed).toLocaleDateString() : 'Never' },
+          { label: t('panel.ai.statsDocuments'), value: stats.documentCount },
+          { label: t('panel.ai.statsChunks'), value: stats.chunkCount },
+          { label: t('panel.ai.statsDbSize'), value: `${(stats.dbSizeBytes / 1024 / 1024).toFixed(1)}MB` },
+          { label: t('panel.ai.statsLastIndexed'), value: stats.lastIndexed ? new Date(stats.lastIndexed).toLocaleDateString() : t('panel.ai.statsNeverIndexed') },
         ].map((s) => (
           <div key={s.label} style={{
             padding: '12px',
@@ -592,13 +602,14 @@ function VaultStatsView() {
           cursor: 'pointer',
         }}
       >
-        Re-index vault
+        {t('panel.ai.reindexButton')}
       </button>
     </div>
   );
 }
 
 function ExpressDraft() {
+  const t = useT();
   const [topic, setTopic] = useState('');
   const [format, setFormat] = useState<'outline' | 'blog'>('outline');
   const [draft, setDraft] = useState<{ title: string; content: string; sources: string[] } | null>(null);
@@ -625,7 +636,7 @@ function ExpressDraft() {
   return (
     <div>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--ink)' }}>
-        Express — draft from your knowledge
+        {t('panel.ai.expressTitle')}
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
         <input
@@ -633,7 +644,7 @@ function ExpressDraft() {
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleGenerate(); }}
-          placeholder="Topic or question..."
+          placeholder={t('panel.ai.draftPlaceholder')}
           aria-label="Draft topic"
           style={{
             flex: 1, background: 'var(--hover)', border: '1px solid var(--border)',
@@ -652,7 +663,7 @@ function ExpressDraft() {
               color: format === f ? 'var(--accent-2)' : 'var(--ink-dim)',
             }}
           >
-            {f === 'outline' ? 'Outline' : 'Blog post'}
+            {f === 'outline' ? t('panel.ai.formatOutline') : t('panel.ai.formatBlogPost')}
           </button>
         ))}
         <button
@@ -664,7 +675,7 @@ function ExpressDraft() {
             opacity: loading || !topic.trim() ? 0.5 : 1,
           }}
         >
-          {loading ? 'Generating...' : 'Generate'}
+          {loading ? t('panel.ai.generating') : t('panel.ai.generateButton')}
         </button>
       </div>
 
@@ -687,10 +698,10 @@ function ExpressDraft() {
                 borderRadius: 4, color: '#fff', fontSize: 11, cursor: 'pointer',
               }}
             >
-              Save to vault & edit
+              {t('panel.ai.saveDraftButton')}
             </button>
             <span style={{ fontSize: 10, color: 'var(--ink-faint)', alignSelf: 'center' }}>
-              {draft.sources.length} sources used
+              {draft.sources.length} {t('panel.ai.sourcesUsed')}
             </span>
           </div>
         </div>
@@ -698,7 +709,7 @@ function ExpressDraft() {
 
       {!draft && !loading && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          Enter a topic and click Generate to create a draft from your vault knowledge.
+          {t('panel.ai.draftHint')}
         </div>
       )}
     </div>

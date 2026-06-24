@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isValidProvider, KEY_PROVIDERS } from '../src/shared/ai-providers.js';
+
+// Read IPC types source for T5 structural assertions
+const ipcTypesRaw = readFileSync(
+  join(__dirname, '..', 'src', 'shared', 'ipc-types.ts'),
+  'utf-8',
+);
+
+// Read main handler source for T5 structural assertions
+const mainSrc = readFileSync(
+  join(__dirname, '..', 'src', 'main', 'index.ts'),
+  'utf-8',
+);
 
 // Read preload source to extract ALLOWED_CHANNELS and ALLOWED_EVENTS at test time
 // This tests the actual security boundary without requiring Electron runtime
@@ -83,5 +96,107 @@ describe('Desktop IPC Security', () => {
   it('core 채널에 search와 stats 포함', () => {
     expect(allowedChannels).toContain('core:search');
     expect(allowedChannels).toContain('core:get-stats');
+  });
+
+  it('exposes write-only secret channels, no secret-returning channel', () => {
+    expect(allowedChannels).toContain('ai:set-secret');
+    expect(allowedChannels).toContain('ai:has-secret');
+    expect(allowedChannels).toContain('ai:clear-secret');
+    expect(allowedChannels.some((c: string) => /get-secret|read-secret/.test(c))).toBe(false);
+  });
+});
+
+// ─── T5: ai:list-models key-source assertions ────────────────────────────────
+describe('T5 — ai:list-models key-source security', () => {
+  it('IPC type for ai:list-models has no apiKey in args', () => {
+    // Find the ai:list-models channel definition line
+    const match = ipcTypesRaw.match(/'ai:list-models'\s*:\s*\{[^}]+\}/s);
+    expect(match).not.toBeNull();
+    const definition = match![0];
+    expect(definition).not.toContain('apiKey');
+  });
+
+  it('IPC type for ai:list-models still accepts provider and optional baseURL', () => {
+    const match = ipcTypesRaw.match(/'ai:list-models'\s*:\s*\{[^}]+\}/s);
+    expect(match).not.toBeNull();
+    const definition = match![0];
+    expect(definition).toContain('provider');
+    expect(definition).toContain('baseURL');
+  });
+
+  it('main handler loads key from secretStore, not from renderer opts', () => {
+    // The handler should call secretStore.getSecret / getSecret, not use opts.apiKey
+    const handlerMatch = mainSrc.match(/ipcMain\.handle\('ai:list-models'[\s\S]*?\}\);/);
+    expect(handlerMatch).not.toBeNull();
+    const handler = handlerMatch![0];
+    expect(handler).toContain('getSecret');
+    expect(handler).not.toContain('opts.apiKey');
+  });
+
+  it('main handler does NOT accept apiKey in its opts parameter type', () => {
+    const handlerMatch = mainSrc.match(/ipcMain\.handle\('ai:list-models'[\s\S]*?\}\);/);
+    expect(handlerMatch).not.toBeNull();
+    const handler = handlerMatch![0];
+    // The opts type annotation must not include apiKey
+    const optsTypeMatch = handler.match(/opts\s*:\s*\{[^}]+\}/);
+    if (optsTypeMatch) {
+      expect(optsTypeMatch[0]).not.toContain('apiKey');
+    }
+  });
+});
+
+// ─── I-1: provider whitelist validation ──────────────────────────────────────
+describe('I-1 — provider whitelist (isValidProvider)', () => {
+  it('known key-accepting providers are valid', () => {
+    for (const p of ['anthropic', 'openai', 'openai-compatible', 'google']) {
+      expect(isValidProvider(p)).toBe(true);
+    }
+  });
+
+  it('"none" is not a valid key provider', () => {
+    expect(isValidProvider('none')).toBe(false);
+  });
+
+  it('arbitrary / unknown strings are rejected', () => {
+    expect(isValidProvider('')).toBe(false);
+    expect(isValidProvider('evil')).toBe(false);
+    expect(isValidProvider('__proto__')).toBe(false);
+    expect(isValidProvider('openai; rm -rf /')).toBe(false);
+  });
+
+  it('KEY_PROVIDERS set contains exactly the 4 real providers', () => {
+    expect(KEY_PROVIDERS.size).toBe(4);
+    expect(KEY_PROVIDERS.has('anthropic')).toBe(true);
+    expect(KEY_PROVIDERS.has('openai')).toBe(true);
+    expect(KEY_PROVIDERS.has('openai-compatible')).toBe(true);
+    expect(KEY_PROVIDERS.has('google')).toBe(true);
+    expect(KEY_PROVIDERS.has('none')).toBe(false);
+  });
+
+  it('main handlers validate provider before accessing secretStore', () => {
+    // Structural check: each secret handler calls isValidProvider before secretStore
+    const setHandler = mainSrc.match(/ipcMain\.handle\('ai:set-secret'[\s\S]*?\}\);/);
+    expect(setHandler).not.toBeNull();
+    expect(setHandler![0]).toContain('isValidProvider');
+
+    const hasHandler = mainSrc.match(/ipcMain\.handle\('ai:has-secret'[\s\S]*?\}\);/);
+    expect(hasHandler).not.toBeNull();
+    expect(hasHandler![0]).toContain('isValidProvider');
+
+    const clearHandler = mainSrc.match(/ipcMain\.handle\('ai:clear-secret'[\s\S]*?\}\);/);
+    expect(clearHandler).not.toBeNull();
+    expect(clearHandler![0]).toContain('isValidProvider');
+
+    const listHandler = mainSrc.match(/ipcMain\.handle\('ai:list-models'[\s\S]*?\}\);/);
+    expect(listHandler).not.toBeNull();
+    expect(listHandler![0]).toContain('isValidProvider');
+  });
+
+  it('ai:set-secret throws when secretStore is null (I-2)', () => {
+    const setHandler = mainSrc.match(/ipcMain\.handle\('ai:set-secret'[\s\S]*?\}\);/);
+    expect(setHandler).not.toBeNull();
+    // Must throw (not silently swallow) when secretStore is falsy
+    expect(setHandler![0]).toContain('throw');
+    expect(setHandler![0]).toContain('secretStore');
   });
 });

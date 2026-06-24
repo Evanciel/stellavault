@@ -10,6 +10,7 @@ import { useUiStore } from '../../lib/commands.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { showToast } from '../../lib/toast.js';
 import { parse as parseFrontmatter } from '../../lib/frontmatter.js';
+import { t } from '../../lib/i18n.js';
 import { useDecisionsUi } from './decisions-store.js';
 import { DecisionCaptureModal } from './DecisionCaptureModal.js';
 import { DecisionsBrowser } from './DecisionsBrowser.js';
@@ -51,16 +52,16 @@ function registerCaptureCommands(): void {
   captureCommandsRegistered = true;
 
   registerCommand({
-    id: 'decision.log', title: 'Log a decision (ADR)', category: 'Capture',
+    id: 'decision.log', title: t('command.logDecision'), category: 'Capture',
     defaultKeys: 'mod+shift+l',
     run: () => useDecisionsUi.getState().openCapture(),
   });
   registerCommand({
-    id: 'decision.browse', title: 'Browse decisions', category: 'Capture',
+    id: 'decision.browse', title: t('command.browseDecisions'), category: 'Capture',
     run: () => useDecisionsUi.getState().openBrowser(),
   });
   registerCommand({
-    id: 'editor.suggest-links', title: 'Suggest links for this note', category: 'Edit',
+    id: 'editor.suggest-links', title: t('command.suggestLinks'), category: 'Edit',
     run: () => void suggestLinksForActiveNote(),
   });
 }

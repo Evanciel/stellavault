@@ -2,9 +2,10 @@
 
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { useAppStore } from './stores/app-store.js';
-import { useSettingsStore, initSettings, resolveTheme } from './stores/settings-store.js';
+import { useSettingsStore, initSettings } from './stores/settings-store.js';
 import { registerBuiltinCommands, registerCommand } from './lib/commands.js';
 import { initHotkeys } from './lib/hotkeys.js';
+import { t, useT, type MsgKey } from './lib/i18n.js';
 import { TitleBar } from './components/layout/TitleBar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
 import { EditorArea } from './components/editor/EditorArea.js';
@@ -17,26 +18,40 @@ import { AIPanel } from './components/panels/AIPanel.js';
 // T2-12: GraphPanel pulls in the three/fiber/drei "three" chunk — lazy-load so
 // it's fetched only when the graph panel is opened, not on app startup.
 const GraphPanel = lazy(() => import('./components/panels/GraphPanel.js').then((m) => ({ default: m.GraphPanel })));
+// Note-focused 3D explore graph for the right panel (Explore-in-graph button) — same
+// component as the full-tab graph; exploreTarget focuses it on the active note + pulses.
+const GraphView = lazy(() => import('./components/graph/GraphView.js').then((m) => ({ default: m.GraphView })));
 import { BacklinksPanel } from './components/panels/BacklinksPanel.js';
 import { SearchPanel } from './components/panels/SearchPanel.js';
 import { OutlinePanel } from './components/panels/OutlinePanel.js';
 import { TagsPanel } from './components/panels/TagsPanel.js';
 import { CoachPanel } from './components/panels/CoachPanel.js'; // T2-6
 import { SynthesisPanel } from './components/panels/SynthesisPanel.js'; // T3-1
+import { CapturePanel } from './components/panels/CapturePanel.js'; // second-brain auto-capture (Design §7)
+import { ReviewQueuePanel } from './components/panels/ReviewQueuePanel.js';
+import { CategoryPanel } from './components/panels/CategoryPanel.js';
+import { NotePreviewPanel } from './components/panels/NotePreviewPanel.js'; // web-style read-only preview (graph node click)
 import { FindReplace } from './components/editor/FindReplace.js'; // T2-4
 import { CaptureHost } from './components/decisions/CaptureHost.js'; // T3-5/T3-6 capture & automation modals
+import { DropOverlay } from './components/layout/DropOverlay.js'; // second-brain global drop-to-capture
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
 
-const PANEL_TITLES: Record<string, string> = {
-  ai: 'AI Intelligence',
-  graph: '3D Graph',
-  backlinks: 'Backlinks',
-  search: 'Search',
-  outline: 'Outline',
-  tags: 'Tags',
-  coach: 'Coach', // T2-6
-  synthesis: 'Synthesize', // T3-1
+// i18n keys per panel — resolved reactively via useT() at render time.
+const PANEL_TITLE_KEYS: Record<string, MsgKey> = {
+  ai: 'panel.title.ai',
+  graph: 'panel.title.graph3d',
+  backlinks: 'panel.title.backlinks',
+  search: 'panel.title.search',
+  outline: 'panel.title.outline',
+  tags: 'panel.title.tags',
+  coach: 'panel.title.coach', // T2-6
+  synthesis: 'panel.title.synthesis', // T3-1
+  capture: 'panel.title.capture',
+  review: 'panel.title.review',
+  categories: 'panel.title.categories',
+  'note-preview': 'panel.title.explorer',
+  'note-graph': 'panel.title.graph',
 };
 
 // Stage C (W1-4/5/6): panel commands registered via the W1-12 registry —
@@ -47,24 +62,24 @@ function registerStageCPanelCommands(): void {
   stageCPanelCommandsRegistered = true;
   const app = () => useAppStore.getState();
   registerCommand({
-    id: 'search.open', title: 'Open search panel', category: 'Panels',
+    id: 'search.open', title: t('command.searchPanel'), category: 'Panels',
     defaultKeys: 'mod+shift+f', allowInEditor: true,
     run: () => app().setRightPanel('search'),
   });
   registerCommand({
-    id: 'panel.outline', title: 'Open outline panel', category: 'Panels',
+    id: 'panel.outline', title: t('command.outlinePanel'), category: 'Panels',
     defaultKeys: 'mod+shift+o',
     run: () => app().setRightPanel('outline'),
   });
   registerCommand({
-    id: 'panel.tags', title: 'Open tags panel', category: 'Panels',
+    id: 'panel.tags', title: t('command.tagsPanel'), category: 'Panels',
     defaultKeys: 'mod+shift+t',
     run: () => app().setRightPanel('tags'),
   });
 }
 
 export function App() {
-  const appTheme = useAppStore((s) => s.theme);
+  const t = useT();
   const sidebarWidth = useAppStore((s) => s.sidebarWidth);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const rightPanel = useAppStore((s) => s.rightPanel);
@@ -120,15 +135,19 @@ export function App() {
       setFileTree(tree);
     })();
 
-    // Listen for core ready
-    const off = onIpc('core:ready', () => {
+    // Mark the core ready (idempotent). First-run UX: an empty index means
+    // search/graph/tags are dead until the user reindexes → auto-index once.
+    const markReady = () => {
       setCoreReady(true);
-      // First-run UX: an empty index means search/graph/tags are all dead until
-      // the user finds the Reindex button. Index automatically once.
       void ipc('core:get-stats').then((stats) => {
         if (stats && stats.documentCount === 0) void ipc('core:index');
       }).catch(() => { /* stats unavailable — user can still reindex manually */ });
-    });
+    };
+    // Listen for the event AND query current state on mount — initCore now resolves
+    // fast enough to fire 'core:ready' BEFORE this listener exists (startup race), so
+    // the one-shot event alone could be missed → permanent "Waiting for AI engine…".
+    const off = onIpc('core:ready', markReady);
+    void ipc('core:get-ready').then((ready) => { if (ready) markReady(); }).catch(() => {});
 
     // Listen for file changes (from watcher)
     const offFile = onIpc('file:changed', () => {
@@ -143,20 +162,19 @@ export function App() {
     ? (osLight ? 'light' : 'dark')
     : settings.theme;
 
-  // Keep app-store theme in sync both ways (TitleBar's toggle still writes
-  // app-store; equality guards prevent loops).
+  // W1-2: settings.theme is the SINGLE source of truth; mirror it ONE-WAY to the
+  // app-store theme (TitleBar reads it for its icon). Never write back — a second
+  // app→settings effect ping-pongs with this one: when the app-store default
+  // ('dark') differs from a persisted theme ('light'), each effect's stale-closure
+  // setState flips the other's dependency every render, and because Zustand
+  // notifies useSyncExternalStore subscribers synchronously they never converge →
+  // React #185 ("Maximum update depth exceeded"). The toggle, command palette, and
+  // SettingsModal all write settings.theme directly, so one-way mirroring suffices.
   useEffect(() => {
     if (useAppStore.getState().theme !== resolvedTheme) {
       useAppStore.setState({ theme: resolvedTheme });
     }
   }, [resolvedTheme]);
-  useEffect(() => {
-    if (!settingsHydrated) return;
-    const current = resolveTheme(useSettingsStore.getState().settings.theme);
-    if (appTheme !== current) {
-      void useSettingsStore.getState().update({ theme: appTheme });
-    }
-  }, [appTheme, settingsHydrated]);
 
   return (
     <div
@@ -221,7 +239,7 @@ export function App() {
             side="left"
             width={rightPanelWidth}
             min={280}
-            max={500}
+            max={800}
             onResize={setRightPanelWidth}
             onCommit={(w) => void useSettingsStore.getState().update({
               panels: {
@@ -235,7 +253,7 @@ export function App() {
           <div style={{
             width: rightPanelWidth,
             minWidth: 280,
-            maxWidth: 500,
+            maxWidth: 800,
             background: 'var(--sidebar-bg)',
             borderLeft: '1px solid var(--border)',
             overflow: 'hidden',
@@ -251,7 +269,7 @@ export function App() {
               fontSize: 11,
             }}>
               <span style={{ color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
-                {PANEL_TITLES[rightPanel]}
+                {PANEL_TITLE_KEYS[rightPanel] ? t(PANEL_TITLE_KEYS[rightPanel]) : rightPanel}
               </span>
               <button
                 onClick={() => setRightPanel('none')}
@@ -263,8 +281,17 @@ export function App() {
             <div style={{ flex: 1, overflow: 'auto' }}>
               {rightPanel === 'ai' && <AIPanel />}
               {rightPanel === 'graph' && (
-                <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>Loading graph…</div>}>
+                <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>{t('app.loadingGraph')}</div>}>
                   <GraphPanel />
+                </Suspense>
+              )}
+              {rightPanel === 'note-graph' && (
+                <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>{t('app.loadingGraph')}</div>}>
+                  {/* GraphView is a full-bleed Canvas — give it a definite-height flex column
+                      (mirrors NotePreviewPanel) so it fills the panel instead of collapsing. */}
+                  <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <GraphView />
+                  </div>
                 </Suspense>
               )}
               {rightPanel === 'backlinks' && <BacklinksPanel />}
@@ -273,6 +300,10 @@ export function App() {
               {rightPanel === 'tags' && <TagsPanel />}
               {rightPanel === 'coach' && <CoachPanel />}
               {rightPanel === 'synthesis' && <SynthesisPanel />}
+              {rightPanel === 'capture' && <CapturePanel />}
+              {rightPanel === 'review' && <ReviewQueuePanel />}
+              {rightPanel === 'categories' && <CategoryPanel />}
+              {rightPanel === 'note-preview' && <NotePreviewPanel />}
             </div>
           </div>
         )}
@@ -283,6 +314,7 @@ export function App() {
       <CommandPalette />
       <SettingsModal />
       <CaptureHost />
+      <DropOverlay />
     </div>
   );
 }

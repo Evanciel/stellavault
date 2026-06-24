@@ -1,6 +1,8 @@
 // Typed IPC channel definitions shared between main and preload.
 // Every channel has a name, argument tuple, and return type.
 
+import type { ClusterLevelGraph, ClusterMembersGraph } from '@stellavault/core';
+
 export interface FileTreeNode {
   name: string;
   path: string;
@@ -235,6 +237,8 @@ export interface McpStatus {
 export interface AppSettings {
   version: 1;
   theme: 'dark' | 'light' | 'system';
+  // i18n: interface language (KO/EN). Optional so older settings files type-check.
+  language?: 'en' | 'ko';
   accent: string;              // hex
   editor: { fontSize: number; lineWidth: number; spellcheck: boolean };
   hotkeys: Record<string, string>;   // commandId -> 'mod+shift+f' style
@@ -259,15 +263,166 @@ export interface AppSettings {
   // T3-7: local Publish server port. Project port registry convention (3105 —
   // never 3000). Optional; defaults in both main getDefaults + renderer DEFAULT.
   publishPort?: number;
-  // T3-2: AI synthesis provider + API key. Optional — when `apiKey` is set, the
-  // Ask panel and Wiki Synthesis use the LLM synthesizer; otherwise extractive.
-  // The key lives ONLY in desktop-settings.json (never logged, never sent to the
-  // renderer except as the value the user typed). model defaults to the latest
-  // Claude model id for the anthropic provider (see settings-store getDefaults).
-  ai?: { provider: 'anthropic' | 'none'; apiKey: string; model: string };
+  // T3-2: AI synthesis provider/model config. Optional — when a key is stored in
+  // SecretStore, the Ask panel and Wiki Synthesis use the LLM synthesizer; otherwise
+  // extractive. apiKey is INTENTIONALLY ABSENT here: the renderer never sees the raw
+  // key. settings:get returns hasKey/keychainAvailable instead (redact-secrets.ts).
+  // The raw key only travels via 'secret:set-key' (write-only, main stores in
+  // SecretStore/safeStorage). model defaults to the latest Claude model id for the
+  // anthropic provider (see settings-store getDefaults).
+  ai?: {
+    provider: 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google';
+    model: string;
+    baseURL?: string; // only for provider 'openai-compatible' (e.g. http://localhost:11434/v1)
+    /** True when SecretStore has a key for this provider (renderer display only). */
+    hasKey?: boolean;
+    /** True when safeStorage (OS keychain) backed the key (renderer display only). */
+    keychainAvailable?: boolean;
+  };
   // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
   // Optional; defaults false in both main getDefaults + renderer DEFAULT.
   mcpAutoStart?: boolean;
+}
+
+// ─── Second-brain auto-capture (Design §6) ──────────────────────────────────
+// One pipeline behind every door (drag-drop / MCP / clip). CaptureRequest is the IPC
+// arg to 'vault:capture'; the DTOs below back the Capture/Review/Category panels
+// (centroids/embeddings are NEVER sent to the renderer).
+export type CaptureKind = 'file' | 'url' | 'text';
+export type CaptureSource = 'drop' | 'mcp' | 'clip';
+export type CaptureStage = 'fleeting' | 'literature' | 'permanent';
+
+export interface CaptureRequest {
+  kind: CaptureKind;
+  payload: string;            // file: tmp abs path | url: URL | text: raw markdown
+  title?: string;
+  tags?: string[];
+  source: CaptureSource;
+  sourceMeta?: { fileName?: string; mime?: string; client?: string; html?: string; selection?: string; base64?: string };
+  stageHint?: CaptureStage;
+}
+export interface CaptureOutcome {
+  status: 'created' | 'duplicate' | 'queued' | 'rejected';
+  savedTo?: string;
+  documentId?: string;
+  title?: string;
+  stage?: CaptureStage;
+  categories?: string[];
+  confidence?: number;
+  decision?: 'auto' | 'review';
+  duplicateOf?: string;
+  reason?: 'engine-loading' | 'size' | 'unsupported' | 'ssrf' | 'no-vault' | 'queue-full' | 'io';
+  indexed?: boolean;
+}
+export interface CaptureItem {
+  id: string;
+  kind: CaptureKind;
+  title: string;
+  source: CaptureSource;
+  status: 'queued' | 'processing' | 'done' | 'rejected' | 'duplicate';
+  savedTo?: string;
+  category?: string;
+  confidence?: number;
+  decision?: 'auto' | 'review';
+  reason?: string;
+  enqueuedAt: string;
+}
+export interface ReviewItem {
+  id: string;
+  notePath: string;
+  title: string;
+  confidence: number;
+  suggestions: { id: string; label: string; sim: number }[];
+  stage?: string;
+}
+export interface CategoryInfo {
+  id: string;
+  label: string;
+  origin: 'emergent' | 'user' | 'seed';
+  memberCount: number;
+  keywords: string[];
+}
+export interface CaptureCounts {
+  capturedToday: number;
+  pendingReviewCount: number;
+  queueDepth: number;
+  watching: boolean;
+}
+
+// ─── SP1 multiturn chat (docs/02-design/multimedia-chat-sp1-plan.md §3) ──────
+// A chat turn. `text` is a single string (SP1 is text-only; SP3 widens to content
+// blocks without a body-builder rewrite). `incomplete` marks a partial / aborted /
+// refused turn (§7) — saved as-is and resumable. `citations` ride assistant turns
+// and are persisted as title+filePath only (Decision 2 — snippet stripped at rest).
+// NO apiKey/secret ever appears in any chat type (Invariant §6 — key stays in main).
+export type ChatRole = 'user' | 'assistant' | 'system';
+export interface ChatCitation {
+  title: string;
+  filePath: string;     // absolute; '' if not resolvable
+  snippet?: string;     // live display only; NOT persisted (Decision 2)
+}
+// SP2 image attachment. Main reads+validates the picked file and returns a base64
+// `dataUrl` (data:image/png;base64,…); the renderer displays it (CSP img-src data:)
+// and rides it back inside the user turn. chat-engine strips the prefix → Ollama
+// native `images:[<base64>]`. v1 = images only (local vision); audio/video later.
+export interface ChatAttachment {
+  type: 'image' | 'audio' | 'video';
+  mimeType: string;     // e.g. 'image/png' | 'audio/mpeg' | 'video/mp4'
+  dataUrl?: string;     // images only — 'data:<mime>;base64,<…>' (validated in main)
+  transcript?: string;  // SP4 audio/video only — cloud-preprocessed text (Whisper/Gemini)
+  fileName: string;
+  size: number;         // decoded bytes
+}
+export interface ChatMessage {
+  id: string;           // renderer-generated (crypto.randomUUID) per turn
+  role: ChatRole;
+  text: string;
+  ts: number;           // epoch ms
+  incomplete?: boolean; // partial / aborted / refused turn (§7)
+  citations?: ChatCitation[]; // assistant turns only
+  attachments?: ChatAttachment[]; // user turns only (SP2)
+}
+// Session list row (⑨). `id` is the UUID filename; `title` is a metadata field
+// (rename writes this, NEVER the filename); `updated` is last-saved epoch ms.
+export interface ChatSessionMeta {
+  id: string;
+  title: string;
+  updated: number;
+}
+
+// ─── Agent MEMORY (P2) — durable user-model block, wire shape ───
+// Canonical shape (shared/ is the wire source of truth; main/memory-store imports it).
+// `provenance` is a free string ('user' | 'reflection' | 'skill:<name>') — kept loose here so
+// shared/ does not depend on main/.
+export type MemoryProvenance = 'user' | 'reflection' | (string & {});
+export interface MemoryBlockMeta {
+  id: string;
+  tag?: string;
+  text: string;
+  pinned: boolean;
+  provenance: MemoryProvenance;
+  updated: number;
+}
+
+// ─── Agent SKILLS (P3) — a vault Skills/*.md recipe + its promotion state ───
+export interface SkillMeta {
+  name: string;
+  description: string;
+  /** Promoted = user-consented into the always-injected catalogue (§4.4 gate). */
+  promoted: boolean;
+}
+
+// ─── Agent REFLECTION (follow-up §A) — a read-only memory-candidate proposal ───
+// The reflection pass (chat:reflect) parses the model's read-only JSON into these. A candidate
+// is NEVER auto-written: it surfaces as a review chip, and only the user's approve drives the
+// real (force-confirm) core_memory_append write (§A3). `suggestedOp` is kept on the wire for
+// forward-compat, but this round is APPEND-ONLY — parseReflectionCandidates forces 'append'
+// and drops `targetId` (replace before/after diff UI is Deferred). Shared = wire source of truth.
+export interface ReflectionCandidate {
+  text: string;
+  rationale: string;
+  suggestedOp: 'append' | 'replace';
+  targetId?: string;
 }
 
 // ─── Channel map: channel name → { args, result } ───
@@ -333,6 +488,11 @@ export interface IpcChannelMap {
 
   // Graph
   'graph:build':        { args: [mode: string]; result: { nodes: unknown[]; edges: unknown[] } };
+  // Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md).
+  'graph:clusters':       { args: [opts?: { mode?: string }]; result: ClusterLevelGraph };
+  'graph:expand-cluster': { args: [opts: { mode?: string; clusterId: number }]; result: ClusterMembersGraph };
+  // Startup race guard — renderer queries this on mount (see App.tsx).
+  'core:get-ready':       { args: []; result: boolean };
 
   // Backlinks
   'backlinks:find':     { args: [title: string]; result: Array<{ filePath: string; name: string; line: string }> };
@@ -359,6 +519,15 @@ export interface IpcChannelMap {
   // Settings (W1-1)
   'settings:get':       { args: []; result: AppSettings };
   'settings:set':       { args: [patch: Partial<AppSettings>]; result: AppSettings };
+  // T5: apiKey removed from args — key is loaded from secretStore in the main process.
+  // The renderer passes only provider + optional baseURL (needed for openai-compatible/Ollama).
+  // A compromised renderer can no longer pass an arbitrary key to trigger outbound requests.
+  'ai:list-models':     { args: [opts: { provider: string; baseURL?: string }]; result: string[] };
+  // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
+  // the plaintext key NEVER returns to the renderer after being stored.
+  'ai:set-secret':   { args: [provider: string, key: string]; result: void };
+  'ai:has-secret':   { args: [provider: string]; result: boolean };
+  'ai:clear-secret': { args: [provider: string]; result: void };
 
   // [editor-upgrade additive] Local image import — copies image bytes (base64)
   // into <vault>/assets/, returns the VAULT-RELATIVE path. (The legacy srcPath
@@ -382,6 +551,7 @@ export interface IpcChannelMap {
   // drops a non-active entry. 'search:all-vaults' runs core searchAllVaults.
   'vault:list-registry':      { args: []; result: VaultRegistryEntry[] };
   'vault:add-to-registry':    { args: []; result: VaultRegistryEntry | null };
+  'vault:pick-folder':        { args: []; result: { rel: string | null; outside?: boolean } | null };
   'vault:remove-from-registry': { args: [id: string]; result: VaultRegistryEntry[] };
   'vault:switch':             { args: [id: string]; result: { restartRequired: boolean } };
   'search:all-vaults':        { args: [query: string, limit?: number]; result: CrossVaultResult[] };
@@ -414,6 +584,78 @@ export interface IpcChannelMap {
   'mcp:start':  { args: []; result: McpStatus };
   'mcp:stop':   { args: []; result: McpStatus };
   'mcp:status': { args: []; result: McpStatus };
+
+  // ─── Second-brain auto-capture (Design §6.4) ───
+  'vault:capture':      { args: [req: CaptureRequest]; result: { id: string } };
+  'capture:list':       { args: [limit?: number]; result: CaptureItem[] };
+  'capture:set-paused': { args: [paused: boolean]; result: void };
+  'capture:counts':     { args: []; result: CaptureCounts };
+  'capture:pick-files': { args: []; result: { count: number } };
+  'review:list':        { args: []; result: ReviewItem[] };
+  'review:confirm':     { args: [id: string, categoryId: string | null, stage?: string]; result: void };
+  'review:skip':        { args: [id: string]; result: void };
+  'categories:list':    { args: []; result: CategoryInfo[] };
+
+  // ─── SP1 multiturn chat (multimedia-chat-sp1-plan §3) ───
+  // Streaming command (renderer→main). result:void — tokens stream back via the
+  // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
+  // streamId). The API key NEVER appears in these args (main reads SecretStore).
+  // sessionId routes the persisted assistant turn to the right session on done.
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean }]; result: void };
+  'chat:abort': { args: [streamId: string]; result: void };
+  // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
+  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
+  // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
+  'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
+  // Reflection follow-up (§A): run the distill loop READ-ONLY (deny-all confirm broker, no
+  // memoryWrite dep → fail-closed) to PROPOSE durable-memory candidates. Results arrive via the
+  // 'chat:reflect-done' event; nothing is written until the user approves a chip.
+  'chat:reflect': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
+  // Apply ONE user-approved reflection candidate (§A3) — append-only, re-scanned (injection +
+  // looksLikeSecret) in main, routed through coreMemoryAppend (provenance 'user'). The renderer
+  // carries only the opaque candidate it got from chat:reflect-done.
+  'memory:apply-candidate': { args: [req: { streamId: string; candidate: ReflectionCandidate }]; result: { ok: boolean; id?: string; reason?: string } };
+  // SP2: pick image file(s) for a chat attachment. Main runs the dialog, reads + validates
+  // (ext/magic-byte/size) each file, and returns ready-to-display base64 attachments.
+  'chat:pick-images': { args: []; result: { attachments: ChatAttachment[] } };
+  // SP4: pick audio/video file(s). Main reads + validates + PREPROCESSES to text (Whisper /
+  // Gemini) and returns attachments carrying a transcript (no media blob). `kind` picks the
+  // dialog filter + which cloud key/endpoint is used. May return an error string per pick.
+  'chat:pick-media': { args: [kind: 'audio' | 'video']; result: { attachments: ChatAttachment[]; error?: string } };
+  // Part5: save the current conversation VERBATIM as a vault note (the second-brain record;
+  // distinct from chat:distill which extracts atomic wiki notes). Returns the new note's path.
+  'chat:export-note': { args: [req: { messages: ChatMessage[]; title?: string }]; result: { filePath?: string; error?: string } };
+  // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
+  'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
+  'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };
+  'chat:rename-session': { args: [id: string, title: string]; result: void };
+  'chat:delete-session': { args: [id: string]; result: void };
+
+  // ─── Agent MEMORY management (P2, §6 INT-8) — durable user-model blocks ───
+  // The renderer manages the off-vault memory store: list rows, inspect one, delete by UUID.
+  // It never names a tool/path — memory:delete validates the id (UUID + must exist) in main.
+  'memory:list':   { args: []; result: MemoryBlockMeta[] };
+  'memory:get':    { args: [id: string]; result: MemoryBlockMeta | null };
+  'memory:delete': { args: [id: string]; result: { ok: boolean } };
+
+  // ─── Agent SKILLS management (P3, §4.4) — vault Skills/*.md + promotion gate ───
+  // skill:list returns each skill with its PROMOTED state; skill:set-promoted is the user's
+  // explicit consent to (de)catalogue a skill. Only promoted skills reach the prompt / invoke.
+  'skill:list':         { args: []; result: SkillMeta[] };
+  'skill:set-promoted': { args: [name: string, promoted: boolean]; result: { promoted: boolean } };
+
+  // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
+  // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'
+  // error banner. ollama:start spawns a FIXED binary (no renderer-supplied path/args);
+  // baseURL is used ONLY for the HTTP reachability probe.
+  'ollama:status': { args: [opts?: { baseURL?: string }]; result: { reachable: boolean; installed: boolean } };
+  'ollama:start':  { args: [opts?: { baseURL?: string }]; result: { ok: boolean; reason?: 'already-running' | 'not-installed' | 'spawn-failed' | 'timeout' } };
+  // Compat check: installed version vs the current-model floor (older Ollama 412s on new models).
+  'ollama:version': { args: []; result: { version: string | null } };
+  'ollama:compat':  { args: []; result: { installed: boolean; version: string | null; minVersion: string; outdated: boolean } };
+  // Auto-download latest Ollama (button-prompt). Download bytes stream via the
+  // 'ollama:download-progress' EVENT; the resolved invoke result reports the outcome.
+  'ollama:download': { args: []; result: { ok: boolean; binPath?: string; version?: string | null; reason?: string } };
 }
 
 // ─── Events (main → renderer, one-way) ───
@@ -430,6 +672,40 @@ export interface IpcEventMap {
   // T3-3: MCP server status change (started/stopped) or a new tool-call activity
   // entry — lets the Agent Memory section update its feed without polling.
   'mcp:status-changed': McpStatus;
+  // Second-brain capture lifecycle (Design §6.4).
+  'capture:progress': { id: string; phase: string };
+  'capture:done':     CaptureOutcome & { id: string };
+  'review:changed':   { queueLength: number };
+
+  // ─── SP1 multiturn chat streaming (main → renderer, e.sender targeted) ───
+  // Filtered by streamId on the renderer (onIpc fires for ALL chat events on this
+  // window). NEVER broadcast — main sends only to the originating webContents.
+  'chat:chunk': { streamId: string; delta: string };
+  'chat:done':  { streamId: string; citations?: ChatCitation[] };
+  // category mirrors chat-engine's ErrorCategory union (kept in sync; shared/ must
+  // not import main/, so the union is inlined here as the wire-shape source of truth).
+  'chat:error': {
+    streamId: string;
+    message: string;
+    category?: 'key-missing' | 'rate-limited' | 'refused' | 'too-large' | 'aborted' | 'unreachable' | 'model-missing' | 'generic';
+  };
+  // Agent (SP-D) — tool-activity transparency + write-approval handshake (e.sender targeted).
+  'chat:tool-call':    { streamId: string; name: string; detailRedacted: string };
+  'chat:tool-result':  { streamId: string; name: string; ok: boolean; summary: string; filePath?: string };
+  'chat:tool-confirm': { streamId: string; name: string; argsPreview: string };
+  // Agent (SP-I): a distillation pass finished — summary of what was folded into the wiki.
+  'chat:distill-done': { streamId: string; summary: string };
+  // Reflection follow-up (§A): a read-only reflection pass finished — its proposed memory
+  // candidates (already injection/secret scanned in main). Empty array → "nothing durable".
+  'chat:reflect-done': { streamId: string; candidates: ReflectionCandidate[] };
+  // Agent multi-step plan (set_plan) — declarative/idempotent: every emit carries the WHOLE plan,
+  // doneCount ∈ [0, steps.length], last-writer-wins per streamId. steps are short display labels.
+  'chat:plan': { streamId: string; steps: string[]; doneCount: number };
+  // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
+  'chat:skill-invoke': { streamId: string; name: string };
+  // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
+  // shows a non-blocking "🧠 remembered: … (undo)" toast (undo → memory:delete by id).
+  'chat:memory-written': { streamId: string; id: string; text: string };
 }
 
 // Helper types for typed invoke/on

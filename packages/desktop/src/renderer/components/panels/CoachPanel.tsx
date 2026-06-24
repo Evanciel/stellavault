@@ -14,6 +14,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { registerCommand } from '../../lib/commands.js';
+import { useT } from '../../lib/i18n.js';
 import type { CoachGaps, CoachLearningPath, ContradictionNudge, DuplicateNudge } from '../../../shared/ipc-types.js';
 
 // Palette command + default hotkey via the registry (mirrors AIPanel's pattern).
@@ -46,6 +47,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 export function CoachPanel() {
+  const t = useT();
   const coreReady = useAppStore((s) => s.coreReady);
   const openFile = useAppStore((s) => s.openFile);
 
@@ -103,7 +105,7 @@ export function CoachPanel() {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
         <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.3 }}>&#x2726;</div>
-        Loading intelligence engine...
+        {t('panel.coach.loading')}
       </div>
     );
   }
@@ -122,22 +124,22 @@ export function CoachPanel() {
   return (
     <div style={{ padding: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>Coach</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>{t('panel.coach.title')}</div>
         <button
           onClick={() => void refresh()}
           disabled={loading}
-          title="Recompute gaps + learning path"
+          title={t('panel.coach.refreshTooltip')}
           style={{
             padding: '2px 10px', fontSize: 10, cursor: loading ? 'default' : 'pointer',
             background: 'transparent', border: '1px solid var(--border)', borderRadius: 3,
             color: 'var(--ink-dim)', opacity: loading ? 0.5 : 1,
           }}
         >
-          {loading ? '...' : 'Refresh'}
+          {loading ? '...' : t('panel.coach.refreshButton')}
         </button>
       </div>
       <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 12, lineHeight: 1.5 }}>
-        What you don&rsquo;t know yet, and what to review next — from your own vault.
+        {t('panel.coach.description')}
       </div>
 
       {error && (
@@ -159,7 +161,7 @@ export function CoachPanel() {
 
       {isEmpty && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          No gaps detected — your knowledge network is well connected. &#x2726;
+          {t('panel.coach.noGaps')} &#x2726;
         </div>
       )}
 
@@ -167,8 +169,12 @@ export function CoachPanel() {
       {path && path.items.length > 0 && (
         <section style={{ marginBottom: 18 }}>
           <SectionHeader
-            title="Review these next"
-            hint={`${path.summary.reviewCount} review · ${path.summary.bridgeCount} bridge · ~${path.summary.estimatedMinutes}min`}
+            title={t('panel.coach.learningPathTitle')}
+            hint={t('panel.coach.learningPathSummary', {
+              reviewCount: path.summary.reviewCount,
+              bridgeCount: path.summary.bridgeCount,
+              estimatedMinutes: path.summary.estimatedMinutes,
+            })}
           />
           {path.items.map((it, i) => {
             const clickable = !!it.filePath;
@@ -207,7 +213,7 @@ export function CoachPanel() {
                   </span>
                   {!clickable && (
                     <span style={{ fontSize: 9, color: 'var(--ink-faint)', fontStyle: 'italic' }}>
-                      no note yet
+                      {t('panel.coach.noNoteYet')}
                     </span>
                   )}
                 </div>
@@ -221,13 +227,13 @@ export function CoachPanel() {
       {gaps && (gaps.isolated.length > 0 || gaps.gaps.length > 0 || gaps.predicted.length > 0) && (
         <section>
           <SectionHeader
-            title="Knowledge gaps"
-            hint={gaps.totalGaps > 0 ? `${gaps.totalGaps} weak link${gaps.totalGaps === 1 ? '' : 's'} · ${gaps.totalClusters} clusters` : undefined}
+            title={t('panel.coach.gapsTitle')}
+            hint={gaps.totalGaps > 0 ? t('panel.coach.gapsSummary', { totalGaps: gaps.totalGaps, totalClusters: gaps.totalClusters }) : undefined}
           />
 
           {gaps.isolated.length > 0 && (
             <>
-              <SubLabel>Isolated notes (few connections)</SubLabel>
+              <SubLabel>{t('panel.coach.isolatedNotesLabel')}</SubLabel>
               {gaps.isolated.map((n, i) => {
                 const clickable = !!n.filePath;
                 return (
@@ -250,7 +256,7 @@ export function CoachPanel() {
                       {n.title}
                     </span>
                     <span style={{ fontSize: 9, color: 'var(--ink-faint)', flexShrink: 0 }}>
-                      {n.connections} link{n.connections === 1 ? '' : 's'}
+                      {t('panel.coach.connectionCount', { count: n.connections })}
                     </span>
                   </div>
                 );
@@ -260,7 +266,7 @@ export function CoachPanel() {
 
           {gaps.gaps.length > 0 && (
             <>
-              <SubLabel>Missing bridges between topics</SubLabel>
+              <SubLabel>{t('panel.coach.missingBridgesLabel')}</SubLabel>
               {gaps.gaps.map((g, i) => (
                 <div
                   key={`${g.clusterA}-${g.clusterB}-${i}`}
@@ -270,15 +276,15 @@ export function CoachPanel() {
                   }}
                 >
                   <div style={{ fontSize: 11, color: 'var(--ink)' }}>
-                    {g.clusterA} <span style={{ color: 'var(--ink-faint)' }}>×</span> {g.clusterB}
+                    {t('panel.coach.clusterPair', { clusterA: g.clusterA, clusterB: g.clusterB })}
                   </div>
                   {g.suggestedTopic && (
                     <div style={{ fontSize: 10, color: 'var(--ink-dim)', marginTop: 2 }}>
-                      Try a bridge note: <span style={{ color: 'var(--accent-2)' }}>{g.suggestedTopic}</span>
+                      {t('panel.coach.suggestedBridge', { suggestedTopic: g.suggestedTopic })}
                     </div>
                   )}
                   <span style={{ fontSize: 9, color: SEVERITY_COLOR[g.severity] ?? 'var(--ink-faint)' }}>
-                    {g.severity} · {g.bridgeCount} bridge{g.bridgeCount === 1 ? '' : 's'}
+                    {t('panel.coach.bridgeCountLabel', { severity: g.severity, bridgeCount: g.bridgeCount })}
                   </span>
                 </div>
               ))}
@@ -287,7 +293,7 @@ export function CoachPanel() {
 
           {gaps.predicted.length > 0 && (
             <>
-              <SubLabel>Topics worth exploring</SubLabel>
+              <SubLabel>{t('panel.coach.topicsWorthExploringLabel')}</SubLabel>
               {gaps.predicted.map((p, i) => (
                 <div
                   key={`${p.topic}-${i}`}
@@ -299,7 +305,7 @@ export function CoachPanel() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                     <span style={{ fontSize: 11, color: 'var(--ink)' }}>{p.topic}</span>
                     <span style={{ fontSize: 9, color: 'var(--ink-faint)', flexShrink: 0 }}>
-                      {Math.round(p.confidence * 100)}%
+                      {t('panel.coach.confidencePercent', { confidence: Math.round(p.confidence * 100) })}
                     </span>
                   </div>
                   {p.reason && (
@@ -318,13 +324,13 @@ export function CoachPanel() {
       {(dupes.length > 0 || contradictions.length > 0) && (
         <section style={{ marginTop: 18 }}>
           <SectionHeader
-            title="Review: duplicates & contradictions"
-            hint="Pairs your vault may need to merge or reconcile. Click to open either note."
+            title={t('panel.coach.reviewDupesTitle')}
+            hint={t('panel.coach.reviewDupesHint')}
           />
 
           {dupes.length > 0 && (
             <>
-              <SubLabel>Possible duplicates</SubLabel>
+              <SubLabel>{t('panel.coach.possibleDupesLabel')}</SubLabel>
               {dupes.map((d, i) => (
                 <div
                   key={`dup-${i}`}
@@ -338,7 +344,7 @@ export function CoachPanel() {
                     <span style={{ color: 'var(--ink-faint)', fontSize: 10 }}>&harr;</span>
                     <PairLink title={d.docB.title} filePath={d.docB.filePath} open={open} />
                     <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
-                      {Math.round(d.similarity * 100)}% similar
+                      {t('panel.coach.similarityPercent', { similarity: Math.round(d.similarity * 100) })}
                     </span>
                   </div>
                 </div>
@@ -348,7 +354,7 @@ export function CoachPanel() {
 
           {contradictions.length > 0 && (
             <>
-              <SubLabel>Possible contradictions</SubLabel>
+              <SubLabel>{t('panel.coach.possibleContradictionsLabel')}</SubLabel>
               {contradictions.map((c, i) => (
                 <div
                   key={`con-${i}`}
@@ -362,7 +368,7 @@ export function CoachPanel() {
                     <span style={{ color: '#e5484d', fontSize: 10 }}>&ne;</span>
                     <PairLink title={c.docB.title} filePath={c.docB.filePath} open={open} />
                     <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--ink-faint)' }}>
-                      {Math.round(c.confidence * 100)}% · {c.type}
+                      {t('panel.coach.contradictionConfidence', { confidence: Math.round(c.confidence * 100), type: c.type })}
                     </span>
                   </div>
                   {(c.docA.statement || c.docB.statement) && (

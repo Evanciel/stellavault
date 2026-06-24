@@ -42,11 +42,16 @@ export type { KnowledgePack, PackChunk, PackInfo, CreatePackOptions, ImportResul
 // API (Phase 2)
 export { createApiServer } from './api/server.js';
 export type { ApiServerOptions } from './api/server.js';
+// SSRF guard — resolve-then-check-IP. desktop main/outbound-fetch.ts re-validates every hop.
+export { assertPublicUrl, isPrivateIp } from './api/ssrf-guard.js';
+export type { Resolver } from './api/ssrf-guard.js';
 export type { GraphNode, GraphEdge, Cluster, GraphData, GraphResponse } from './types/graph.js';
+// Wave 1 cluster-first LOD tiered types (docs/02-design/graph-scale-lod-redesign.md).
+export type { ClusterSuperNode, MetaEdge, ClusterLevelGraph, ClusterMembersGraph } from './types/graph.js';
 // Plan SC: §0-B2 — buildGraphData was internal-only; desktop main process calls core.buildGraphData via IPC.
 // Contract note (§4-F): GraphData nodes never carry positions — consumers must lay out (e.g. hash(id) seed).
-export { buildGraphData } from './api/graph-data.js';
-export type { BuildGraphOptions, GraphMode } from './api/graph-data.js';
+export { buildGraphData, buildClusteredGraph } from './api/graph-data.js';
+export type { BuildGraphOptions, GraphMode, BuildClusteredOptions, ClusteredGraph } from './api/graph-data.js';
 
 // Intelligence (Phase 4b)
 export { DecayEngine } from './intelligence/decay-engine.js';
@@ -80,6 +85,20 @@ export {
 export type { FrontmatterEntry } from './intelligence/zettelkasten.js';
 export { ingest, ingestBatch, promoteNote } from './intelligence/ingest-pipeline.js';
 export type { IngestInput, IngestResult, NoteStage } from './intelligence/ingest-pipeline.js';
+// Classification engine (second-brain auto-capture, Design §6.2/§6.3)
+export { classifyLocal, jaccard, DEFAULT_CLASSIFY_CONFIG } from './intelligence/classify/index.js';
+export { createClassifyDao, ensureClassifyTables, safeMove } from './intelligence/classify/index.js';
+export { cosineKMeans, meanVector, discoverCategories, topEntities } from './intelligence/classify/index.js';
+export type { SafeMoveResult, DiscoverDoc, DiscoverOptions, DiscoverResult } from './intelligence/classify/index.js';
+export type {
+  Category, CategoryOrigin, CategoryRule, ClassifyConfig,
+  NoteCtx, ClassifyMethod, ClassifyBand, ClassifyResult,
+  JournalEntry, JournalStatus,
+} from './intelligence/classify/index.js';
+export type { ClassifyDao } from './intelligence/classify/index.js';
+// File extraction (second-brain capture — pdf/docx/pptx/xlsx/csv/html/json/xml/yaml/rtf)
+export { extractFileContent, isBinaryFormat } from './intelligence/file-extractors.js';
+export type { ExtractedContent } from './intelligence/file-extractors.js';
 export type { LintResult, LintIssue } from './intelligence/knowledge-lint.js';
 export type { AskResult } from './intelligence/ask-engine.js';
 export type { LearningPath, LearningItem, LearningPathInput } from './intelligence/learning-path.js';

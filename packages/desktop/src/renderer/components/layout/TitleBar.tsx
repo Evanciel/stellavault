@@ -1,7 +1,9 @@
 // Custom frameless title bar with drag region + window controls.
 
 import { useAppStore } from '../../stores/app-store.js';
+import { useSettingsStore } from '../../stores/settings-store.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { AppMenu } from './AppMenu.js';
 import { VaultSwitcher } from './VaultSwitcher.js';
 
@@ -13,11 +15,12 @@ declare module 'react' {
 }
 
 export function TitleBar() {
+  const t = useT();
   const theme = useAppStore((s) => s.theme);
-  const toggleTheme = useAppStore((s) => s.toggleTheme);
   const rightPanel = useAppStore((s) => s.rightPanel);
   const setRightPanel = useAppStore((s) => s.setRightPanel);
   const openGraphTab = useAppStore((s) => s.openGraphTab);
+  const openChatTab = useAppStore((s) => s.openChatTab);
   const isDark = theme === 'dark';
   const isMac = window.stellavault.platform === 'darwin';
 
@@ -56,22 +59,22 @@ export function TitleBar() {
       {/* Stage C (W1-4/5/6) panel toggles */}
       <button
         onClick={() => setRightPanel(rightPanel === 'search' ? 'none' : 'search')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'search' ? 'var(--accent-2)' : undefined }}
-        title="Search" aria-label="Toggle search panel"
+        style={{ ...btnStyle(), color: rightPanel === 'search' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title="Search" aria-label={t('titlebar.search')}
       >
         &#x2315;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'outline' ? 'none' : 'outline')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'outline' ? 'var(--accent-2)' : undefined }}
-        title="Outline" aria-label="Toggle outline panel"
+        style={{ ...btnStyle(), color: rightPanel === 'outline' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title="Outline" aria-label={t('titlebar.outline')}
       >
         &#x2261;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'tags' ? 'none' : 'tags')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'tags' ? 'var(--accent-2)' : undefined }}
-        title="Tags" aria-label="Toggle tags panel"
+        style={{ ...btnStyle(), color: rightPanel === 'tags' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title="Tags" aria-label={t('titlebar.tags')}
       >
         #
       </button>
@@ -79,62 +82,73 @@ export function TitleBar() {
           stays available via the 'panel.graph' command / panel menu). */}
       <button
         onClick={openGraphTab}
-        style={btnStyle(isDark)}
-        title="Open graph view (Ctrl+G)" aria-label="Open graph view"
+        style={btnStyle()}
+        title={t('titlebar.openGraphView')} aria-label="Open graph view"
       >
         &#x25C9;
       </button>
+      {/* AI chat as a full-pane CENTER tab (first-class, not just the AI panel tab). */}
+      <button
+        onClick={openChatTab}
+        style={btnStyle()}
+        title={t('titlebar.openChat')} aria-label="Open AI chat"
+      >
+        &#x1F4AC;
+      </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'ai' ? 'none' : 'ai')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'ai' ? 'var(--accent-2)' : undefined }}
-        title="AI panel" aria-label="Toggle AI panel"
+        style={{ ...btnStyle(), color: rightPanel === 'ai' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title="AI panel" aria-label={t('titlebar.aiPanel')}
       >
         &#x2726;
       </button>
       <button
         onClick={() => setRightPanel(rightPanel === 'backlinks' ? 'none' : 'backlinks')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'backlinks' ? 'var(--accent-2)' : undefined }}
-        title="Backlinks" aria-label="Toggle backlinks panel"
+        style={{ ...btnStyle(), color: rightPanel === 'backlinks' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title="Backlinks" aria-label={t('titlebar.backlinks')}
       >
         &#x21C4;
       </button>
       {/* T2-6: Coach — gaps + learning path (the dormant FSRS/gap differentiators). */}
       <button
         onClick={() => setRightPanel(rightPanel === 'coach' ? 'none' : 'coach')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'coach' ? 'var(--accent-2)' : undefined }}
-        title="Coach — knowledge gaps + learning path" aria-label="Toggle Coach panel"
+        style={{ ...btnStyle(), color: rightPanel === 'coach' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title={t('titlebar.coach')} aria-label="Toggle Coach panel"
       >
         &#x2316;
       </button>
       {/* T3-1: Synthesize — compile a cited article from your vault. */}
       <button
         onClick={() => setRightPanel(rightPanel === 'synthesis' ? 'none' : 'synthesis')}
-        style={{ ...btnStyle(isDark), color: rightPanel === 'synthesis' ? 'var(--accent-2)' : undefined }}
-        title="Synthesize — compile a cited article from your vault" aria-label="Toggle Synthesis panel"
+        style={{ ...btnStyle(), color: rightPanel === 'synthesis' ? 'var(--accent-2)' : 'var(--ink)' }}
+        title={t('titlebar.synthesis')} aria-label="Toggle Synthesis panel"
       >
         &#x2726;
       </button>
-      <button onClick={toggleTheme} style={btnStyle(isDark)} title="Toggle theme" aria-label="Toggle dark/light theme">
+      <button onClick={() => void useSettingsStore.getState().update({ theme: isDark ? 'light' : 'dark' })} style={btnStyle()} title="Toggle theme" aria-label={t('action.toggleThemeDarkLight')}>
         {isDark ? '\u263C' : '\u263E'}
       </button>
 
       {!isMac && (
         <>
-          <button onClick={() => void ipc('window:minimize')} style={btnStyle(isDark)} title="Minimize" aria-label="Minimize window">&#x2014;</button>
-          <button onClick={() => void ipc('window:maximize')} style={btnStyle(isDark)} title="Maximize" aria-label="Maximize window">&#x25A1;</button>
-          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(isDark), color: '#ef4444' }} title="Close" aria-label="Close window">&#x2715;</button>
+          <button onClick={() => void ipc('window:minimize')} style={btnStyle()} title={t('titlebar.minimize')} aria-label="Minimize window">&#x2014;</button>
+          <button onClick={() => void ipc('window:maximize')} style={btnStyle()} title={t('titlebar.maximize')} aria-label="Maximize window">&#x25A1;</button>
+          <button onClick={() => void ipc('window:close')} style={{ ...btnStyle(), color: '#ef4444' }} title={t('titlebar.close')} aria-label="Close window">&#x2715;</button>
         </>
       )}
     </div>
   );
 }
 
-function btnStyle(isDark: boolean): React.CSSProperties {
+function btnStyle(): React.CSSProperties {
   return {
     WebkitAppRegion: 'no-drag',
     background: 'transparent',
     border: 'none',
-    color: isDark ? '#8a8aa0' : '#666',
+    // Theme-adaptive via data-theme (always correct). Use the FULL-strength ink
+    // (not --ink-dim) — at #8a8aa0 the icons were technically rendered but too faint
+    // to see on the near-black titlebar; --ink (#e0e0f0 dark / #1a1a2e light) reads clearly.
+    color: 'var(--ink)',
     cursor: 'pointer',
     padding: '4px 8px',
     borderRadius: 4,

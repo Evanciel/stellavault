@@ -16,6 +16,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { invokeIpcRaw } from '../../lib/runtime-sync.js';
 import { registerCommand } from '../../lib/commands.js';
 import { openWikilinkTarget } from '../editor/WikilinkNode.js';
+import { useT } from '../../lib/i18n.js';
 import type { SynthesisResult } from '../../../shared/ipc-types.js';
 
 // Palette command + default hotkey (mirrors AIPanel / CoachPanel registration).
@@ -71,6 +72,7 @@ function ArticleBody({ article }: { article: string }) {
 }
 
 export function SynthesisPanel() {
+  const t = useT();
   const coreReady = useAppStore((s) => s.coreReady);
   const openFile = useAppStore((s) => s.openFile);
   const activeTabId = useAppStore((s) => s.activeTabId);
@@ -118,7 +120,7 @@ export function SynthesisPanel() {
     return (
       <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
         <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.3 }}>&#x2726;</div>
-        Loading synthesis engine...
+        {t('panel.synthesis.loading')}
       </div>
     );
   }
@@ -126,10 +128,10 @@ export function SynthesisPanel() {
   return (
     <div style={{ padding: 12 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 4 }}>
-        Synthesize
+        {t('panel.synthesis.title')}
       </div>
       <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginBottom: 12, lineHeight: 1.5 }}>
-        A compiled, cited article on any topic — written from your own notes.
+        {t('panel.synthesis.description')}
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
@@ -138,8 +140,8 @@ export function SynthesisPanel() {
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void handleSynthesize(topic); }}
-          placeholder="Topic to synthesize..."
-          aria-label="Topic to synthesize"
+          placeholder={t('panel.synthesis.placeholder')}
+          aria-label={t('panel.synthesis.placeholder')}
           style={{
             flex: 1, background: 'var(--hover)', border: '1px solid var(--border)',
             borderRadius: 4, padding: '6px 10px', fontSize: 12, color: 'var(--ink)', outline: 'none',
@@ -153,7 +155,7 @@ export function SynthesisPanel() {
             color: '#fff', fontSize: 11, cursor: 'pointer', opacity: loading || !topic.trim() ? 0.5 : 1,
           }}
         >
-          {loading ? '...' : 'Compile'}
+          {loading ? '...' : t('panel.synthesis.compileButton')}
         </button>
       </div>
 
@@ -166,7 +168,7 @@ export function SynthesisPanel() {
           color: 'var(--ink-dim)', opacity: loading || !activeTabId ? 0.5 : 1,
         }}
       >
-        Use current note&rsquo;s title
+        {t('panel.synthesis.useCurrentNoteButton')}
       </button>
 
       {loading && (
@@ -193,10 +195,10 @@ export function SynthesisPanel() {
               fontSize: 9, padding: '1px 6px', borderRadius: 3, color: '#fff',
               background: result.synthesized ? 'var(--accent)' : 'var(--ink-faint)',
             }}>
-              {result.synthesized ? 'AI synthesized' : 'Extractive'}
+              {result.synthesized ? t('panel.synthesis.aiSynthesized') : t('panel.synthesis.extractive')}
             </span>
             <span style={{ fontSize: 9, color: 'var(--ink-faint)' }}>
-              {result.sources.length} source{result.sources.length === 1 ? '' : 's'}
+              {t('panel.synthesis.sourceCount', { count: result.sources.length })}
             </span>
             <button
               onClick={() => void saveArticle()}
@@ -206,7 +208,7 @@ export function SynthesisPanel() {
                 background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--ink-dim)',
               }}
             >
-              Save to vault
+              {t('panel.synthesis.saveButton')}
             </button>
           </div>
 
@@ -214,7 +216,7 @@ export function SynthesisPanel() {
 
           {!result.synthesized && (
             <div style={{ fontSize: 9, color: 'var(--ink-faint)', marginTop: 8, lineHeight: 1.5 }}>
-              Add an AI provider key in Settings &rarr; AI for a fully synthesized article.
+              {t('panel.synthesis.noAiHint')}
             </div>
           )}
         </div>
@@ -222,7 +224,7 @@ export function SynthesisPanel() {
 
       {!result && !loading && !error && (
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 20 }}>
-          Enter a topic to compile an article from your vault, with clickable [[backlinks]].
+          {t('panel.synthesis.emptyHint')}
         </div>
       )}
     </div>

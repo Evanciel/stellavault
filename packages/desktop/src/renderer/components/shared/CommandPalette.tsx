@@ -8,6 +8,7 @@ import { useUiStore, listCommands, type CommandDef } from '../../lib/commands.js
 import { bindingFor, formatChord } from '../../lib/hotkeys.js';
 import { fuzzyFilter } from '../../lib/fuzzy.js';
 import { ipc } from '../../lib/ipc-client.js';
+import { useT } from '../../lib/i18n.js';
 import { Modal } from '../ui/Modal.js';
 import { collectNotes, type NoteEntry } from './QuickSwitcher.js';
 
@@ -20,6 +21,7 @@ type PaletteItem =
   | { kind: 'file'; note: NoteEntry };
 
 export function CommandPalette() {
+  const t = useT();
   const open = useUiStore((s) => s.paletteOpen);
   // 'command' = normal list; 'new-note' = palette morphs into a title input.
   const mode = useUiStore((s) => s.paletteMode);
@@ -122,7 +124,7 @@ export function CommandPalette() {
   }, [mode, query, items, selectedIdx, handleSelect, createNote, setPaletteOpen]);
 
   const statsModal = (
-    <Modal open={statsText !== null} onClose={() => setStatsText(null)} title="Vault diagnostics" width={360}>
+    <Modal open={statsText !== null} onClose={() => setStatsText(null)} title={t('dialog.vaultDiagnostics')} width={360}>
       <pre style={{
         margin: 0, fontSize: 12, lineHeight: 1.7, color: 'var(--ink-dim)',
         fontFamily: 'inherit', whiteSpace: 'pre-wrap',
@@ -164,7 +166,7 @@ export function CommandPalette() {
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIdx(0); }}
             onKeyDown={handleKeyDown}
-            placeholder={mode === 'command' ? 'Type a command...' : 'Note title...'}
+            placeholder={mode === 'command' ? t('dialog.typeCommand') : 'Note title...'}
             style={{
               width: '100%', background: 'transparent', border: 'none',
               outline: 'none', fontSize: 14, color: 'var(--ink)',
@@ -173,7 +175,7 @@ export function CommandPalette() {
         </div>
         {mode === 'new-note' ? (
           <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--ink-faint)' }}>
-            Press Enter to create the note.
+            {t('dialog.pressEnterCreate')}
           </div>
         ) : (
         <div id="sv-cmd-list" role="listbox" style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
@@ -190,7 +192,7 @@ export function CommandPalette() {
                     padding: '6px 14px 2px', fontSize: 9, color: 'var(--ink-faint)',
                     textTransform: 'uppercase', letterSpacing: '0.08em',
                   }}>
-                    Files
+                    {t('dialog.files')}
                   </div>
                 )}
                 <div
@@ -230,7 +232,7 @@ export function CommandPalette() {
           })}
           {items.length === 0 && (
             <div style={{ padding: 16, textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
-              No matching commands or files
+              {t('dialog.noMatching')}
             </div>
           )}
         </div>
@@ -241,14 +243,14 @@ export function CommandPalette() {
         }}>
           {mode === 'new-note' ? (
             <>
-              <span>↵ create</span>
-              <span>esc back</span>
+              <span>{t('dialog.enterCreate')}</span>
+              <span>{t('dialog.escBack')}</span>
             </>
           ) : (
             <>
-              <span>↑↓ navigate</span>
-              <span>↵ run</span>
-              <span>esc close</span>
+              <span>{t('dialog.navigateKeys')}</span>
+              <span>{t('dialog.enterRun')}</span>
+              <span>{t('dialog.escClose')}</span>
             </>
           )}
         </div>
