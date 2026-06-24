@@ -32,6 +32,12 @@ export interface AgentToolDeps {
   coreReady: () => boolean;
   /** Post-write bookkeeping owned by index.ts: re-assert path + indexFiles + bump caches. */
   afterWrite: (savedPath: string) => Promise<void> | void;
+  // plan-act-reflect read tools (injected by index.ts — they reuse pipelines it already runs).
+  // get_related is filePath-keyed (the model never sees the internal doc id); gaps/learning-path
+  // are whole-vault. All return filePath/title only — never an internal id.
+  getRelatedByPath?: (filePath: string, limit: number) => Promise<unknown>;
+  detectGaps?: () => Promise<unknown>;
+  learningPath?: (limit: number) => Promise<unknown>;
 }
 
 // OpenAI function-format schemas — the ONLY tools the model is told about.
@@ -81,6 +87,34 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
         properties: { query: { type: 'string' } },
         required: ['query'],
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_related',
+      description: 'Find notes related to a given note (semantically similar). Pass the filePath of a note from a search result.',
+      parameters: {
+        type: 'object',
+        properties: { filePath: { type: 'string', description: 'filePath of a note (from search_vault)' }, limit: { type: 'number' } },
+        required: ['filePath'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'detect_gaps',
+      description: 'Find weakly-connected clusters in the vault — knowledge that exists but should be linked. No arguments.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'learning_path',
+      description: "Get the user's prioritised review queue (notes most due for review by spaced-repetition decay).",
+      parameters: { type: 'object', properties: { limit: { type: 'number' } } },
     },
   },
   {
@@ -153,6 +187,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
 
 export const AGENT_VALID_NAMES = new Set<string>([
   'search_vault', 'read_note', 'list_topics', 'find_decisions',
+  'get_related', 'detect_gaps', 'learning_path',
   'log_decision', 'create_note', 'append_note', 'link_note',
 ]);
 const AGENT_WRITE_NAMES = new Set<string>(['log_decision', 'create_note', 'append_note', 'link_note']);
@@ -246,6 +281,22 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         const query = str(args.query);
         if (!query) return { error: 'query is required' };
         return await handleFindDecisions(deps.vaultPath, { query });
+      }
+      // ── plan-act-reflect read tools (injected helpers; filePath/title only, no internal id) ──
+      case 'get_related': {
+        const filePath = str(args.filePath);
+        if (!filePath) return { error: 'filePath is required' };
+        if (!deps.getRelatedByPath) return { error: 'related-notes unavailable' };
+        try { return { related: await deps.getRelatedByPath(filePath, Math.min(Number(args.limit) || 5, 10)) }; }
+        catch { return { error: 'note not found in index' }; }
+      }
+      case 'detect_gaps': {
+        if (!deps.detectGaps) return { gaps: [] };
+        try { return await deps.detectGaps(); } catch { return { totalGaps: 0, gaps: [] }; }
+      }
+      case 'learning_path': {
+        if (!deps.learningPath) return { items: [] };
+        try { return await deps.learningPath(Math.min(Number(args.limit) || 10, 30)); } catch { return { items: [] }; }
       }
       case 'log_decision': {
         const title = str(args.title);

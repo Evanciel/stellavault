@@ -545,6 +545,54 @@ function docIdForFile(vaultPath: string, filePath: string): string {
   return createHash('sha256').update(rel).digest('hex').slice(0, 16);
 }
 
+// ── plan-act-reflect agent read tools (part B) — trimmed, id-free results for the agent ──
+/** Related notes for a note (filePath-keyed): docIdForFile → store.getDocument → search by its
+ *  title+content. Reimplements handleGetRelated inline (it is NOT in the core barrel). */
+async function agentGetRelated(filePath: string, limit: number): Promise<unknown> {
+  if (!coreReady || !store || !searchEngine) return { error: 'index not ready' };
+  const id = docIdForFile(currentVaultPath, filePath);
+  const doc = await store.getDocument(id);
+  if (!doc) return { error: 'note not found in index' };
+  const query = `${doc.title ?? ''} ${String(doc.content ?? '').slice(0, 200)}`;
+  const results = await searchEngine.search({ query, limit: limit + 1 });
+  return results
+    .filter((r: any) => r.document?.id !== id)
+    .slice(0, limit)
+    .map((r: any) => ({ title: r.document?.title, filePath: r.document?.filePath, score: Math.round((r.score ?? 0) * 1000) / 1000, tags: r.document?.tags }));
+}
+/** Whole-vault knowledge gaps (weakly-connected clusters). Reuses the Coach pipeline; trimmed. */
+async function agentDetectGaps(): Promise<unknown> {
+  if (!coreReady || !store) return { totalGaps: 0, gaps: [] };
+  const core = await import('@stellavault/core');
+  let graphData: any;
+  try { graphData = typeof (core as any).buildGraphData === 'function' ? await (core as any).buildGraphData(store, { mode: 'semantic' }) : undefined; } catch { graphData = undefined; }
+  const report = typeof (core as any).detectKnowledgeGaps === 'function' ? await (core as any).detectKnowledgeGaps(store, graphData) : { totalGaps: 0, gaps: [] };
+  return {
+    totalGaps: report?.totalGaps ?? 0,
+    gaps: (report?.gaps ?? []).slice(0, 10).map((g: any) => ({ between: [g.clusterA ?? '', g.clusterB ?? ''], suggestedTopic: g.suggestedTopic ?? '', severity: g.severity ?? 'low' })),
+  };
+}
+/** Prioritised review queue (spaced-repetition decay). Trimmed to title/filePath/reason — no id. */
+async function agentLearningPath(limit: number): Promise<unknown> {
+  if (!coreReady || !store || !decayEngine) return { items: [] };
+  const core = await import('@stellavault/core');
+  if (typeof (core as any).generateLearningPath !== 'function') return { items: [] };
+  const decayReport = await decayEngine.computeAll();
+  const path = (core as any).generateLearningPath({ decayReport, gaps: [] }, limit);
+  const resolve = (documentId: string): { filePath: string; title: string } => {
+    try {
+      const row = store?.getDb?.()?.prepare('SELECT file_path, title FROM documents WHERE id = ?').get(documentId) as { file_path?: string; title?: string } | undefined;
+      return { filePath: row?.file_path ? join(currentVaultPath, row.file_path) : '', title: row?.title ?? '' };
+    } catch { return { filePath: '', title: '' }; }
+  };
+  return {
+    items: (path?.items ?? []).map((it: any) => {
+      const f = it.documentId ? resolve(it.documentId) : { filePath: '', title: '' };
+      return { title: it.title || f.title || 'Untitled', filePath: f.filePath, reason: it.reason ?? '', priority: it.priority ?? 'suggested', category: it.category ?? 'review', score: it.score ?? 0 };
+    }),
+  };
+}
+
 /** Shared DecayItem mapping for core:decay-top / core:decay-list. */
 async function getDecayItems(vaultPath: string, limit: number): Promise<DecayItem[]> {
   if (!coreReady || !decayEngine) return [];
@@ -1100,6 +1148,7 @@ function registerIpcHandlers(config: AppConfig) {
       const executeTool = buildExecuteAgentTool({
         searchEngine, store, decayEngine, vaultPath: currentVaultPath,
         coreReady: () => coreReady, afterWrite,
+        getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
       });
       agentOpts = {
         agentOn: true,
@@ -1241,6 +1290,7 @@ function registerIpcHandlers(config: AppConfig) {
     };
     const executeTool = buildExecuteAgentTool({
       searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
+      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
     });
 
     try {

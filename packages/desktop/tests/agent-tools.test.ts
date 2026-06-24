@@ -37,14 +37,40 @@ function makeDeps(over: any = {}) {
 }
 
 describe('agent-tools — toolset metadata', () => {
-  it('exposes the 8 tools (4 read + 4 write) and marks the writes correctly', () => {
+  it('exposes the 11 tools (7 read + 4 write) and marks the writes correctly', () => {
     expect([...AGENT_VALID_NAMES].sort()).toEqual([
-      'append_note', 'create_note', 'find_decisions', 'link_note',
-      'list_topics', 'log_decision', 'read_note', 'search_vault',
+      'append_note', 'create_note', 'detect_gaps', 'find_decisions', 'get_related', 'learning_path',
+      'link_note', 'list_topics', 'log_decision', 'read_note', 'search_vault',
     ]);
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(8);
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(11);
     for (const w of ['log_decision', 'create_note', 'append_note', 'link_note']) expect(isAgentWriteTool(w)).toBe(true);
-    for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions']) expect(isAgentWriteTool(r)).toBe(false);
+    for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path']) expect(isAgentWriteTool(r)).toBe(false);
+  });
+});
+
+describe('agent-tools — plan-act-reflect read tools (part B)', () => {
+  it('get_related delegates to the injected helper; returns related notes with NO internal id', async () => {
+    const getRelatedByPath = vi.fn(async () => [{ title: 'Rel', filePath: 'rel.md', score: 0.9, tags: ['x'] }]);
+    const exec = buildExecuteAgentTool(makeDeps({ getRelatedByPath }) as any);
+    const r: any = await exec('get_related', { filePath: 'note.md' });
+    expect(getRelatedByPath).toHaveBeenCalledWith('note.md', 5);
+    expect(r.related[0]).toMatchObject({ title: 'Rel', filePath: 'rel.md' });
+    expect(JSON.stringify(r)).not.toMatch(/"id"/); // never leaks an internal doc id
+  });
+  it('get_related: missing filePath → error, no call', async () => {
+    const getRelatedByPath = vi.fn();
+    const exec = buildExecuteAgentTool(makeDeps({ getRelatedByPath }) as any);
+    expect((await exec('get_related', {}) as any).error).toMatch(/required/);
+    expect(getRelatedByPath).not.toHaveBeenCalled();
+  });
+  it('detect_gaps + learning_path delegate to injected helpers', async () => {
+    const detectGaps = vi.fn(async () => ({ totalGaps: 1, gaps: [{ between: ['a', 'b'], suggestedTopic: 't', severity: 'low' }] }));
+    const learningPath = vi.fn(async () => ({ items: [{ title: 'N', filePath: 'n.md', reason: 'due' }] }));
+    const exec = buildExecuteAgentTool(makeDeps({ detectGaps, learningPath }) as any);
+    expect((await exec('detect_gaps', {}) as any).totalGaps).toBe(1);
+    const lp: any = await exec('learning_path', { limit: 5 });
+    expect(learningPath).toHaveBeenCalledWith(5);
+    expect(lp.items[0]).toMatchObject({ title: 'N', filePath: 'n.md' });
   });
 });
 
