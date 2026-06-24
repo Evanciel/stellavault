@@ -149,6 +149,25 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const removeAttachment = useCallback((uid: string) => {
     setAttachments((prev) => prev.filter((a) => a.uid !== uid));
   }, []);
+
+  // Part5: drag-and-drop IMAGE files onto the chat → stage as attachments (vision only). Read in
+  // the renderer (FileReader → data URL); main still content-verifies (decode+magic-byte) on send.
+  const [dragOver, setDragOver] = useState(false);
+  const stageImageFiles = useCallback((files: File[]) => {
+    if (!visionOn) return;
+    for (const f of files.slice(0, 6)) {
+      if (!/^image\/(png|jpe?g|gif|webp)$/.test(f.type)) continue;
+      if (f.size === 0 || f.size > 10 * 1024 * 1024) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        if (!/^data:image\/(png|jpeg|gif|webp);base64,/.test(dataUrl)) return;
+        const mimeType = dataUrl.slice(5, dataUrl.indexOf(';'));
+        setAttachments((prev) => [...prev, { uid: crypto.randomUUID(), type: 'image' as const, mimeType, dataUrl, fileName: f.name, size: f.size }].slice(0, 6));
+      };
+      reader.readAsDataURL(f);
+    }
+  }, [visionOn]);
   // Open a note the agent just filed (the "Filed" row) in the editor — the second-brain loop.
   const openNote = useCallback(async (filePath?: string) => {
     if (!filePath) return;
@@ -518,7 +537,17 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       : undefined;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
+      onDragOver={visionOn ? (e) => { e.preventDefault(); if (!dragOver) setDragOver(true); } : undefined}
+      onDragLeave={visionOn ? (e) => { if (e.currentTarget === e.target) setDragOver(false); } : undefined}
+      onDrop={visionOn ? (e) => { e.preventDefault(); setDragOver(false); stageImageFiles([...e.dataTransfer.files]); } : undefined}
+    >
+      {dragOver && (
+        <div style={{ position: 'absolute', inset: 6, zIndex: 40, border: '2px dashed var(--accent)', borderRadius: 14, background: 'color-mix(in srgb, var(--accent) 10%, var(--bg))', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 15, fontWeight: 600, color: 'var(--accent-2)' }}>
+          🖼 {t('panel.ai.dropImages')}
+        </div>
+      )}
       {/* Scrollable transcript (position:relative anchors the jump button) */}
       <div
         ref={stick.scrollRef}

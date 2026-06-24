@@ -45,6 +45,7 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
   const isUser = message.role === 'user';
   const isMain = variant === 'main';
   const [copied, setCopied] = useState(false);
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
 
   // Activity timer — ticks elapsed seconds while an assistant turn streams.
   const [elapsed, setElapsed] = useState(0);
@@ -111,7 +112,8 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
                 {message.attachments.map((a, i) => (
                   a.type === 'image' ? (
                     <img key={`${a.fileName}-${i}`} src={a.dataUrl} alt={a.fileName} title={a.fileName}
-                      style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'contain' }} />
+                      onClick={() => a.dataUrl && setZoomSrc(a.dataUrl)}
+                      style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'contain', cursor: 'zoom-in' }} />
                   ) : (
                     <details key={`${a.fileName}-${i}`} style={{ maxWidth: 260, padding: '6px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--hover)', fontSize: 11.5 }}>
                       <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
@@ -246,6 +248,16 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
               </span>
             );
           })}
+        </div>
+      )}
+
+      {/* Part5: image lightbox — click an attachment thumbnail to zoom; click anywhere to close. */}
+      {zoomSrc && (
+        <div
+          onClick={() => setZoomSrc(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out', padding: 32 }}
+        >
+          <img src={zoomSrc} alt="" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }} />
         </div>
       )}
     </div>

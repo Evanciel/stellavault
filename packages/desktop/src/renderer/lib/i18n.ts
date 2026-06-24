@@ -300,6 +300,7 @@ export const messages = {
   "panel.ai.suggest.1": { en: "What am I missing on this topic?", ko: "이 주제에서 내가 놓친 건?" },
   "panel.ai.suggest.2": { en: "Connect these ideas into a note", ko: "이 아이디어들을 노트로 연결해줘" },
   "panel.ai.attachLabel": { en: "Image", ko: "이미지" },
+  "panel.ai.dropImages": { en: "Drop images to attach", ko: "이미지를 놓아 첨부" },
   "panel.ai.attachHint": { en: "Attach image(s) for the vision model to see (PNG/JPG/GIF/WebP).", ko: "비전 모델이 볼 이미지를 첨부합니다 (PNG/JPG/GIF/WebP)." },
   "panel.ai.attachRemove": { en: "Remove", ko: "제거" },
   "panel.ai.audioLabel": { en: "Audio", ko: "오디오" },
