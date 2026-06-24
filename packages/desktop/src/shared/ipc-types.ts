@@ -579,6 +579,9 @@ export interface IpcChannelMap {
   // Gemini) and returns attachments carrying a transcript (no media blob). `kind` picks the
   // dialog filter + which cloud key/endpoint is used. May return an error string per pick.
   'chat:pick-media': { args: [kind: 'audio' | 'video']; result: { attachments: ChatAttachment[]; error?: string } };
+  // Part5: save the current conversation VERBATIM as a vault note (the second-brain record;
+  // distinct from chat:distill which extracts atomic wiki notes). Returns the new note's path.
+  'chat:export-note': { args: [req: { messages: ChatMessage[]; title?: string }]; result: { filePath?: string; error?: string } };
   // Session CRUD (⑨) — filenames are UUIDs; rename writes a title FIELD, not the path.
   'chat:list-sessions':  { args: []; result: ChatSessionMeta[] };
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };

@@ -49,6 +49,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:distill',      // agent SP-I: auto-distill a finished conversation into the wiki
   'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
   'chat:pick-media',   // SP4: pick audio/video → cloud transcript attachment
+  'chat:export-note',  // part5: save the conversation verbatim as a vault note
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',

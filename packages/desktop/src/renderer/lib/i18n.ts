@@ -288,6 +288,8 @@ export const messages = {
   "panel.ai.cmd.distill.desc": { en: "Auto-distill answers into the wiki on/off", ko: "답변 자동 증류 켜기/끄기" },
   "panel.ai.cmd.image.title": { en: "Attach image", ko: "이미지 첨부" },
   "panel.ai.cmd.image.desc": { en: "Pick an image for the vision model", ko: "비전 모델용 이미지 선택" },
+  "panel.ai.cmd.export.title": { en: "Save to vault", ko: "볼트에 저장" },
+  "panel.ai.cmd.export.desc": { en: "Save this whole conversation as a note", ko: "이 대화 전체를 노트로 저장" },
   "panel.ai.cmd.new.title": { en: "New chat", ko: "새 채팅" },
   "panel.ai.cmd.new.desc": { en: "Start a fresh conversation", ko: "새 대화를 시작합니다" },
   "panel.ai.cmd.clear.title": { en: "Clear chat", ko: "채팅 비우기" },

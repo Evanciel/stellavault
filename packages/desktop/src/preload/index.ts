@@ -108,6 +108,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:pick-images',
   // SP4: pick audio/video → cloud transcript (Whisper/Gemini) attachment.
   'chat:pick-media',
+  // Part5: export the conversation verbatim as a vault note.
+  'chat:export-note',
   // Local model server (Ollama) lifecycle — "Start Ollama" affordance
   'ollama:status',
   'ollama:start',

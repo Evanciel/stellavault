@@ -1354,6 +1354,42 @@ function registerIpcHandlers(config: AppConfig) {
     return { attachments, ...(attachments.length === 0 && lastError ? { error: lastError } : {}) };
   });
 
+  // Part5: export the current conversation VERBATIM as a vault note under Chats/. The
+  // second-brain "keep this whole chat" record (chat:distill is the extract-knowledge path).
+  ipcMain.handle('chat:export-note', async (_e, req: { messages: ChatMessage[]; title?: string }): Promise<{ filePath?: string; error?: string }> => {
+    if (!coreReady || !currentVaultPath) return { error: 'not-ready' };
+    const msgs = (req?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant');
+    if (msgs.length === 0) return { error: 'empty' };
+    try {
+      const rawTitle = (req.title || msgs.find((m) => m.role === 'user')?.text || 'Conversation').slice(0, 80);
+      const title = rawTitle.replace(/[\r\n]+/g, ' ').replace(/["\\]/g, '').trim() || 'Conversation';
+      const d = new Date();
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const slug = (title.replace(/[^a-zA-Z가-힣0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 50) || 'chat');
+      const body = `---\ntitle: "${title}"\ntags: [chat]\ncreated: ${date}\n---\n\n# ${title}\n\n`
+        + msgs.map((m) => `**${m.role === 'user' ? 'You' : 'Assistant'}:**\n\n${foldAttachmentsIntoText(m)}`).join('\n\n---\n\n')
+        + '\n';
+      const dir = join(currentVaultPath, 'Chats');
+      assertInsideVault(currentVaultPath, dir);
+      mkdirSync(dir, { recursive: true });
+      let filePath = join(dir, `${date}-${slug}.md`);
+      for (let i = 2; existsSync(filePath); i++) filePath = join(dir, `${date}-${slug}-${i}.md`);
+      const safe = assertInsideVault(currentVaultPath, filePath);
+      writeFileSync(safe, body, 'utf-8');
+      noteSelfWrite(safe);
+      const core = await import('@stellavault/core');
+      if (typeof (core as any).indexFiles === 'function') {
+        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+      }
+      bumpVaultFsVersion();
+      bumpGraphCacheVersion();
+      return { filePath: safe };
+    } catch (err) {
+      console.error('[main] chat:export-note failed:', err);
+      return { error: 'write-failed' };
+    }
+  });
+
   // Session CRUD (⑨) — delegate to the store. Filenames are UUIDs; the store's
   // isUuid + assertInsideDir guards run on every op. rename writes a title FIELD.
   ipcMain.handle('chat:list-sessions', () => chatListSessions());

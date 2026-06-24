@@ -5,8 +5,8 @@ import {
   type CommandCtx,
 } from '../src/renderer/components/chat/commands.js';
 
-const FULL: CommandCtx = { visionOn: true, canNewSession: true, canClearChat: true };
-const NONE: CommandCtx = { visionOn: false, canNewSession: false, canClearChat: false };
+const FULL: CommandCtx = { visionOn: true, canNewSession: true, canClearChat: true, hasMessages: true };
+const NONE: CommandCtx = { visionOn: false, canNewSession: false, canClearChat: false, hasMessages: false };
 
 describe('parseSlash', () => {
   it('matches only a leading "/" at index 0 of the whole value', () => {

@@ -6,7 +6,7 @@
 // toggle defaults ON and is owned by ChatView (lifted state). Sized to fit the
 // right panel (280–800px) — a single-column stack, no horizontal overflow.
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { parseSlash, matchCommands, applyTemplate, topQuickBar, bumpFreq, type SlashCommand, type CommandCtx } from './commands.js';
 
@@ -58,6 +58,9 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
   const menuOpen = cmdsOn && slash.isSlash && matches.length > 0 && !dismissed;
   const [activeIdx, setActiveIdx] = useState(0);
   const clampIdx = (i: number) => (matches.length ? ((i % matches.length) + matches.length) % matches.length : 0);
+  // Reset the highlight to the top whenever the filtered set changes (so it never points at a
+  // now-narrowed row — the user expects Enter to hit the first visible result).
+  useEffect(() => { setActiveIdx(0); }, [slash.token, matches.length]);
 
   const pick = useCallback((cmd: SlashCommand) => {
     if (!onCommand) return;

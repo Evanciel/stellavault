@@ -14,13 +14,14 @@ export interface SlashCommand {
   /** prefill template; {arg} is replaced with the typed argument (or '' ). */
   template?: string;
   /** which toggle/run this maps to — interpreted by ChatView's runCommand. */
-  handler?: 'rag' | 'agent' | 'distill' | 'image' | 'new' | 'clear';
+  handler?: 'rag' | 'agent' | 'distill' | 'image' | 'new' | 'clear' | 'export';
 }
 
 export interface CommandCtx {
   visionOn: boolean;       // /image is only meaningful on a vision provider
   canNewSession: boolean;  // ChatPanel provided onNewSession
   canClearChat: boolean;   // ChatPanel provided onClearChat
+  hasMessages: boolean;    // /export needs a non-empty transcript
 }
 
 export const COMMANDS: SlashCommand[] = [
@@ -31,6 +32,7 @@ export const COMMANDS: SlashCommand[] = [
   { id: 'rag', titleKey: 'panel.ai.cmd.rag.title', descKey: 'panel.ai.cmd.rag.desc', action: 'toggle', handler: 'rag' },
   { id: 'distill', titleKey: 'panel.ai.cmd.distill.title', descKey: 'panel.ai.cmd.distill.desc', action: 'toggle', handler: 'distill' },
   { id: 'image', titleKey: 'panel.ai.cmd.image.title', descKey: 'panel.ai.cmd.image.desc', action: 'run', handler: 'image' },
+  { id: 'export', aliases: ['save'], titleKey: 'panel.ai.cmd.export.title', descKey: 'panel.ai.cmd.export.desc', action: 'run', handler: 'export' },
   { id: 'new', titleKey: 'panel.ai.cmd.new.title', descKey: 'panel.ai.cmd.new.desc', action: 'run', handler: 'new' },
   { id: 'clear', titleKey: 'panel.ai.cmd.clear.title', descKey: 'panel.ai.cmd.clear.desc', action: 'run', handler: 'clear' },
 ];
@@ -40,6 +42,7 @@ function isVisible(cmd: SlashCommand, ctx: CommandCtx): boolean {
   if (cmd.handler === 'image') return ctx.visionOn;
   if (cmd.handler === 'new') return ctx.canNewSession;
   if (cmd.handler === 'clear') return ctx.canClearChat;
+  if (cmd.handler === 'export') return ctx.hasMessages;
   return true;
 }
 

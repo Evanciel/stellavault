@@ -158,6 +158,16 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       useAppStore.getState().openFile(filePath, title, content);
     } catch (err) { console.error('[chat] open filed note failed', err); }
   }, []);
+  // Part5: save the whole conversation verbatim as a vault note, then open it.
+  const exportConversation = useCallback(async () => {
+    const msgs = messagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+    if (msgs.length === 0) return;
+    try {
+      const r = await ipc('chat:export-note', { messages: msgs });
+      const res = r as { filePath?: string; error?: string };
+      if (res?.filePath) await openNote(res.filePath);
+    } catch (err) { console.error('[chat] export conversation failed', err); }
+  }, [openNote]);
   // Discard staged IMAGE attachments if the provider/endpoint changes (the view isn't remounted
   // on a settings change) — a cloud model can't see them. Audio/video transcripts are plain text
   // and stay valid across providers, so keep those.
@@ -341,16 +351,19 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   // the synchronous guard. Shared by send / regenerate (no composer-state reset here).
   const dispatchTurn = useCallback((outbound: ChatMessage[]) => {
     if (atCap) return;
+    // Drop any EMPTY assistant turn a prior error/abort left behind — an empty assistant
+    // content block 400s on Anthropic and pollutes history elsewhere (retry() did this too).
+    const clean = outbound.filter((m) => !(m.role === 'assistant' && m.text.trim() === ''));
     const newStreamId = crypto.randomUUID();
     const assistantTurn: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', ts: Date.now() };
-    setMessages([...outbound, assistantTurn]);
+    setMessages([...clean, assistantTurn]);
     setError(null);
     setCapMessage(false);
     setToolLog([]);   // fresh tool trace per turn
     setConfirm(null);
     streamMapRef.current.set(newStreamId, assistantTurn.id);
     syncActiveCount();
-    void ipc('chat:send', { messages: outbound, streamId: newStreamId, sessionId, ragOn, agentOn }).catch(() => {
+    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn }).catch(() => {
       setCapMessage(true);
       streamMapRef.current.delete(newStreamId);
       syncActiveCount();
@@ -391,11 +404,21 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       void ipc('chat:abort', sid).catch(() => {});
       streamMapRef.current.delete(sid);
     }
+    // Also abort any in-flight auto-distill for the now-discarded conversation so a late
+    // distill-done can't paint a stale "filed" summary for turns the user just removed.
+    for (const sid of [...distillStreamRef.current]) {
+      void ipc('chat:abort', sid).catch(() => {});
+      distillStreamRef.current.delete(sid);
+    }
+    setDistilling(false);
     syncActiveCount();
     setInput(target.text);
     setAttachments((target.attachments ?? []).map((a) => ({ uid: crypto.randomUUID(), ...a })));
     setError(null);
     setMessages(messages.slice(0, index));
+    // Prune abortedIds to the surviving turns (the dropped tail's ids no longer exist).
+    const surviving = new Set(messages.slice(0, index).map((m) => m.id));
+    setAbortedIds((prev) => new Set([...prev].filter((id) => surviving.has(id))));
   }, [messages, syncActiveCount]);
 
   // Single dispatcher for slash commands + quick-bar (both call this). prefill = review-before-send.
@@ -408,14 +431,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
         else if (cmd.handler === 'distill') setAutoDistill((v) => !v);
         break;
       case 'run':
-        if (cmd.handler === 'image') pickImages();
+        if (cmd.handler === 'image') { if (visionOn) pickImages(); } // re-guard like send() does
+        else if (cmd.handler === 'export') void exportConversation();
         else if (cmd.handler === 'new') onNewSession?.();
         else if (cmd.handler === 'clear') onClearChat?.();
         break;
       default: break; // 'send' unused in v1 (every vault command is prefill → user reviews)
     }
-  }, [pickImages, onNewSession, onClearChat]);
-  const commandCtx = { visionOn, canNewSession: !!onNewSession, canClearChat: !!onClearChat };
+  }, [visionOn, pickImages, exportConversation, onNewSession, onClearChat]);
+  const commandCtx = { visionOn, canNewSession: !!onNewSession, canClearChat: !!onClearChat, hasMessages: messages.length > 0 };
 
   // Stop the most-recently-started stream (the last live assistant bubble).
   const stop = useCallback(() => {
