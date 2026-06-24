@@ -31,6 +31,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit } from 'unist-util-visit';
+import { chatMarkdownComponents } from './chat-markdown.js';
 
 // Tags we never want from model output, even though defaultSchema permits some.
 const DROP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'style']);
@@ -55,6 +56,12 @@ export const CHAT_SANITIZE_SCHEMA = {
     // The model only needs links + images; '*' = [] strips everything else.
     a: ['href'],
     img: ['src', 'alt', 'title'],
+    // `className` on code/pre carries ONLY the fenced-code language hint
+    // (e.g. 'language-ts'). It is an inert string — it cannot execute and (with
+    // clobberPrefix on ids/names) cannot clobber the DOM; the chat-markdown
+    // renderer reads it to label the code block. No other tag gets className.
+    code: ['className'],
+    pre: ['className'],
     '*': [],
   },
   // Only https links and app: (vault) URLs survive. enforceAppHost then pins the
@@ -143,6 +150,7 @@ export function SanitizedMarkdown({ children }: SanitizedMarkdownProps) {
     {
       urlTransform: identityUrlTransform,
       rehypePlugins: [[rehypeSanitize, CHAT_SANITIZE_SCHEMA], enforceAppHost],
+      components: chatMarkdownComponents,
     },
     children,
   );

@@ -7,6 +7,7 @@
 // assistant turns; clicking one opens the note via the existing read-file→openFile
 // path (same mechanism AskVault/Coach use).
 
+import { useState, useEffect, useRef } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { useAppStore } from '../../stores/app-store.js';
@@ -33,6 +34,25 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
   const openFile = useAppStore((s) => s.openFile);
   const isUser = message.role === 'user';
   const isMain = variant === 'main';
+  const [copied, setCopied] = useState(false);
+
+  // Activity timer — ticks elapsed seconds while an assistant turn streams.
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number>(0);
+  useEffect(() => {
+    if (state !== 'streaming') return;
+    if (!startRef.current) startRef.current = performance.now();
+    const id = setInterval(() => setElapsed((performance.now() - startRef.current) / 1000), 200);
+    return () => clearInterval(id);
+  }, [state]);
+
+  const copyMessage = () => {
+    try {
+      void navigator.clipboard.writeText(message.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch { /* clipboard unavailable */ }
+  };
   // Main view, assistant turn: render as a borderless "document" block (ChatGPT-style)
   // rather than a chat bubble, so long markdown answers read like a page. User turns
   // stay as a subtle right-aligned bubble in both variants.
@@ -144,11 +164,29 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
               ? <SanitizedMarkdown>{message.text}</SanitizedMarkdown>
               : <span style={{ color: 'var(--ink-faint)' }}>{t('panel.ai.streamingMessage')}</span>}
             {state === 'streaming' && (
-              <span aria-hidden style={{ opacity: 0.5 }}> ▌</span>
+              <>
+                <span aria-hidden style={{ opacity: 0.5 }}> ▌</span>
+                {elapsed >= 0.6 && (
+                  <span style={{ marginLeft: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontVariantNumeric: 'tabular-nums' }}>{elapsed.toFixed(1)}s</span>
+                )}
+              </>
             )}
           </div>
         )}
       </div>
+
+      {/* Assistant message actions (done) — Copy. Subtle; brightens on hover. */}
+      {!isUser && state !== 'error' && state !== 'streaming' && message.text && (
+        <button
+          onClick={copyMessage}
+          aria-label={t('panel.ai.copyMessage')}
+          style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', color: copied ? 'var(--accent-2)' : 'var(--ink-faint)', fontSize: 10.5, fontWeight: 600, opacity: 0.75 }}
+          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.75'; }}
+        >
+          {copied ? `✓ ${t('panel.ai.copied')}` : `⧉ ${t('panel.ai.copy')}`}
+        </button>
+      )}
 
       {/* aborted / incomplete status line (assistant bubbles) */}
       {!isUser && (state === 'aborted' || state === 'incomplete' || message.incomplete) && state !== 'error' && (

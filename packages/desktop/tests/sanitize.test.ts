@@ -43,6 +43,20 @@ describe('CHAT_SANITIZE_SCHEMA shape', () => {
     expect(CHAT_SANITIZE_SCHEMA.attributes.img).toEqual(['src', 'alt', 'title']);
   });
 
+  it('allows className ONLY on code/pre (the fenced-code language hint), nowhere else', () => {
+    expect(CHAT_SANITIZE_SCHEMA.attributes.code).toEqual(['className']);
+    expect(CHAT_SANITIZE_SCHEMA.attributes.pre).toEqual(['className']);
+    // a non-code tag must NOT gain className — the '*' rule stays empty.
+    expect(CHAT_SANITIZE_SCHEMA.attributes['*']).toEqual([]);
+    expect((CHAT_SANITIZE_SCHEMA.attributes as Record<string, unknown>).p).toBeUndefined();
+  });
+
+  it('renders a fenced code block with its language label + content (className survives)', () => {
+    const html = render('```python\nprint(1)\n```');
+    expect(html).toContain('python');   // language label from the surviving className
+    expect(html).toContain('print(1)'); // code content
+  });
+
   it('restricts protocols: href https|app, src app — no http/javascript/data/mailto', () => {
     expect(CHAT_SANITIZE_SCHEMA.protocols.href).toEqual(['https', 'app']);
     expect(CHAT_SANITIZE_SCHEMA.protocols.src).toEqual(['app']);

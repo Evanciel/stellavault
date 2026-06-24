@@ -470,6 +470,18 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
               <div style={{ fontSize: 15, color: 'var(--ink-dim)', maxWidth: 540, lineHeight: 1.6 }}>
                 {t(`panel.ai.intro.${introIdx}.body` as never)}
               </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                {[0, 1, 2].map((s) => {
+                  const label = t(`panel.ai.suggest.${s}` as never);
+                  return (
+                    <button key={s} onClick={() => { setInput(label); }}
+                      style={{ padding: '7px 13px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--ink-dim)', fontSize: 12.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; }}
+                    >{label}</button>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 11, padding: 24 }}>
@@ -535,13 +547,19 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
                 {steps > 0 ? t('panel.ai.agentSteps').replace('{n}', String(steps)) : t('panel.ai.agentWorking')}
               </button>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
-                {rows.map((tlog) => (
-                  <div key={tlog.id} style={{ fontSize: 11, color: 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span aria-hidden style={{ opacity: 0.8 }}>{tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : '✓'}</span>
-                    <span style={{ fontWeight: 600 }}>{tlog.name}</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
-                  </div>
-                ))}
+                {rows.map((tlog) => {
+                  // A successful WRITE = the second brain just grew — give it a distinct 📝 +
+                  // accent treatment so the knowledge-building is visible, not buried in tools.
+                  const isWrite = tlog.kind === 'result' && tlog.ok !== false && AGENT_WRITE_TOOLS.has(tlog.name);
+                  const icon = tlog.kind === 'call' ? '🔧' : tlog.ok === false ? '⚠️' : isWrite ? '📝' : '✓';
+                  return (
+                    <div key={tlog.id} style={{ fontSize: 11, color: isWrite ? 'var(--accent-2)' : 'var(--ink-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span aria-hidden style={{ opacity: 0.85 }}>{icon}</span>
+                      <span style={{ fontWeight: 600 }}>{isWrite ? t('panel.ai.filed') : tlog.name}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{tlog.text}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
