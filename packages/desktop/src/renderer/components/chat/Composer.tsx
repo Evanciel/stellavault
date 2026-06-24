@@ -6,8 +6,9 @@
 // toggle defaults ON and is owned by ChatView (lifted state). Sized to fit the
 // right panel (280–800px) — a single-column stack, no horizontal overflow.
 
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n.js';
+import { parseSlash, matchCommands, applyTemplate, topQuickBar, bumpFreq, type SlashCommand, type CommandCtx } from './commands.js';
 
 export interface ComposerProps {
   value: string;
@@ -35,25 +36,55 @@ export interface ComposerProps {
   transcribeOn?: boolean; // OpenAI Whisper key set → 🎤
   videoOn?: boolean;      // Gemini key set → 🎬
   pickingMedia?: boolean;
+  /** Part4: slash commands + quick-bar. Both call onCommand; absent → feature off. */
+  onCommand?: (cmd: SlashCommand, arg: string) => void;
+  commandCtx?: CommandCtx;
   /** 'panel' = narrow right-panel sizing; 'main' = roomy centered main-view sizing. */
   variant?: 'panel' | 'main';
 }
 
-export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, attachments, onPickImages, onRemoveAttachment, visionOn, pickingImages, onPickMedia, transcribeOn, videoOn, pickingMedia, variant = 'panel' }: ComposerProps) {
+export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, attachments, onPickImages, onRemoveAttachment, visionOn, pickingImages, onPickMedia, transcribeOn, videoOn, pickingMedia, onCommand, commandCtx, variant = 'panel' }: ComposerProps) {
   const t = useT();
   const atts = attachments ?? [];
   const canSend = (value.trim().length > 0 || atts.length > 0) && !atCap;
   const isMain = variant === 'main';
 
+  // Part4: slash-command menu + quick-bar. Both invoke onCommand (single dispatch in ChatView).
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cmdsOn = !!(onCommand && commandCtx);
+  const slash = cmdsOn ? parseSlash(value) : { isSlash: false, token: '', arg: '' };
+  const matches = cmdsOn && slash.isSlash ? matchCommands(slash.token, commandCtx!) : [];
+  const [dismissed, setDismissed] = useState(false); // Esc closed the menu but kept the text
+  const menuOpen = cmdsOn && slash.isSlash && matches.length > 0 && !dismissed;
+  const [activeIdx, setActiveIdx] = useState(0);
+  const clampIdx = (i: number) => (matches.length ? ((i % matches.length) + matches.length) % matches.length : 0);
+
+  const pick = useCallback((cmd: SlashCommand) => {
+    if (!onCommand) return;
+    onCommand(cmd, slash.arg);
+    bumpFreq(cmd.id);
+    // prefill keeps its filled text; toggles/runs clear the typed "/command".
+    if (cmd.action !== 'prefill' && cmd.action !== 'send') onChange('');
+    setActiveIdx(0);
+    textareaRef.current?.focus();
+  }, [onCommand, slash.arg, onChange]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Slash menu owns the keys FIRST (so Enter picks-not-sends); plain Enter still sends below.
+      if (menuOpen) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx((i) => clampIdx(i + 1)); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => clampIdx(i - 1)); return; }
+        if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); const cmd = matches[clampIdx(activeIdx)]; if (cmd) pick(cmd); return; }
+        if (e.key === 'Escape') { e.preventDefault(); setDismissed(true); return; }
+      }
       // Enter sends; Shift+Enter inserts a newline.
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         if ((value.trim().length > 0 || atts.length > 0) && !atCap) onSend();
       }
     },
-    [value, atCap, onSend, atts.length],
+    [menuOpen, matches, activeIdx, pick, value, atCap, onSend, atts.length],
   );
 
   return (
@@ -68,7 +99,22 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
         background: 'var(--bg)',
       }}
     >
-      <div style={{ width: '100%', maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* Part4: slash-command popover — absolutely positioned above the composer column. */}
+        {menuOpen && (
+          <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 6px 24px rgba(0,0,0,0.18)', maxHeight: 240, overflowY: 'auto', zIndex: 30, padding: 4 }}>
+            {matches.map((cmd, i) => (
+              <div key={cmd.id}
+                onMouseEnter={() => setActiveIdx(i)}
+                onMouseDown={(e) => { e.preventDefault(); pick(cmd); }}
+                style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '6px 10px', borderRadius: 7, cursor: 'pointer', background: i === clampIdx(activeIdx) ? 'var(--hover)' : 'transparent' }}
+              >
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>/{cmd.id}{cmd.takesArg ? ' …' : ''} <span style={{ fontWeight: 400, color: 'var(--ink)' }}>{t(cmd.titleKey as never)}</span></span>
+                <span style={{ fontSize: 10.5, color: 'var(--ink-dim)' }}>{t(cmd.descKey as never)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {atts.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {atts.map((a) => (
@@ -88,9 +134,22 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
             ))}
           </div>
         )}
+        {/* Part4: quick-action bar — pinned frequent commands as pills (hidden while typing "/"). */}
+        {cmdsOn && !slash.isSlash && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {topQuickBar(commandCtx!).map((cmd) => (
+              <button key={cmd.id} onClick={() => pick(cmd)} title={t(cmd.descKey as never)}
+                style={{ padding: '5px 11px', borderRadius: 16, border: '1px solid var(--border)', background: 'transparent', color: 'var(--ink-dim)', fontSize: 11.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; }}
+              >{t(cmd.titleKey as never)}</button>
+            ))}
+          </div>
+        )}
         <textarea
+          ref={textareaRef}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => { setDismissed(false); onChange(e.target.value); }}
           onKeyDown={handleKeyDown}
           placeholder={t('panel.ai.chatPlaceholder')}
           aria-label={t('panel.ai.chatPlaceholder')}

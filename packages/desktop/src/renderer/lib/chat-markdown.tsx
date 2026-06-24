@@ -3,9 +3,12 @@
 // (rehype-sanitize + enforceAppHost). These add a copy button + language label to code
 // blocks and keep inline code tight. No new URLs/attributes are introduced.
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import type { Components } from 'react-markdown';
 import { common, createLowlight } from 'lowlight';
+import { visit } from 'unist-util-visit';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { useT } from './i18n.js';
 
 // One shared highlighter over the "common" language set (js/ts/py/json/bash/css/…). lowlight
@@ -53,6 +56,60 @@ function nodeText(node: React.ReactNode): string {
   return '';
 }
 
+// ── KaTeX math ────────────────────────────────────────────────────────────────
+// Render math via katex.render into a ref'd node — NO dangerouslySetInnerHTML (mirrors the
+// lowlight hast→React pattern above + the editor's MathExtension). trust:false is LOAD-BEARING:
+// it disables \href/\url/\includegraphics/\html*, so KaTeX cannot emit active content; the
+// CHAT_SANITIZE_SCHEMA is therefore left byte-for-byte unchanged (math arrives as a raw LaTeX
+// string from the remark plugin below, never as HTML through the sanitize pipeline).
+function Math({ latex, displayMode }: { latex: string; displayMode: boolean }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    try {
+      katex.render(latex, el, { throwOnError: false, trust: false, output: 'html', displayMode });
+    } catch {
+      el.textContent = displayMode ? `$$${latex}$$` : `$${latex}$`; // inert fallback
+    }
+  }, [latex, displayMode]);
+  return React.createElement(displayMode ? 'div' : 'span', { ref, className: 'sv-math' });
+}
+
+interface MdastNode { type: string; value?: string; lang?: string; data?: unknown; children?: MdastNode[] }
+
+/** remark plugin (chat renderer ONLY): split text nodes on $$block$$ / $inline$ into code nodes
+ *  tagged with a math className so the `code` component renders <Math>. Guards the '$5 and $10'
+ *  false-positive by forbidding a digit immediately inside the single-$ delimiters. The sanitize
+ *  schema (which already allows className on code/pre) is untouched. */
+export function remarkChatMath() {
+  return (tree: MdastNode): void => {
+    visit(tree as never, 'text', (node: MdastNode, index: number | null, parent: MdastNode | null) => {
+      if (!parent || index === null || typeof node.value !== 'string' || !node.value.includes('$')) return;
+      const value = node.value;
+      // $$block$$  OR  $inline$ where the opening $ is NOT followed by a space or digit (so
+      // "$5 and $10" currency is never math); a math run ending in a digit (e.g. $E=mc^2$) is fine.
+      const re = /\$\$([^$]+?)\$\$|\$(?!\s)(?!\d)([^$\n]+?)\$/g;
+      const out: MdastNode[] = [];
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(value)) !== null) {
+        if (m.index > last) out.push({ type: 'text', value: value.slice(last, m.index) });
+        if (m[1] != null) {
+          out.push({ type: 'code', lang: 'math-display', value: m[1].trim(), data: { hProperties: { className: ['language-math-display'] } } });
+        } else {
+          out.push({ type: 'inlineCode', value: (m[2] ?? '').trim(), data: { hProperties: { className: ['math-inline'] } } });
+        }
+        last = re.lastIndex;
+      }
+      if (out.length === 0) return undefined;
+      if (last < value.length) out.push({ type: 'text', value: value.slice(last) });
+      parent.children!.splice(index, 1, ...out);
+      return index + out.length; // continue after the inserted nodes
+    });
+  };
+}
+
 function CodeBlock({ className, children }: { className?: string; children?: React.ReactNode }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -88,7 +145,11 @@ export const chatMarkdownComponents: Components = {
   // A fenced code block arrives as <pre><code class="language-x">…; an inline code as a bare
   // <code> with no language- class. Route block → CodeBlock, inline → a tight styled span.
   code({ className, children, ...rest }) {
-    const isBlock = /language-/.test(className || '') || (rest as { 'data-block'?: boolean })['data-block'];
+    const cls = className || '';
+    // Math (from remarkChatMath) routes to <Math> before the code-block path.
+    if (/math-inline/.test(cls)) return <Math latex={nodeText(children)} displayMode={false} />;
+    if (/language-math-display/.test(cls)) return <Math latex={nodeText(children)} displayMode />;
+    const isBlock = /language-/.test(cls) || (rest as { 'data-block'?: boolean })['data-block'];
     if (isBlock) return <CodeBlock className={className}>{children}</CodeBlock>;
     return (
       <code style={{ fontFamily: 'var(--mono, monospace)', fontSize: '0.88em', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>{children}</code>

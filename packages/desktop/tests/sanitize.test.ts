@@ -57,6 +57,32 @@ describe('CHAT_SANITIZE_SCHEMA shape', () => {
     expect(html).toContain('print');    // code content (lowlight splits print(1) into tokens)
     expect(html).toContain('hljs-');    // syntax highlighting was applied (lowlight token spans)
   });
+});
+
+describe('KaTeX math (premium part 4)', () => {
+  it('does NOT widen the sanitize boundary for math (no rehype-katex tags/attrs added)', () => {
+    // The KaTeX path renders via katex.render into a ref (NOT through sanitize), so the schema
+    // gains nothing for math: no MathML tag, the global allowlist stays empty, and span (a
+    // default-allowed tag) still carries NO attributes (so attacker spans can't smuggle class/style).
+    expect(CHAT_SANITIZE_SCHEMA.tagNames).not.toContain('math');
+    expect(CHAT_SANITIZE_SCHEMA.attributes['*']).toEqual([]);
+    expect((CHAT_SANITIZE_SCHEMA.attributes as Record<string, unknown>).span).toBeUndefined();
+  });
+
+  it('routes $inline$ and $$block$$ to the <Math> component (sv-math node)', () => {
+    expect(render('mass is $E=mc^2$ today')).toContain('sv-math');
+    expect(render('$$\\int_0^1 x\\,dx$$')).toContain('sv-math');
+  });
+
+  it('does NOT misparse currency "$5 and $10" as math', () => {
+    const html = render('it costs $5 and $10 total');
+    expect(html).not.toContain('sv-math');
+    expect(html).toContain('$5'); // the prose is preserved verbatim
+  });
+
+  it('a $ with no closing pair is left as text', () => {
+    expect(render('a lone $ sign')).not.toContain('sv-math');
+  });
 
   it('restricts protocols: href https|app, src app — no http/javascript/data/mailto', () => {
     expect(CHAT_SANITIZE_SCHEMA.protocols.href).toEqual(['https', 'app']);

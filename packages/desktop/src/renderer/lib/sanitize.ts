@@ -31,7 +31,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit } from 'unist-util-visit';
-import { chatMarkdownComponents } from './chat-markdown.js';
+import { chatMarkdownComponents, remarkChatMath } from './chat-markdown.js';
 
 // Tags we never want from model output, even though defaultSchema permits some.
 const DROP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'style']);
@@ -149,6 +149,9 @@ export function SanitizedMarkdown({ children }: SanitizedMarkdownProps) {
     ReactMarkdown,
     {
       urlTransform: identityUrlTransform,
+      // remarkChatMath runs on the mdast (BEFORE remark-rehype) and only re-tags $…$ runs as
+      // math code nodes — it emits NO HTML and never touches the sanitize boundary below.
+      remarkPlugins: [remarkChatMath],
       rehypePlugins: [[rehypeSanitize, CHAT_SANITIZE_SCHEMA], enforceAppHost],
       components: chatMarkdownComponents,
     },

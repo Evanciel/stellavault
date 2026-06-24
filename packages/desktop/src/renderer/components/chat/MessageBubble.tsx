@@ -7,7 +7,7 @@
 // assistant turns; clicking one opens the note via the existing read-file→openFile
 // path (same mechanism AskVault/Coach use).
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { ipc } from '../../lib/ipc-client.js';
 import { useAppStore } from '../../stores/app-store.js';
@@ -15,6 +15,13 @@ import { SanitizedMarkdown } from '../../lib/sanitize.js';
 import type { ChatMessage } from '../../../shared/ipc-types.js';
 
 export type BubbleState = 'streaming' | 'done' | 'error' | 'incomplete' | 'aborted';
+
+// Shared subtle action-button style (Copy / Regenerate / Edit) — brightens on hover.
+const actionBtn = (active: boolean): CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
+  padding: '2px 0', cursor: 'pointer', color: active ? 'var(--accent-2)' : 'var(--ink-faint)',
+  fontSize: 10.5, fontWeight: 600, opacity: 0.75,
+});
 
 export interface MessageBubbleProps {
   message: ChatMessage;
@@ -25,11 +32,14 @@ export interface MessageBubbleProps {
   onRetry?: () => void;
   /** Extra inline action on error bubbles (e.g. "Start Ollama" for 'unreachable'). */
   action?: { label: string; onClick: () => void; busy?: boolean };
+  /** Part4: regenerate (last idle assistant turn) / edit-and-resend (user turn). ChatView gates. */
+  onRegenerate?: () => void;
+  onEdit?: () => void;
   /** 'panel' = compact bubbles; 'main' = roomy, ChatGPT-style (assistant borderless). */
   variant?: 'panel' | 'main';
 }
 
-export function MessageBubble({ message, state = 'done', errorLabel, onRetry, action, variant = 'panel' }: MessageBubbleProps) {
+export function MessageBubble({ message, state = 'done', errorLabel, onRetry, action, onRegenerate, onEdit, variant = 'panel' }: MessageBubbleProps) {
   const t = useT();
   const openFile = useAppStore((s) => s.openFile);
   const isUser = message.role === 'user';
@@ -175,16 +185,27 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
         )}
       </div>
 
-      {/* Assistant message actions (done) — Copy. Subtle; brightens on hover. */}
+      {/* Assistant message actions (done) — Copy + Regenerate. Subtle; brighten on hover. */}
       {!isUser && state !== 'error' && state !== 'streaming' && message.text && (
-        <button
-          onClick={copyMessage}
-          aria-label={t('panel.ai.copyMessage')}
-          style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', color: copied ? 'var(--accent-2)' : 'var(--ink-faint)', fontSize: 10.5, fontWeight: 600, opacity: 0.75 }}
-          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.75'; }}
-        >
-          {copied ? `✓ ${t('panel.ai.copied')}` : `⧉ ${t('panel.ai.copy')}`}
+        <div style={{ marginTop: 4, display: 'flex', gap: 12 }}>
+          <button onClick={copyMessage} aria-label={t('panel.ai.copyMessage')} style={actionBtn(copied)}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.75'; }}>
+            {copied ? `✓ ${t('panel.ai.copied')}` : `⧉ ${t('panel.ai.copy')}`}
+          </button>
+          {onRegenerate && (
+            <button onClick={onRegenerate} aria-label={t('panel.ai.regenerate')} style={actionBtn(false)}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.75'; }}>
+              ↻ {t('panel.ai.regenerate')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* User message action — Edit & resend (refills the composer, truncates later turns). */}
+      {isUser && onEdit && (
+        <button onClick={onEdit} aria-label={t('panel.ai.editMessage')} style={{ ...actionBtn(false), marginTop: 3 }}
+          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.75'; }}>
+          ✎ {t('panel.ai.edit')}
         </button>
       )}
 

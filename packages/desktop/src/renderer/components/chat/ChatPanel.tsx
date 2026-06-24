@@ -281,6 +281,8 @@ export function ChatPanel({ variant = 'panel' }: ChatPanelProps) {
           sessionId={currentSessionId}
           initialMessages={initialMessages}
           onSaved={refresh}
+          onNewSession={newChat}
+          onClearChat={newChat}
           variant={variant}
         />
       </div>

@@ -37,6 +37,7 @@ import { useAppStore } from '../../stores/app-store.js';
 import { isLocalProviderUrl } from '../../../shared/ai-providers.js';
 
 import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
+import { applyTemplate, type SlashCommand } from './commands.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
 import type { ChatMessage, ChatCitation, ChatAttachment } from '../../../shared/ipc-types.js';
@@ -68,6 +69,9 @@ export interface ChatViewProps {
   /** Called after a stream completes (chat:done) so the parent can refresh the
       session list — main persists the session on chat:done. */
   onSaved?: () => void;
+  /** Session-lifecycle hooks for /new and /clear (owned by ChatPanel — ⑨). Absent → commands hidden. */
+  onNewSession?: () => void;
+  onClearChat?: () => void;
   /** 'panel' = narrow right-panel; 'main' = roomy centered main-view (ChatGPT-style). */
   variant?: 'panel' | 'main';
 }
@@ -76,7 +80,7 @@ export interface ChatViewProps {
 // on a wide center pane instead of stretching edge-to-edge.
 const MAIN_COL = 768;
 
-export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel' }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, onClearChat, variant = 'panel' }: ChatViewProps) {
   const t = useT();
   const isMain = variant === 'main';
   const colStyle = isMain ? { width: '100%', maxWidth: MAIN_COL, margin: '0 auto' } as const : undefined;
@@ -329,60 +333,89 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
     };
   }, []);
 
+  // Is this message id currently the target of a live stream?
+  const isLiveMsg = useCallback((id: string) => [...streamMapRef.current.values()].includes(id), []);
+
+  // Dispatch one turn: `outbound` is the full message list ENDING in the user turn to answer.
+  // Appends an optimistic assistant bubble, registers the stream, fires chat:send, rolls back on
+  // the synchronous guard. Shared by send / regenerate (no composer-state reset here).
+  const dispatchTurn = useCallback((outbound: ChatMessage[]) => {
+    if (atCap) return;
+    const newStreamId = crypto.randomUUID();
+    const assistantTurn: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', ts: Date.now() };
+    setMessages([...outbound, assistantTurn]);
+    setError(null);
+    setCapMessage(false);
+    setToolLog([]);   // fresh tool trace per turn
+    setConfirm(null);
+    streamMapRef.current.set(newStreamId, assistantTurn.id);
+    syncActiveCount();
+    void ipc('chat:send', { messages: outbound, streamId: newStreamId, sessionId, ragOn, agentOn }).catch(() => {
+      setCapMessage(true);
+      streamMapRef.current.delete(newStreamId);
+      syncActiveCount();
+      setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
+    });
+  }, [atCap, ragOn, agentOn, sessionId, syncActiveCount]);
+
   const send = useCallback(() => {
     const text = input.trim();
     // SP2/SP4: images only ship to a vision provider (re-read visionOn so a provider switch can't
     // smuggle them to a cloud/text model); audio/video are plain-text transcripts, valid anywhere.
     const sendable = attachments.filter((a) => (a.type === 'image' ? visionOn : true));
     if ((!text && sendable.length === 0) || atCap) return;
-
-    const newStreamId = crypto.randomUUID();
     const userTurn: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      text,
-      ts: Date.now(),
-      // strip the renderer-only uid; main re-validates the data URLs at the content level.
+      id: crypto.randomUUID(), role: 'user', text, ts: Date.now(),
       ...(sendable.length > 0 ? { attachments: sendable.map(({ uid, ...a }) => a) } : {}),
     };
-    const assistantTurn: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      text: '',
-      ts: Date.now(),
-    };
-
-    // Build the outbound message list (existing turns + the new user turn).
-    const outbound = [...messages, userTurn];
-
-    setMessages([...outbound, assistantTurn]);
     setInput('');
     setAttachments([]);   // staged images consumed by this turn
-    setError(null);
-    setCapMessage(false);
-    setToolLog([]);   // fresh tool trace per turn
-    setConfirm(null);
-    // Register the route BEFORE invoking chat:send. The mount-once subscription
-    // is already attached, so any chunk for newStreamId resolves immediately.
-    streamMapRef.current.set(newStreamId, assistantTurn.id);
-    syncActiveCount();
+    dispatchTurn([...messages, userTurn]);
+  }, [input, atCap, messages, attachments, visionOn, dispatchTurn]);
 
-    void ipc('chat:send', {
-      messages: outbound,
-      streamId: newStreamId,
-      sessionId,
-      ragOn,
-      agentOn,
-    }).catch(() => {
-      // The invoke promise rejects ONLY for the synchronous guards (cap reached /
-      // duplicate / validation). Stream-time failures arrive as 'chat:error'.
-      // Roll back the optimistic assistant bubble and surface the cap note.
-      setCapMessage(true);
-      streamMapRef.current.delete(newStreamId);
-      syncActiveCount();
-      setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
-    });
-  }, [input, atCap, messages, ragOn, agentOn, attachments, visionOn, sessionId, syncActiveCount]);
+  // Regenerate the LAST assistant turn (idle only): drop it, re-answer the prior user turn.
+  const regenerate = useCallback(() => {
+    if (atCap || messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== 'assistant' || isLiveMsg(last.id)) return;
+    setAbortedIds((prev) => { const n = new Set(prev); n.delete(last.id); return n; });
+    dispatchTurn(messages.slice(0, -1));
+  }, [atCap, messages, isLiveMsg, dispatchTurn]);
+
+  // Edit a user turn: abort ALL in-flight streams FIRST (so no streamMapRef entry dangles), put
+  // its text+images back in the composer, truncate the transcript to before it. User presses Send.
+  const startEditUserTurn = useCallback((index: number) => {
+    const target = messages[index];
+    if (!target || target.role !== 'user') return;
+    for (const sid of [...streamMapRef.current.keys()]) {
+      void ipc('chat:abort', sid).catch(() => {});
+      streamMapRef.current.delete(sid);
+    }
+    syncActiveCount();
+    setInput(target.text);
+    setAttachments((target.attachments ?? []).map((a) => ({ uid: crypto.randomUUID(), ...a })));
+    setError(null);
+    setMessages(messages.slice(0, index));
+  }, [messages, syncActiveCount]);
+
+  // Single dispatcher for slash commands + quick-bar (both call this). prefill = review-before-send.
+  const runCommand = useCallback((cmd: SlashCommand, arg: string) => {
+    switch (cmd.action) {
+      case 'prefill': setInput(applyTemplate(cmd, arg)); break;
+      case 'toggle':
+        if (cmd.handler === 'rag') setRagOn((v) => !v);
+        else if (cmd.handler === 'agent') setAgentOn((v) => !v);
+        else if (cmd.handler === 'distill') setAutoDistill((v) => !v);
+        break;
+      case 'run':
+        if (cmd.handler === 'image') pickImages();
+        else if (cmd.handler === 'new') onNewSession?.();
+        else if (cmd.handler === 'clear') onClearChat?.();
+        break;
+      default: break; // 'send' unused in v1 (every vault command is prefill → user reviews)
+    }
+  }, [pickImages, onNewSession, onClearChat]);
+  const commandCtx = { visionOn, canNewSession: !!onNewSession, canClearChat: !!onClearChat };
 
   // Stop the most-recently-started stream (the last live assistant bubble).
   const stop = useCallback(() => {
@@ -508,6 +541,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
                 errorLabel={i === messages.length - 1 && error ? errorLabel : undefined}
                 onRetry={i === messages.length - 1 && error ? retry : undefined}
                 action={i === messages.length - 1 && error ? errorAction : undefined}
+                onRegenerate={i === messages.length - 1 && m.role === 'assistant' && !isStreaming && !error && !atCap ? regenerate : undefined}
+                onEdit={m.role === 'user' && !isStreaming ? () => startEditUserTurn(i) : undefined}
               />
             ))}
           </div>
@@ -672,6 +707,8 @@ export function ChatView({ sessionId, initialMessages, onSaved, variant = 'panel
         transcribeOn={transcribeOn}
         videoOn={videoOn}
         pickingMedia={pickingMedia}
+        onCommand={runCommand}
+        commandCtx={commandCtx}
         variant={variant}
       />
     </div>
