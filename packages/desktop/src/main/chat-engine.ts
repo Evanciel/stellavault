@@ -624,6 +624,8 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
           '',
           "You are an AGENT for the user's Stellavault vault (their second brain). You have tools to search and read their notes; call them to ground your answer in their actual notes.",
           'RULES (follow exactly):',
+          '- Before calling tools, state your plan in ONE short sentence.',
+          '- If a tool returns empty or an error, do NOT repeat it — adapt your approach (rephrase the query, try a different tool) or answer from general knowledge, then give your final answer.',
           '- After a tool returns its result, you MUST write a final answer to the user. Never end your turn with an empty message.',
           "- Always answer in the SAME LANGUAGE as the user's latest message.",
           '- Cite the notes you used as [[Note Title]].',
@@ -1019,6 +1021,22 @@ export function streamOnceNative(
 // Small helpers for the loop.
 function safeStringify(v: unknown): string { try { return JSON.stringify(v) ?? String(v); } catch { return '[unserializable]'; } }
 function summarizeResult(v: unknown): string { const s = safeStringify(v); return s.length > 140 ? `${s.slice(0, 140)}…` : s; }
+
+/** plan-act-reflect: did a READ tool come back with nothing useful? True for an error, an empty
+ *  array, an object whose first array-valued field (results/related/gaps/items/notes/topics) is
+ *  empty, or {}. A {ok:true} write ack or any non-empty payload is NOT empty. Pure (unit-tested). */
+export function isEmptyToolResult(result: unknown): boolean {
+  if (result == null) return true;
+  if (Array.isArray(result)) return result.length === 0;
+  if (typeof result !== 'object') return false;
+  const o = result as Record<string, unknown>;
+  if (typeof o.error === 'string' && o.error.length > 0) return true;
+  if (o.ok === true) return false;
+  for (const k of ['results', 'related', 'gaps', 'items', 'notes', 'topics', 'decisions']) {
+    if (Array.isArray(o[k])) return (o[k] as unknown[]).length === 0;
+  }
+  return Object.keys(o).length === 0;
+}
 function mergeCitations(into: ChatCitation[], add: ChatCitation[]): void {
   for (const c of add) {
     if (!into.some((x) => x.filePath === c.filePath && x.title === c.title)) into.push(c);
@@ -1051,8 +1069,11 @@ export interface AgentLoopCtx {
   preloopCitations: ChatCitation[];
 }
 
-export const AGENT_MAX_STEPS = 8;
+export const AGENT_MAX_STEPS = 12;
 const AGENT_MAX_INVALID = 3;
+// plan-act-reflect: after this many consecutive empty/error tool results, stop digging and
+// force a final answer (bounded — a small local model can otherwise re-call a dead-end tool).
+const DEAD_END_LIMIT = 2;
 
 /** Flat plan-act loop (Hermes skeleton, Design Ref §3). Calls succeed/fail EXACTLY ONCE
  *  (the loop owns the outer settle; streamStep owns each inner request's settle). Only the
@@ -1068,6 +1089,7 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
   const citations: ChatCitation[] = [...ctx.preloopCitations];
   let fullText = '';
   let invalidCount = 0;
+  let deadEndCount = 0; // consecutive empty/error READ results → force-conclude past the limit
 
   for (let step = 0; step < AGENT_MAX_STEPS; step++) {
     if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
@@ -1135,8 +1157,17 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       const writePath = String(
         (result as Record<string, unknown>)?.filePath ?? (args as Record<string, unknown>)?.filePath ?? '',
       );
+      // plan-act-REFLECT: a READ tool that came back empty/errored is a dead end. Track it and
+      // APPEND a one-line reflection nudge to the SAME tool message (one tool result per tool_call
+      // — never a second tool message, which would break native assistant↔tool alternation). The
+      // nudge is context for the next turn; it NEVER settles the loop. A real hit resets the count.
+      const deadEnd = !ctx.toolset.isWrite(name) && isEmptyToolResult(result);
+      if (!ctx.toolset.isWrite(name)) deadEndCount = deadEnd ? deadEndCount + 1 : 0;
       ctx.onToolResult?.(name, toolOk, summarizeResult(result), writePath || undefined);
-      messages.push({ role: 'tool', tool_name: name, content: safeStringify(result) });
+      messages.push({
+        role: 'tool', tool_name: name,
+        content: safeStringify(result) + (deadEnd ? '\n(no useful result — adapt your approach or answer from general knowledge)' : ''),
+      });
       if (ctx.toolset.extractCitations) mergeCitations(citations, ctx.toolset.extractCitations(name, result));
 
       // Review SP-B #1: honor an abort that arrived DURING this (possibly slow) tool
@@ -1145,6 +1176,9 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       // immediately" guarantee. This bounds abort latency to a single in-flight tool.
       if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
     }
+    // plan-act-reflect: too many consecutive dead ends — stop digging and answer with what we
+    // have. Falls through to the SAME single succeed() the MAX_STEPS guard uses (no new settle).
+    if (deadEndCount > DEAD_END_LIMIT) break;
   }
 
   // MAX_STEPS exhausted — DoS guard. Append a note and finish on what we have.

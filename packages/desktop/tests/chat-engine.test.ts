@@ -211,6 +211,16 @@ describe('buildChatBody', () => {
     expect(res).toEqual({ text: '', toolCalls: [], aborted: true, refusal: false });
   });
 
+  it('isEmptyToolResult: error / [] / {results:[]} / {} are empty; {ok:true} / non-empty are not (plan-act-reflect)', async () => {
+    const { isEmptyToolResult } = await import('../src/main/chat-engine.js');
+    for (const empty of [null, undefined, [], {}, { error: 'nope' }, { results: [] }, { related: [] }, { gaps: [] }, { decisions: [] }]) {
+      expect(isEmptyToolResult(empty)).toBe(true);
+    }
+    for (const full of [{ ok: true }, { results: [{ x: 1 }] }, { content: 'hi' }, { ok: true, filePath: 'a.md' }, 'text']) {
+      expect(isEmptyToolResult(full)).toBe(false);
+    }
+  });
+
   it('foldAttachmentsIntoText: appends audio/video transcripts to user text, ignores images (SP4)', async () => {
     const { foldAttachmentsIntoText } = await import('../src/main/chat-engine.js');
     const m = {
@@ -446,13 +456,33 @@ describe('runAgentLoop — agent loop invariants', () => {
     expect(c.succeed[0].t).toBe('grounded answer');
   });
 
-  it('MAX_STEPS guard: a model that always emits a tool_call stops at 8 (succeed once)', async () => {
-    const always = Array.from({ length: 12 }, () => step({ toolCalls: [tc('search_vault')] }));
-    const c = await runLoop(always);
-    expect(c.execute).toHaveLength(8); // AGENT_MAX_STEPS
+  it('MAX_STEPS guard: a model that always emits a tool_call stops at 12 (succeed once)', async () => {
+    const always = Array.from({ length: 16 }, () => step({ toolCalls: [tc('search_vault')] }));
+    const c = await runLoop(always, { toolResult: { ok: true, results: [{ x: 1 }] } });
+    expect(c.execute).toHaveLength(12); // AGENT_MAX_STEPS
     expect(c.succeed).toHaveLength(1);
     expect(c.fail).toHaveLength(0);
     expect(c.deltas.join('')).toContain('최대 단계'); // the cap note
+  });
+
+  it('plan-act-reflect: repeated EMPTY read results force-conclude (succeed once, fail zero, no MAX_STEPS)', async () => {
+    // Every step emits a read tool_call; every result is empty → DEAD_END_LIMIT(2) tripped after 3.
+    const always = Array.from({ length: 16 }, () => step({ toolCalls: [tc('search_vault', { query: 'x' })] }));
+    const c = await runLoop(always, { toolResult: { results: [] } });
+    expect(c.execute.length).toBeLessThanOrEqual(4); // dead-ended well before MAX_STEPS(12)
+    expect(c.execute.length).toBeGreaterThanOrEqual(3);
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('plan-act-reflect: a non-empty result resets the dead-end counter (no premature stop)', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('search_vault')] }), step({ toolCalls: [tc('search_vault')] }), step({ text: 'answer' })],
+      { toolResult: { results: [{ x: 1 }] } },
+    );
+    expect(c.execute).toHaveLength(2);
+    expect(c.succeed[0].t).toBe('answer');
+    expect(c.fail).toHaveLength(0);
   });
 
   it('unknown tool: synthetic error, and >3 invalid → succeed (no execute)', async () => {
