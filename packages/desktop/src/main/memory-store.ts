@@ -31,9 +31,19 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
 import { assertInsideDir } from './path-safety.js';
 import { scanForInjection } from './injection-scan.js';
+import type { MemoryProvenance, MemoryBlockMeta } from '../shared/ipc-types.js';
+
+export type { MemoryProvenance, MemoryBlockMeta };
 
 const MEM_DIR = join(app.getPath('home'), '.stellavault', 'memory');
 const BLOCKS_FILE = join(MEM_DIR, 'blocks.json');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True for a block id we minted (randomUUID). The delete IPC validates with this so a
+ *  renderer can only target an opaque UUID it received from memory:list (§6 INT-8). */
+export function isMemoryId(id: unknown): id is string {
+  return typeof id === 'string' && UUID_RE.test(id);
+}
 
 // ── Bounds (§3.1 SEC-4 — all FAIL-CLOSED) ─────────────────────────────────────
 export const MEM_MAX_BLOCKS = 256;
@@ -42,8 +52,6 @@ export const MEM_MAX_FILE_BYTES = 256 * 1024;
 // Injection budget (~0.25 tok/char → ~1600 chars). The pinned block is small by design;
 // over-budget pinned facts are dropped recency-first (newest kept) at render time.
 export const MEMORY_TOKEN_BUDGET = 400;
-
-export type MemoryProvenance = 'user' | 'reflection' | `skill:${string}`;
 
 export interface MemoryBlock {
   id: string;
@@ -230,20 +238,141 @@ export function buildCoreMemoryBlock(): string {
 }
 
 export interface RecalledMemory {
+  /** Opaque block UUID — the handle the model passes to core_memory_replace (P2). Off-vault
+   *  store id, NOT a vault path, so exposing it leaks nothing sensitive. */
+  id: string;
   tag?: string;
   text: string;
   provenance: MemoryProvenance;
 }
 
 /** recall_memory tool backend. P1 = pinned-only: returns the pinned user facts (injection-
- *  scanned, title/text/provenance only), capped to `k`. The query is accepted for forward
- *  compatibility but does NOT drive selection in P1 (non-pinned semantic recall is §10-e). */
+ *  scanned; id/tag/text/provenance), capped to `k`. The `id` lets the model target a fact with
+ *  core_memory_replace (P2). The query is accepted for forward compatibility but does NOT drive
+ *  selection in P1 (non-pinned semantic recall is §10-e). */
 export function recallMemory(_query: string, k?: number): { memories: RecalledMemory[] } {
   const limit = Number.isFinite(k) && (k as number) > 0 ? Math.floor(k as number) : 8;
   const memories = pinnedUserBlocks()
     .slice(0, limit)
-    .map((b) => ({ tag: b.tag, text: sanitize(b.text), provenance: b.provenance }));
+    .map((b) => ({ id: b.id, tag: b.tag, text: sanitize(b.text), provenance: b.provenance }));
   return { memories };
+}
+
+// ── P2 model-driven WRITE backends (core_memory_* tools, force-confirm gated) ──
+// These ARE reached from the agent loop, but ONLY after the force-confirm gate approved the
+// write (chat-engine.ts) — they never run unattended (distill has no approver → fail-closed).
+
+/** core_memory_append({text}) backend. Appends a NEW pinned user fact. Reuses appendBlock's
+ *  fail-closed bounds + looksLikeSecret drop. Returns a thin ack (id only — never echoes a
+ *  secret). Throws on a bound breach / secret-shaped text (surfaced to the model as an error). */
+export function coreMemoryAppend(text: string): { ok: true; id: string } {
+  const block = appendBlock({ text, pinned: true, provenance: 'user' });
+  return { ok: true, id: block.id };
+}
+
+/** Apply a SINGLE literal replacement by index — NOT String.replace, which would interpret
+ *  `$&`/`$1`/`$\``/`$'` patterns in `newStr` and persist text DIFFERENT from what the user
+ *  approved (a silent fact-flip into the every-turn system prompt). Returns the result plus the
+ *  literal-match count so the caller rejects an ambiguous (0 / 2+) match. Pure. */
+function computeReplacement(text: string, oldStr: string, newStr: string): { after: string; count: number } {
+  let count = 0;
+  for (let i = text.indexOf(oldStr); i !== -1; i = text.indexOf(oldStr, i + oldStr.length)) count++;
+  const idx = text.indexOf(oldStr);
+  const after = idx === -1 ? text : text.slice(0, idx) + newStr + text.slice(idx + oldStr.length);
+  return { after, count };
+}
+
+/** core_memory_replace({id,old,new}) backend (§3.3 SEC-7). The model MUST name the block `id`.
+ *  `old` must match EXACTLY ONCE in that block (0 or 2+ → reject — no ambiguous fact-flip).
+ *  A user-provenance block is NEVER edited in place: this APPENDS a corrected block and
+ *  SUPERSEDES (removes) the old one atomically (append+supersede), so the confirm UI shows a
+ *  clean before/after and the change is logged. Throws on every guard failure. */
+export function coreMemoryReplace(id: string, oldStr: string, newStr: string): { ok: true; supersededId: string; newId: string } {
+  if (!isMemoryId(id)) throw new Error('core_memory_replace: a valid block id is required');
+  const o = String(oldStr ?? '');
+  if (!o) throw new Error('core_memory_replace: "old" text is required');
+  const record = readStore();
+  const target = record.blocks.find((b) => b.id === id);
+  if (!target) throw new Error('core_memory_replace: no block with that id');
+  const { after, count } = computeReplacement(target.text, o, String(newStr ?? ''));
+  if (count === 0) throw new Error('core_memory_replace: "old" not found in that block');
+  if (count > 1) throw new Error('core_memory_replace: "old" matches multiple times — be more specific');
+  const newText = after.trim();
+  if (!newText) throw new Error('core_memory_replace: result would be empty');
+  if (looksLikeSecret(newText)) throw new Error('core_memory_replace: result looks like a secret — not stored');
+  const now = Date.now();
+  const fresh: MemoryBlock = {
+    id: randomUUID(),
+    tag: target.tag,
+    text: newText,
+    pinned: target.pinned,
+    created: now,
+    updated: now,
+    // Inherit the source block's provenance — a faithful append+supersede correction must NOT
+    // relabel (e.g. a 'reflection' fact silently escalating into the trusted 'user' tier, §3.2).
+    provenance: target.provenance,
+  };
+  // append + supersede: drop the old block, add the corrected one (one atomic write).
+  const blocks = record.blocks.filter((b) => b.id !== id);
+  blocks.push(fresh);
+  writeStoreAtomic({ blocks, version: 1 });
+  console.log(`[memory-store] core_memory_replace supersede ${id} → ${fresh.id}`);
+  return { ok: true, supersededId: id, newId: fresh.id };
+}
+
+/** Human-readable confirm-preview for a force-confirm memory write (§3.3 SEC-7). The confirm UI
+ *  must show the FULL before/after fact + provenance (not just the raw {id,old,new} diff args) so
+ *  a fact-flip is visible. Uses the SAME computeReplacement transform as the write, so the
+ *  approved preview and the persisted text can never drift. Returns '' for a non-memory tool. */
+export function describeMemoryWrite(name: string, args: Record<string, unknown>): string {
+  if (name === 'core_memory_append') {
+    return `Save a NEW durable memory fact:\n"${String(args.text ?? '').slice(0, 500)}"`;
+  }
+  if (name === 'core_memory_replace') {
+    const id = String(args.id ?? '');
+    const block = getBlock(id);
+    if (!block) return `Update memory — but no block with id "${id}" exists.`;
+    const { after, count } = computeReplacement(block.text, String(args.old ?? ''), String(args.new ?? ''));
+    if (count !== 1) return `Update memory — "old" must match exactly once (matched ${count}×).`;
+    return `Update durable memory (provenance: ${block.provenance}):\nBEFORE: "${block.text}"\nAFTER:  "${after.trim()}"`;
+  }
+  return '';
+}
+
+// ── P2 management surface (memory:list / get / delete IPC backends) ────────────
+function toMeta(b: MemoryBlock): MemoryBlockMeta {
+  return { id: b.id, tag: b.tag, text: b.text, pinned: b.pinned, provenance: b.provenance, updated: b.updated };
+}
+
+/** All blocks for the management UI (newest-first). Raw text — the renderer DISPLAYS this (not a
+ *  prompt), so it is not injection-scanned here; it lets the user see + delete even a hand-planted
+ *  / secret-shaped block (which is otherwise dropped from injection). */
+export function listBlocks(): MemoryBlockMeta[] {
+  return readStore().blocks.map(toMeta).sort((a, b) => b.updated - a.updated);
+}
+
+/** One block by id, or null. Rejects a non-UUID id (no arbitrary lookup). */
+export function getBlock(id: unknown): MemoryBlockMeta | null {
+  if (!isMemoryId(id)) return null;
+  const b = readStore().blocks.find((x) => x.id === id);
+  return b ? toMeta(b) : null;
+}
+
+/** Delete a block by id. id-validated (§6 INT-8): the renderer can only delete an opaque UUID it
+ *  got from memory:list, and only one that ACTUALLY EXISTS — never an arbitrary string. Returns
+ *  false (no-op) on a bad/unknown id. Atomic write; never throws. */
+export function deleteBlock(id: unknown): boolean {
+  if (!isMemoryId(id)) return false;
+  const record = readStore();
+  const next = record.blocks.filter((b) => b.id !== id);
+  if (next.length === record.blocks.length) return false; // id not present — nothing deleted
+  try {
+    writeStoreAtomic({ blocks: next, version: 1 });
+    return true;
+  } catch (err) {
+    console.error('[memory-store] delete failed', err);
+    return false;
+  }
 }
 
 /** Test-only: the resolved memory dir (so the suite can assert the off-vault location). */

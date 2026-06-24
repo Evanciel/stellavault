@@ -210,8 +210,9 @@ tools: [search_vault, read_note, recall_memory, create_note]
 | `invoke_skill(name)` | **CONTROL** | `AGENT_TOOL_SCHEMAS` **만** | `AGENT_VALID_NAMES`/`AGENT_WRITE_NAMES`/dispatcher **불포함** — `set_plan` 본보기. |
 | `core_memory_replace({id,old,new})` / `core_memory_append({text})` | **WRITE** (P2) | `AGENT_TOOL_SCHEMAS` | `AGENT_VALID_NAMES`(`:206`) + `AGENT_WRITE_NAMES`(`:211`) 둘 다; dispatcher(`:257`)에서 `deps.memoryWrite`. **force-confirm**. |
 
-**도구 수 ceiling(§9 LM-1/INT-4 잠금):** 현 toolset은 `set_plan` + 7 read + 4 write = 12. 코드 자체(`agent-tools.ts:18`)가 "keeping the toolset small avoids overwhelming gemma4:e4b"라고 명시. 따라서:
-- **advertised-tool ceiling ≤ 14를 게이트로 둔다.**
+**도구 수 ceiling(§9 LM-1/INT-4 잠금 — 단계화 재잠금 2026-06-24):** 현 toolset은 `set_plan` + 7 read + 4 write = 12. 코드 자체(`agent-tools.ts:18`)가 "keeping the toolset small avoids overwhelming gemma4:e4b"라고 명시. ceiling은 **단계별**로 둔다(P2 적대리뷰 #3 반영 — 단일 ≤14는 §10-f의 "P2=16"과 모순이라 재잠금):
+- **P1 ceiling ≤ 14** (달성: 13 = +`recall_memory`만).
+- **P2 ceiling ≤ 16** (달성: 15 = +`core_memory_append`/`core_memory_replace`). `list_skills`/`invoke_skill`은 미추가(P1 eval 통과 후·P3). **각 단계는 §10-f eval로 그 단계의 실제 도구 수에서 ≥8/10 재측정**(=게이트). 즉 ceiling 자체보다 "그 수에서 도구선택이 회귀 안 함"이 진짜 잠금 조건.
 - **P1은 `recall_memory`만 추가(13개)** — `list_skills`는 메모리 selection 정확도 측정 후에만. 메모리 쓰기는 기존 `append_note`로 pinned-only ship.
 - skill은 슬롯 절약: 기본은 `invoke_skill`만 광고(description="call to see available skills")해 N개가 아니라 1슬롯으로. `list_skills` 카탈로그는 §4.2 cap 하에.
 - **gemma4:e4b 도구선택 eval 게이트**: 고정 10 프롬프트에서 추가 전/후 올바른 도구 ≥8/10 assert. 회귀 시 게이트 실패. (P2/P3 잠금 전 16-tool에서 재측정.)
@@ -291,7 +292,9 @@ if (name === 'invoke_skill') {
   - **적대리뷰(wf_ee591fdc, 22에이전트/1.44M토큰, 4렌즈→독립검증) 확정 5건 전부 수정:** ①§4.3 턴당 recall 캡(`AGENT_MAX_RECALL=4`, recall이 dead-end-exempt라 churn 방어) ②read/inject 경로 secret 재검사(`pinnedUserBlocks`서 `looksLikeSecret` 필터 — 손편집 blocks.json 방어) ③base64 휴리스틱 엔트로피 게이트(혼합대소문자+숫자 요건 — 긴 Unix 경로 오탐 제거) ④+⑤결합 시스템프롬프트 예산 `SYSTEM_PROMPT_TOKEN_BUDGET=2800`(§6/LM-2) + worst-case 테스트(중간 절단 금지로 가드라인 보존). 13건 반박(아키텍처 정합성=frozen snapshot·electron-free·양쪽 wire·ceiling·scope creep 없음 확인).
   - **게이트 결과:** tsc 0 ✅ / desktop vitest **407 PASS**(신규 26: injection-scan 10·memory-store 13·agent-tools recall 1·chat-engine coreMemory+exempt+recall-cap+budget) ✅ / injection-scan 회귀 게이트 ✅ / SSRF·CSP 무손상 ✅. **신규 WRITE 도구·dispatcher write-case 0** ✅.
   - **패키징:** `npm run package` 성공(exit0, asar 번들, Vite main CJS). 신규 모듈 정상 번들.
-  - **남은 검증(P1 비차단·매뉴얼):** gemma4:e4b eval(도구선택 ≥8/10, Ollama 상주 필요·seed blocks.json)만. Manual Browser Gate 불요(브라우저 API/신규 UI IPC 없음 — P1은 main-process 전용).
+  - **커밋·푸시 완료:** `7355dd3`(P1 구현 10파일) + `f396f80`(§10-f eval 게이트). feat/multimedia-chat → origin(PR #2).
+  - **§10-f eval 게이트 아티팩트:** `tests/agent-memory-eval.test.ts` — 10프롬프트 도구선택 ≥8/10(실 AGENT_TOOL_SCHEMAS, live Ollama fetch+NDJSON). Ollama 미가동 시 **자동 skip**(CI 안전). 실행: `OLLAMA_EVAL_MODEL=gemma4:e4b npx vitest run tests/agent-memory-eval.test.ts`.
+  - **남은 검증(P1 비차단):** 위 eval 1회 실행(Ollama 상주 시 — 현재 미가동이라 보류). Manual Browser Gate 불요(브라우저 API/신규 UI IPC 없음 — P1은 main-process 전용).
 - **P2 — Memory self-edit:**
   - `core_memory_replace`/`core_memory_append` WRITE 도구(force-confirm, fail-closed) + `deps.memoryWrite` **양쪽 사이트**(단 distill `:1293`엔 미wire)
   - `memory:list/get/delete` UI IPC(main id-검증 + wcId-owner)

@@ -28,8 +28,11 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 // store persists UUID-named JSON sessions. Both live in main; the API key never leaves.
 import { chatStream, describeImages, foldAttachmentsIntoText, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
 import { transcribeAudio, describeVideo } from './media-transcribe.js';
-import { buildAgentToolset, buildExecuteAgentTool } from './agent-tools.js';
-import { buildCoreMemoryBlock, recallMemory } from './memory-store.js';
+import { buildAgentToolset, buildExecuteAgentTool, isAgentForceConfirmTool } from './agent-tools.js';
+import {
+  buildCoreMemoryBlock, recallMemory, coreMemoryAppend, coreMemoryReplace,
+  listBlocks, getBlock, deleteBlock, describeMemoryWrite, type MemoryBlockMeta,
+} from './memory-store.js';
 // "Start Ollama" helper — probe reachability + spawn `ollama serve` (fixed binary).
 import {
   ollamaStatus,
@@ -1151,6 +1154,10 @@ function registerIpcHandlers(config: AppConfig) {
         coreReady: () => coreReady, afterWrite,
         getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
         memoryRecall: (query: string, k?: number) => recallMemory(query, k), // P1: READ-only durable memory
+        // P2 (§3.3): force-confirm WRITE backends — only the chat:send site gets these (NOT distill,
+        // §6 INT-2). The force-confirm gate ensures they run only after the user approves.
+        memoryAppend: (text: string) => coreMemoryAppend(text),
+        memoryReplace: (id: string, oldStr: string, newStr: string) => coreMemoryReplace(id, oldStr, newStr),
       });
       agentOpts = {
         agentOn: true,
@@ -1168,21 +1175,34 @@ function registerIpcHandlers(config: AppConfig) {
       // apply": when req.confirmWrites is set, wire the human-approval broker so a write pauses
       // the loop on a per-stream promise the renderer resolves via chat:tool-approve. An abort
       // while waiting resolves DENY (no cap-of-2 slot leak).
-      if (req.confirmWrites) {
-        agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) =>
-          new Promise<boolean>((resolve) => {
-            if (controller.signal.aborted) { resolve(false); return; }
-            const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
-            controller.signal.addEventListener('abort', onAbort, { once: true });
-            pendingApprovals.set(req.streamId, {
-              wcId,
-              resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
-            });
-            let argsPreview = '';
-            try { argsPreview = JSON.stringify(args).slice(0, 400); } catch { argsPreview = '{…}'; }
-            safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
+      // The approval broker is ALWAYS wired now (P2). A regular vault write still AUTO-APPLIES
+      // unless req.confirmWrites is set, but a force-confirm tool (core_memory_*) ALWAYS prompts
+      // regardless of confirmWrites (§3.3 / §6 INT-3) — durable memory is never written without
+      // explicit approval. The broker short-circuits (auto-approve) for a non-force write in
+      // auto-apply mode, so no chat:tool-confirm is surfaced for those.
+      agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) => {
+        const mustPrompt = !!req.confirmWrites || isAgentForceConfirmTool(name);
+        if (!mustPrompt) return Promise.resolve(true); // regular write, auto-apply mode
+        return new Promise<boolean>((resolve) => {
+          if (controller.signal.aborted) { resolve(false); return; }
+          const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
+          controller.signal.addEventListener('abort', onAbort, { once: true });
+          pendingApprovals.set(req.streamId, {
+            wcId,
+            resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
           });
-      }
+          // SEC-7: a force-confirm memory write shows the FULL before/after fact + provenance
+          // (resolved in main), not just the raw {id,old,new} diff — so the user sees the
+          // fact-flip they are approving. Other writes keep the compact JSON arg preview.
+          let argsPreview = '';
+          try {
+            argsPreview = isAgentForceConfirmTool(name)
+              ? describeMemoryWrite(name, args).slice(0, 600)
+              : JSON.stringify(args).slice(0, 400);
+          } catch { argsPreview = '{…}'; }
+          safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
+        });
+      };
     }
 
     try {
@@ -1239,6 +1259,16 @@ function registerIpcHandlers(config: AppConfig) {
     pendingApprovals.delete(sid);
     pa.resolve(payload?.approve === true);
   });
+
+  // Agent MEMORY management (P2, §6 / INT-8): the renderer lists / inspects / deletes durable
+  // memory blocks. The renderer NEVER names a tool or a path — it carries an opaque block UUID
+  // it received from memory:list. memory:delete id-validates (isMemoryId + must EXIST in the
+  // store), so a compromised renderer can only delete a real block by its UUID, never an
+  // arbitrary target. Memory is a single global store (no per-window ownership), so the
+  // chat:tool-approve wcId guard does not apply; id-validation is the containment control.
+  ipcMain.handle('memory:list', (): MemoryBlockMeta[] => listBlocks());
+  ipcMain.handle('memory:get', (_e, id: string): MemoryBlockMeta | null => getBlock(id));
+  ipcMain.handle('memory:delete', (_e, id: string): { ok: boolean } => ({ ok: deleteBlock(id) }));
 
   // Karpathy auto-distillation (SP-I): after a chat turn, the renderer (when auto-distill is
   // on) sends the just-finished conversation here. We run the SAME agent loop but with the

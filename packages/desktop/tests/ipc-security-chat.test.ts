@@ -19,6 +19,10 @@ const ipcTypesSrc = readFileSync(
   join(__dirname, '..', 'src', 'shared', 'ipc-types.ts'),
   'utf-8',
 );
+const memoryStoreSrc = readFileSync(
+  join(__dirname, '..', 'src', 'main', 'memory-store.ts'),
+  'utf-8',
+);
 
 // Extract the literal body of a `const NAME = new Set<string>([ ... ]);` block.
 // Unlike the legacy extractSetEntries regex, this captures the WHOLE bracketed
@@ -212,5 +216,31 @@ describe('SP1 chat IPC — both-side coverage (single-side omission FAILS)', () 
     for (const k of keys) {
       expect(allowedEventsBody).toContain(`'${k}'`);
     }
+  });
+});
+
+describe('Agent MEMORY IPC (P2, §6 INT-8) — both-side trust boundary', () => {
+  const MEMORY_CHANNELS = ['memory:list', 'memory:get', 'memory:delete'];
+
+  it('all memory channels are in ALLOWED_CHANNELS and main-handled', () => {
+    for (const ch of MEMORY_CHANNELS) {
+      expect(allowedChannelsBody).toContain(`'${ch}'`);
+      expect(mainSrc).toContain(`ipcMain.handle('${ch}'`);
+    }
+  });
+
+  it('memory channels are NOT in the events set (invoke-only)', () => {
+    for (const ch of MEMORY_CHANNELS) {
+      expect(allowedEventsBody).not.toContain(`'${ch}'`);
+    }
+  });
+
+  it('memory:delete id-validates in main (isMemoryId — no arbitrary deletion)', () => {
+    // The renderer carries an opaque UUID only; the store backend rejects a non-UUID / absent id.
+    // Lock that the delete path runs through deleteBlock (which isMemoryId-validates).
+    expect(mainSrc).toContain("ipcMain.handle('memory:delete'");
+    expect(mainSrc).toContain('deleteBlock(');
+    expect(memoryStoreSrc).toContain('export function deleteBlock');
+    expect(memoryStoreSrc).toMatch(/isMemoryId\(id\)/);
   });
 });

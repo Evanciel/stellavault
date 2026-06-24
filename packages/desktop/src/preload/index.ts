@@ -102,6 +102,11 @@ const ALLOWED_CHANNELS = new Set<string>([
   // Agent (SP-D): approve/deny a write tool the MAIN model requested (renderer can ONLY
   // approve/deny — it can never name a tool to run).
   'chat:tool-approve',
+  // Agent MEMORY management (P2, §6 INT-8) — list/inspect/delete durable memory blocks.
+  // Renderer carries an opaque UUID only; main id-validates delete (no arbitrary target).
+  'memory:list',
+  'memory:get',
+  'memory:delete',
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill',
   // SP2: pick image file(s) to attach to a chat turn (dialog → validated base64).

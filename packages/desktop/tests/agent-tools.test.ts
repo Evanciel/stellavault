@@ -14,7 +14,8 @@ vi.mock('@stellavault/core', () => ({
 }));
 
 import {
-  buildExecuteAgentTool, isAgentWriteTool, extractAgentCitations, AGENT_VALID_NAMES, AGENT_TOOL_SCHEMAS,
+  buildExecuteAgentTool, isAgentWriteTool, isAgentForceConfirmTool, extractAgentCitations,
+  AGENT_VALID_NAMES, AGENT_TOOL_SCHEMAS,
 } from '../src/main/agent-tools.js';
 
 let vault: string;
@@ -37,20 +38,49 @@ function makeDeps(over: any = {}) {
 }
 
 describe('agent-tools — toolset metadata', () => {
-  it('exposes the 12 tools (8 read + 4 write) and marks the writes correctly', () => {
+  it('exposes the 14 tools (8 read + 6 write) and marks the writes correctly', () => {
     expect([...AGENT_VALID_NAMES].sort()).toEqual([
-      'append_note', 'create_note', 'detect_gaps', 'find_decisions', 'get_related', 'learning_path',
-      'link_note', 'list_topics', 'log_decision', 'read_note', 'recall_memory', 'search_vault',
+      'append_note', 'core_memory_append', 'core_memory_replace', 'create_note', 'detect_gaps',
+      'find_decisions', 'get_related', 'learning_path', 'link_note', 'list_topics', 'log_decision',
+      'read_note', 'recall_memory', 'search_vault',
     ]);
-    // 13 schemas = 12 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
+    // 15 schemas = 14 dispatched tools + set_plan (a loop-local CONTROL tool advertised to the
     // model but intentionally NOT in AGENT_VALID_NAMES — runAgentLoop intercepts it).
-    // P1 memory ceiling (§5): 13 advertised tools ≤ 14 cap; recall_memory is the ONLY P1 add.
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(13);
+    // P2 (§5/§10-f): 15 advertised crosses the soft ≤14 ceiling → re-measured by the eval gate.
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(15);
     expect(AGENT_VALID_NAMES.has('set_plan')).toBe(false);
     expect((AGENT_TOOL_SCHEMAS as any[]).some((s) => s.function?.name === 'set_plan')).toBe(true);
-    for (const w of ['log_decision', 'create_note', 'append_note', 'link_note']) expect(isAgentWriteTool(w)).toBe(true);
+    for (const w of ['log_decision', 'create_note', 'append_note', 'link_note', 'core_memory_append', 'core_memory_replace']) expect(isAgentWriteTool(w)).toBe(true);
     // recall_memory is a READ tool — NEVER a write (no confirm gate, never in AGENT_WRITE_NAMES).
     for (const r of ['search_vault', 'read_note', 'list_topics', 'find_decisions', 'get_related', 'detect_gaps', 'learning_path', 'recall_memory']) expect(isAgentWriteTool(r)).toBe(false);
+  });
+
+  it('marks ONLY core_memory_* as force-confirm (durable memory always approved)', () => {
+    expect(isAgentForceConfirmTool('core_memory_append')).toBe(true);
+    expect(isAgentForceConfirmTool('core_memory_replace')).toBe(true);
+    // vault writes are NOT force-confirm — they keep frictionless auto-apply by default.
+    for (const n of ['create_note', 'append_note', 'link_note', 'log_decision', 'recall_memory', 'search_vault'])
+      expect(isAgentForceConfirmTool(n)).toBe(false);
+  });
+
+  it('core_memory_* dispatches to injected memoryAppend/memoryReplace (validation + errors)', async () => {
+    // No deps wired (e.g. the distill site) → graceful unavailable error, never a throw.
+    const bare = buildExecuteAgentTool(makeDeps());
+    expect(await bare('core_memory_append', { text: 'x' })).toEqual({ error: 'memory write unavailable here' });
+    expect(await bare('core_memory_replace', { id: 'i', old: 'a', new: 'b' })).toEqual({ error: 'memory write unavailable here' });
+    // Wired → flows through; validates required args.
+    const memoryAppend = vi.fn(async (_t: string) => ({ ok: true, id: 'new-id' }));
+    const memoryReplace = vi.fn(async (_id: string, _o: string, _n: string) => ({ ok: true, supersededId: 'old', newId: 'new' }));
+    const exec = buildExecuteAgentTool(makeDeps({ memoryAppend, memoryReplace }));
+    expect(await exec('core_memory_append', { text: '' })).toEqual({ error: 'text is required' });
+    expect(await exec('core_memory_append', { text: 'prefers dark mode' })).toEqual({ ok: true, id: 'new-id' });
+    expect(memoryAppend).toHaveBeenCalledWith('prefers dark mode');
+    expect(await exec('core_memory_replace', { id: '', old: 'a', new: 'b' })).toEqual({ error: 'id and old are required' });
+    expect(await exec('core_memory_replace', { id: 'abc', old: 'a', new: 'b' })).toEqual({ ok: true, supersededId: 'old', newId: 'new' });
+    expect(memoryReplace).toHaveBeenCalledWith('abc', 'a', 'b');
+    // A throwing backend (bound breach / secret / no-match) surfaces as a tool error string.
+    const exec2 = buildExecuteAgentTool(makeDeps({ memoryAppend: vi.fn(async () => { throw new Error('pinned memory full'); }) }));
+    expect(await exec2('core_memory_append', { text: 'y' })).toEqual({ error: 'pinned memory full' });
   });
 
   it('recall_memory dispatches to the injected memoryRecall (READ; empty + payload paths)', async () => {

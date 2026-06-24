@@ -1,15 +1,16 @@
-// Agent tool-selection EVAL gate (P1, Design Ref §5 / §10-f LOCKED).
+// Agent tool-selection EVAL gate (P1→P2, Design Ref §5 / §10-f LOCKED).
 //
-// §10-f: 10 fixed prompts, the model must pick the CORRECT tool >= 8/10 with the P1 toolset
-// (13 advertised tools). This is the "did adding recall_memory degrade gemma4:e4b's tool
-// selection" regression gate. It hits a LIVE local Ollama, so it AUTO-SKIPS when Ollama is
-// unreachable (keeps CI + the offline suite green). Run it deliberately with Ollama up:
+// §10-f: 10 fixed prompts, the model must pick the CORRECT tool >= 8/10 with the CURRENT toolset
+// (P2 = 15 advertised tools — re-measured at the new count per §10-f after P2 added the two
+// core_memory_* write tools, crossing the P1 ≤14 ceiling). This is the "did the new memory tools
+// degrade gemma4:e4b's tool selection" regression gate. It hits a LIVE local Ollama, so it
+// AUTO-SKIPS when Ollama is unreachable (keeps CI + the offline suite green). Run it with Ollama up:
 //
 //   OLLAMA_EVAL_MODEL=gemma4:e4b npx vitest run tests/agent-memory-eval.test.ts
 //
-// It reuses the REAL AGENT_TOOL_SCHEMAS (the 13-tool advertised set) so the eval measures the
-// shipped toolset, not a hand-copied one. The Ollama body/parse is inlined (plain fetch + NDJSON)
-// so the eval needs neither electron `net` nor the chat-engine module.
+// It reuses the REAL AGENT_TOOL_SCHEMAS (the shipped 15-tool advertised set) so the eval measures
+// the shipped toolset, not a hand-copied one. The Ollama body/parse is inlined (plain fetch +
+// NDJSON) so the eval needs neither electron `net` nor the chat-engine module.
 import { describe, it, expect, vi } from 'vitest';
 
 // AGENT_TOOL_SCHEMAS pulls the @stellavault/core barrel transitively — stub it (we never execute
@@ -47,6 +48,7 @@ const SYSTEM = [
   '- search_vault: find notes by topic. read_note: read one note by path. list_topics: tags/topics.',
   '- find_decisions: past decisions. get_related: notes related to a path. detect_gaps: weakly-linked clusters. learning_path: review queue.',
   '- log_decision: record a NEW decision. create_note/append_note/link_note: write to the vault.',
+  '- core_memory_append: save a NEW durable fact about the user when they ask you to remember something about them.',
 ].join('\n');
 
 interface Probe { prompt: string; expect: string[] }
@@ -60,7 +62,7 @@ const PROBES: Probe[] = [
   { prompt: 'What decisions have I recorded about choosing a database?', expect: ['find_decisions'] },
   { prompt: 'Find notes related to Projects/roadmap.md', expect: ['get_related'] },
   { prompt: 'Which notes are most due for review today?', expect: ['learning_path'] },
-  { prompt: 'Record a decision: we chose Postgres over MongoDB for ACID guarantees.', expect: ['log_decision', 'create_note'] },
+  { prompt: 'Remember that I prefer Postgres over MongoDB for new projects.', expect: ['core_memory_append'] },
 ];
 
 /** POST /api/chat (native, stream) and return the name of the FIRST tool_call the model emits,
@@ -92,9 +94,9 @@ async function firstToolFor(prompt: string, schemas: unknown[]): Promise<string>
 }
 
 describe.skipIf(!UP)('agent-memory eval — §10-f tool-selection gate (live Ollama)', () => {
-  it('picks the correct tool on >= 8/10 P1 prompts (13-tool set)', async () => {
+  it('picks the correct tool on >= 8/10 prompts (P2 15-tool set)', async () => {
     const { AGENT_TOOL_SCHEMAS } = await import('../src/main/agent-tools.js');
-    expect(AGENT_TOOL_SCHEMAS).toHaveLength(13); // P1 advertised count (12 dispatched + set_plan)
+    expect(AGENT_TOOL_SCHEMAS).toHaveLength(15); // P2 advertised count (14 dispatched + set_plan)
 
     let correct = 0;
     const transcript: string[] = [];

@@ -42,6 +42,11 @@ export interface AgentToolDeps {
   // model. Returns title/text/provenance only (never a secret, never a vault path). Injected
   // by index.ts → memory-store.recallMemory.
   memoryRecall?: (query: string, k?: number) => Promise<unknown> | unknown;
+  // Agent MEMORY self-edit (P2, §3.3, §5) — force-confirm WRITE backends. Injected ONLY at the
+  // chat:send site (NOT distill, §6 INT-2): an unattended ingest loop must never write durable
+  // memory. The force-confirm gate (chat-engine) ensures these only run after user approval.
+  memoryAppend?: (text: string) => Promise<unknown> | unknown;
+  memoryReplace?: (id: string, oldStr: string, newStr: string) => Promise<unknown> | unknown;
 }
 
 // OpenAI function-format schemas — the ONLY tools the model is told about.
@@ -157,6 +162,34 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
   {
     type: 'function',
     function: {
+      name: 'core_memory_append',
+      description: "Save a NEW durable fact about the user to your long-term memory (a preference, their environment, an ongoing project). Use when the user tells you something worth remembering across conversations. This WRITES to memory and ALWAYS requires the user to approve it. Keep each fact short and atomic. NEVER store secrets/keys.",
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: 'one short durable fact about the user' } },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'core_memory_replace',
+      description: "Correct an existing durable fact in your long-term memory. Pass the block `id` (from recall_memory), the exact `old` substring to change, and the `new` text. ALWAYS requires user approval. `old` must appear EXACTLY ONCE in that fact.",
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'the memory block id to correct' },
+          old: { type: 'string', description: 'the exact existing substring to replace (must match once)' },
+          new: { type: 'string', description: 'the replacement text' },
+        },
+        required: ['id', 'old', 'new'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'log_decision',
       description: "Record a NEW decision in the vault's decision journal. This WRITES a file to the vault and REQUIRES the user to approve it before it runs.",
       parameters: {
@@ -226,11 +259,23 @@ export const AGENT_VALID_NAMES = new Set<string>([
   'search_vault', 'read_note', 'list_topics', 'find_decisions',
   'get_related', 'detect_gaps', 'learning_path', 'recall_memory',
   'log_decision', 'create_note', 'append_note', 'link_note',
+  'core_memory_append', 'core_memory_replace',
 ]);
-const AGENT_WRITE_NAMES = new Set<string>(['log_decision', 'create_note', 'append_note', 'link_note']);
+const AGENT_WRITE_NAMES = new Set<string>([
+  'log_decision', 'create_note', 'append_note', 'link_note',
+  'core_memory_append', 'core_memory_replace',
+]);
+// Force-confirm WRITE tools (§3.3 / §7-1): durable memory writes feed the system prompt and are
+// invisible in the file tree, so they ALWAYS require user approval — never the frictionless
+// auto-apply the vault writes get. The agent loop fail-closes them when no approver is wired.
+const AGENT_FORCE_CONFIRM_NAMES = new Set<string>(['core_memory_append', 'core_memory_replace']);
 
 export function isAgentWriteTool(name: string): boolean {
   return AGENT_WRITE_NAMES.has(name);
+}
+
+export function isAgentForceConfirmTool(name: string): boolean {
+  return AGENT_FORCE_CONFIRM_NAMES.has(name);
 }
 
 const MAX_READ_BYTES = 256 * 1024; // a single note read is bounded (huge/binary → error)
@@ -361,6 +406,22 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         try { await deps.afterWrite(saved.saved); } catch { /* indexing best-effort */ }
         return { ok: true, fileName: saved.fileName };
       }
+      // ── Agent MEMORY self-edit (P2, §3.3) — force-confirm WRITE → off-vault blocks.json ──
+      case 'core_memory_append': {
+        if (!deps.memoryAppend) return { error: 'memory write unavailable here' };
+        const text = str(args.text);
+        if (!text) return { error: 'text is required' };
+        try { return await deps.memoryAppend(text); }
+        catch (err) { return { error: (err as Error)?.message ?? 'failed to save memory' }; }
+      }
+      case 'core_memory_replace': {
+        if (!deps.memoryReplace) return { error: 'memory write unavailable here' };
+        const id = str(args.id);
+        const oldStr = str(args.old);
+        if (!id || !oldStr) return { error: 'id and old are required' };
+        try { return await deps.memoryReplace(id, oldStr, str(args.new)); }
+        catch (err) { return { error: (err as Error)?.message ?? 'failed to update memory' }; }
+      }
       // ── Knowledge-building writes (SP-G, Living Knowledge Graph §9) — all confirm-gated ──
       case 'create_note': {
         const title = str(args.title);
@@ -428,6 +489,7 @@ export function buildAgentToolset() {
     schemas: AGENT_TOOL_SCHEMAS,
     validNames: AGENT_VALID_NAMES,
     isWrite: isAgentWriteTool,
+    forceConfirm: isAgentForceConfirmTool, // P2: core_memory_* always confirm (fail-closed w/o approver)
     extractCitations: extractAgentCitations,
   };
 }

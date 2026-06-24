@@ -390,6 +390,20 @@ export interface ChatSessionMeta {
   updated: number;
 }
 
+// ─── Agent MEMORY (P2) — durable user-model block, wire shape ───
+// Canonical shape (shared/ is the wire source of truth; main/memory-store imports it).
+// `provenance` is a free string ('user' | 'reflection' | 'skill:<name>') — kept loose here so
+// shared/ does not depend on main/.
+export type MemoryProvenance = 'user' | 'reflection' | (string & {});
+export interface MemoryBlockMeta {
+  id: string;
+  tag?: string;
+  text: string;
+  pinned: boolean;
+  provenance: MemoryProvenance;
+  updated: number;
+}
+
 // ─── Channel map: channel name → { args, result } ───
 
 export interface IpcChannelMap {
@@ -587,6 +601,13 @@ export interface IpcChannelMap {
   'chat:load-session':   { args: [id: string]; result: ChatMessage[] | null };
   'chat:rename-session': { args: [id: string, title: string]; result: void };
   'chat:delete-session': { args: [id: string]; result: void };
+
+  // ─── Agent MEMORY management (P2, §6 INT-8) — durable user-model blocks ───
+  // The renderer manages the off-vault memory store: list rows, inspect one, delete by UUID.
+  // It never names a tool/path — memory:delete validates the id (UUID + must exist) in main.
+  'memory:list':   { args: []; result: MemoryBlockMeta[] };
+  'memory:get':    { args: [id: string]; result: MemoryBlockMeta | null };
+  'memory:delete': { args: [id: string]; result: { ok: boolean } };
 
   // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
   // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'

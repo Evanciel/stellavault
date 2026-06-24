@@ -184,3 +184,105 @@ describe('memory-store — injection + provenance gating (§3.2/§3.5)', () => {
     expect(capped.memories.length).toBe(2);
   });
 });
+
+describe('memory-store — P2 self-edit (core_memory_*, §3.3)', () => {
+  it('coreMemoryAppend stores a pinned user fact and returns the id', async () => {
+    const s = await freshStore();
+    const r = s.coreMemoryAppend('Prefers dark mode');
+    expect(r.ok).toBe(true);
+    expect(typeof r.id).toBe('string');
+    expect(s.recallMemory('x').memories.map((m) => m.text)).toContain('Prefers dark mode');
+    // inherits the fail-closed secret drop
+    expect(() => s.coreMemoryAppend('key sk-ant-ABCDEFGHIJKLMNOP1234')).toThrow(/secret/);
+  });
+
+  it('coreMemoryReplace append+supersedes (id required, exact-once match, secret-checked)', async () => {
+    const s = await freshStore();
+    const id = s.coreMemoryAppend('GPU is a 3070').id;
+    // unknown id → reject
+    expect(() => s.coreMemoryReplace('not-a-uuid', '3070', '3080Ti')).toThrow(/valid block id/);
+    // 0 matches → reject
+    expect(() => s.coreMemoryReplace(id, '4090', '3080Ti')).toThrow(/not found/);
+    // happy path: supersede (old id gone, new id present, count unchanged)
+    const r = s.coreMemoryReplace(id, '3070', '3080 Ti');
+    expect(r.ok).toBe(true);
+    expect(r.supersededId).toBe(id);
+    expect(r.newId).not.toBe(id);
+    const texts = s.listBlocks().map((b) => b.text);
+    expect(texts).toContain('GPU is a 3080 Ti');
+    expect(texts).not.toContain('GPU is a 3070');
+    expect(s.getBlock(id)).toBeNull(); // old block superseded
+    expect(s.listBlocks()).toHaveLength(1); // append+supersede keeps the count
+  });
+
+  it('coreMemoryReplace rejects an ambiguous (2+) match', async () => {
+    const s = await freshStore();
+    const id = s.coreMemoryAppend('aa zone aa').id;
+    expect(() => s.coreMemoryReplace(id, 'aa', 'bb')).toThrow(/multiple times/);
+  });
+
+  it('coreMemoryReplace stores the replacement LITERALLY (no $-pattern expansion — review #1)', async () => {
+    const s = await freshStore();
+    // A `new` containing $& / $1 must be stored verbatim, NOT expanded to the matched text —
+    // otherwise the persisted fact diverges from what the user approved (silent fact-flip).
+    const id = s.coreMemoryAppend('budget is X').id;
+    s.coreMemoryReplace(id, 'X', '$& and $1 literally');
+    expect(s.listBlocks()[0].text).toBe('budget is $& and $1 literally');
+  });
+
+  it('coreMemoryReplace INHERITS the source provenance (no reflection→user escalation — review #4)', async () => {
+    const s = await freshStore();
+    // Seed a non-user (reflection) block directly, then replace it.
+    const refl = s.appendBlock({ text: 'guess: prefers tabs', pinned: true, provenance: 'reflection' });
+    const r = s.coreMemoryReplace(refl.id, 'tabs', 'spaces');
+    const fresh = s.getBlock(r.newId);
+    expect(fresh?.provenance).toBe('reflection'); // NOT silently promoted to 'user'
+    // and it stays OUT of the trusted system block (pinned-user-only).
+    expect(s.buildCoreMemoryBlock()).not.toContain('spaces');
+  });
+
+  it('recallMemory exposes the block id so core_memory_replace is callable (review #2)', async () => {
+    const s = await freshStore();
+    const appended = s.coreMemoryAppend('GPU is a 3070');
+    const recalled = s.recallMemory('gpu').memories[0];
+    expect(recalled.id).toBe(appended.id); // the model can now target this fact
+    // round-trip: the id from recall actually drives a replace
+    expect(() => s.coreMemoryReplace(recalled.id, '3070', '3080')).not.toThrow();
+  });
+
+  it('describeMemoryWrite renders the before/after + provenance for the confirm UI (review #5)', async () => {
+    const s = await freshStore();
+    expect(s.describeMemoryWrite('core_memory_append', { text: 'likes dark mode' })).toContain('likes dark mode');
+    const id = s.coreMemoryAppend('GPU is a 3070').id;
+    const desc = s.describeMemoryWrite('core_memory_replace', { id, old: '3070', new: '3080 Ti' });
+    expect(desc).toContain('BEFORE');
+    expect(desc).toContain('GPU is a 3070');
+    expect(desc).toContain('AFTER');
+    expect(desc).toContain('GPU is a 3080 Ti');
+    expect(desc).toContain('provenance');
+    // unknown id → a safe, non-throwing message (the gate still runs)
+    expect(s.describeMemoryWrite('core_memory_replace', { id: 'nope', old: 'a', new: 'b' })).toContain('no block');
+  });
+});
+
+describe('memory-store — P2 management IPC backends (§6 INT-8)', () => {
+  it('listBlocks/getBlock expose blocks; getBlock rejects non-UUID ids', async () => {
+    const s = await freshStore();
+    const id = s.appendBlock({ text: 'hello', tag: 't' }).id;
+    expect(s.listBlocks().map((b) => b.id)).toContain(id);
+    expect(s.getBlock(id)).toMatchObject({ id, text: 'hello', tag: 't', pinned: true });
+    expect(s.getBlock('../etc/passwd')).toBeNull(); // non-UUID → no lookup
+    expect(s.getBlock('also-not-a-uuid')).toBeNull();
+  });
+
+  it('deleteBlock id-validates: UUID + must EXIST, else no-op (no arbitrary deletion)', async () => {
+    const s = await freshStore();
+    const id = s.appendBlock({ text: 'deletable' }).id;
+    expect(s.deleteBlock('not-a-uuid')).toBe(false);          // bad id → no-op
+    expect(s.deleteBlock('11111111-1111-4111-8111-111111111111')).toBe(false); // valid UUID, absent → no-op
+    expect(s.listBlocks()).toHaveLength(1);                   // nothing removed yet
+    expect(s.deleteBlock(id)).toBe(true);                     // real id → removed
+    expect(s.listBlocks()).toHaveLength(0);
+    expect(s.getBlock(id)).toBeNull();
+  });
+});

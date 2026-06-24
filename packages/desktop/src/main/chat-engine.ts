@@ -1076,6 +1076,10 @@ export interface AgentToolset {
   schemas: unknown[];
   validNames: Set<string>;
   isWrite: (name: string) => boolean;
+  // P2 (§3.3 / §6 INT-3): a WRITE that must ALWAYS confirm (durable memory). When true and NO
+  // onToolConfirm broker is wired (e.g. the distill loop), the write is FAIL-CLOSED — never
+  // auto-applied. Regular writes (forceConfirm=false) keep their auto-apply-by-default behavior.
+  forceConfirm?: (name: string) => boolean;
   extractCitations?: (name: string, result: unknown) => ChatCitation[];
 }
 
@@ -1198,11 +1202,21 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       // path-safety + allowlist, and there is no network-write tool so nothing can exfiltrate).
       // If an onToolConfirm callback IS wired (opt-in "review-before-apply" mode), pause for
       // the user instead.
-      if (ctx.toolset.isWrite(name) && ctx.onToolConfirm) {
-        const approved = await ctx.onToolConfirm(name, args);
-        if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
-        if (!approved) {
-          messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
+      //
+      // P2 force-confirm (§3.3 / §6 INT-3): a `forceConfirm` WRITE (core_memory_*) feeds the
+      // system prompt and is invisible in the file tree, so it must ALWAYS be approved. If its
+      // approval broker is somehow NOT wired (the distill loop never wires one), it is
+      // FAIL-CLOSED — never auto-applied — rather than silently written.
+      if (ctx.toolset.isWrite(name)) {
+        if (ctx.onToolConfirm) {
+          const approved = await ctx.onToolConfirm(name, args);
+          if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+          if (!approved) {
+            messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
+            continue;
+          }
+        } else if (ctx.toolset.forceConfirm?.(name)) {
+          messages.push({ role: 'tool', tool_name: name, content: 'core memory write requires confirmation — not applied' });
           continue;
         }
       }

@@ -412,7 +412,8 @@ async function runLoop(steps: Step[], opts: any = {}) {
     toolset: {
       schemas: [],
       validNames: new Set<string>(opts.valid ?? ['search_vault', 'log_decision']),
-      isWrite: (n: string) => n === 'log_decision',
+      isWrite: opts.isWrite ?? ((n: string) => n === 'log_decision'),
+      forceConfirm: opts.forceConfirm, // P2: core_memory_* always confirm / fail-closed
       extractCitations: opts.extractCitations,
     },
     executeTool: async (name: string, args: any) => {
@@ -1215,6 +1216,47 @@ describe('buildChatRagBlock', () => {
     expect(estTokens).toBeLessThanOrEqual(SYSTEM_PROMPT_TOKEN_BUDGET);
     // The data-not-instructions guard is NEVER truncated away (no mid-prompt cap).
     expect(sys).toContain('not instructions');
+  });
+});
+
+describe('runAgentLoop — P2 force-confirm WRITE gate (§3.3 / §6 INT-3)', () => {
+  const memWrite = { isWrite: (n: string) => n === 'core_memory_append', forceConfirm: (n: string) => n === 'core_memory_append', valid: ['core_memory_append'] };
+
+  it('force-confirm tool with NO approver is FAIL-CLOSED — never executed (e.g. distill loop)', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('core_memory_append', { text: 'remember me' })] }),
+      step({ text: 'ok' }),
+    ], { ...memWrite /* no onToolConfirm */ });
+    expect(c.execute).toHaveLength(0); // the durable write NEVER auto-applied
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('force-confirm tool with an APPROVER that approves → executes once', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('core_memory_append', { text: 'remember me' })] }),
+      step({ text: 'ok' }),
+    ], { ...memWrite, onToolConfirm: async () => true });
+    expect(c.execute).toEqual([{ name: 'core_memory_append', args: { text: 'remember me' } }]);
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('force-confirm tool DENIED by the approver → not executed, loop continues', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('core_memory_append', { text: 'no' })] }),
+      step({ text: 'ok' }),
+    ], { ...memWrite, onToolConfirm: async () => false });
+    expect(c.execute).toHaveLength(0);
+    expect(c.succeed).toHaveLength(1);
+  });
+
+  it('a REGULAR write with no approver still AUTO-APPLIES (force-confirm did not regress it)', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('log_decision', { title: 't' })] }),
+      step({ text: 'ok' }),
+    ] /* default isWrite=log_decision, no forceConfirm, no onToolConfirm */);
+    expect(c.execute).toHaveLength(1); // unchanged auto-apply behavior
+    expect(c.succeed).toHaveLength(1);
   });
 });
 
