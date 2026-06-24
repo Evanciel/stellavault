@@ -155,6 +155,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:reflect-done',
   'chat:plan', // agent multi-step plan checklist (one-way main→renderer)
   'chat:skill-invoke', // P3: invoke_skill loaded a skill (one-way main→renderer)
+  'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast (one-way)
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);

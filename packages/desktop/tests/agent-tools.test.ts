@@ -67,9 +67,12 @@ describe('agent-tools — toolset metadata', () => {
     expect(names(buildAgentToolset())).toContain('set_plan');
   });
 
-  it('marks ONLY core_memory_* as force-confirm (durable memory always approved)', () => {
-    expect(isAgentForceConfirmTool('core_memory_append')).toBe(true);
+  it('marks ONLY core_memory_replace as force-confirm (memory-relax: append is autonomous)', () => {
+    // Memory-relax (competitive-positioning-memory-relax.md Part 1 §4): core_memory_APPEND is
+    // additive + read-time-scanned, so it is RELAXED to autonomous (undo-toast push audit instead).
+    // core_memory_REPLACE is a fact-FLIP (overwrites a true fact) → stays gate-before-trust.
     expect(isAgentForceConfirmTool('core_memory_replace')).toBe(true);
+    expect(isAgentForceConfirmTool('core_memory_append')).toBe(false);
     // vault writes are NOT force-confirm — they keep frictionless auto-apply by default.
     for (const n of ['create_note', 'append_note', 'link_note', 'log_decision', 'recall_memory', 'search_vault'])
       expect(isAgentForceConfirmTool(n)).toBe(false);

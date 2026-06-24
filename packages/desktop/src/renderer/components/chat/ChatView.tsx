@@ -113,6 +113,10 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [reflectQueue, setReflectQueue] = useState<ReflectionCandidate[]>([]);
   const [reflectEmpty, setReflectEmpty] = useState(false); // last pass found nothing durable
   const reflectStreamRef = useRef<Set<string>>(new Set());
+  // Memory-relax push audit (Part 1 §4): an autonomous core_memory_append fires chat:memory-written;
+  // show a non-blocking "🧠 remembered: … (undo)" strip so the silent steering window is closed at
+  // write-time, not only when the user opens the Agent panel. Undo → memory:delete(id).
+  const [rememberedFacts, setRememberedFacts] = useState<Array<{ id: string; text: string }>>([]);
   // Auto-reveal the graph the FIRST time a write lands (then leave it to the user).
   const autoOpenedGraphRef = useRef(false);
   // Hermes-style rotating intro copy — one warm headline/body per mount.
@@ -348,6 +352,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       if (!Array.isArray(e.candidates) || e.candidates.length === 0) { setReflectEmpty(true); return; }
       setReflectQueue(e.candidates);
     });
+    // Memory-relax (Part 1 §4): an autonomous core_memory_append landed — surface an undo strip.
+    const offMemoryWritten = onIpc('chat:memory-written', (p: unknown) => {
+      const e = p as { streamId: string; id: string; text: string };
+      if (!ownsStream(e.streamId)) return;
+      if (typeof e.id !== 'string' || !e.id) return;
+      setRememberedFacts((prev) => [...prev, { id: e.id, text: String(e.text ?? '') }].slice(-4));
+    });
     // Agent multi-step plan — last-writer-wins; doneCount clamped so a bad event can't over-index.
     const offPlan = onIpc('chat:plan', (p: unknown) => {
       const e = p as { streamId: string; steps: string[]; doneCount: number };
@@ -365,9 +376,19 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       offToolConfirm();
       offDistillDone();
       offReflectDone();
+      offMemoryWritten();
       offPlan();
     };
   }, [syncActiveCount, sessionId, variant]);
+
+  // Undo an autonomous memory write (memory-relax §4) — delete the block + drop the strip.
+  const undoRemembered = useCallback((id: string) => {
+    void ipc('memory:delete', id).catch(() => {});
+    setRememberedFacts((prev) => prev.filter((f) => f.id !== id));
+  }, []);
+  const dismissRemembered = useCallback((id: string) => {
+    setRememberedFacts((prev) => prev.filter((f) => f.id !== id));
+  }, []);
 
   // Reflection follow-up (§A1) — EXPLICIT trigger only (no auto-trigger, §10-d): run a read-only
   // pass over the current conversation, then surface proposed facts as review chips.
@@ -815,6 +836,25 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       {(reflecting || reflectEmpty) && reflectQueue.length === 0 && (
         <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', fontSize: 10.5, color: 'var(--accent-2)', textAlign: isMain ? 'center' : 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {reflecting ? `🧠 ${t('panel.ai.reflecting')}` : `🧠 ${t('panel.ai.reflectNone')}`}
+        </div>
+      )}
+
+      {/* Memory-relax (Part 1 §4) — autonomous "remembered" facts with one-click undo. Non-blocking. */}
+      {rememberedFacts.length > 0 && (
+        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px', display: 'flex', flexDirection: 'column', gap: 4, maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined }}>
+          {rememberedFacts.map((f) => (
+            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderRadius: 6, background: 'var(--hover)', border: '1px solid var(--border)' }}>
+              <span style={{ flex: 1, fontSize: 11, color: 'var(--ink-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                🧠 {t('panel.ai.remembered')}: {f.text}
+              </span>
+              <button onClick={() => undoRemembered(f.id)} style={{ flexShrink: 0, padding: '2px 8px', fontSize: 10, cursor: 'pointer', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)' }}>
+                {t('panel.ai.undo')}
+              </button>
+              <button onClick={() => dismissRemembered(f.id)} aria-label="dismiss" style={{ flexShrink: 0, padding: '2px 6px', fontSize: 10, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--ink-faint)' }}>
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
       )}
 

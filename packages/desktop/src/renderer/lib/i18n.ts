@@ -337,6 +337,8 @@ export const messages = {
   "panel.ai.reflectNone": { en: "No durable facts found to remember.", ko: "기억할 만한 사실을 찾지 못했습니다." },
   "panel.ai.reflectConfirm": { en: "Remember this durable fact?", ko: "이 사실을 기억할까요?" },
   "panel.ai.reflectSave": { en: "Remember", ko: "기억하기" },
+  "panel.ai.remembered": { en: "Remembered", ko: "기억함" },
+  "panel.ai.undo": { en: "Undo", ko: "실행취소" },
   "panel.ai.errorKeyMissing": { en: "No AI provider configured. Add a key in Settings → AI.", ko: "AI 제공자가 설정되지 않았습니다. 설정 → AI에서 키를 추가하세요." },
   "panel.ai.errorRateLimited": { en: "Rate limited by the provider. Try again shortly.", ko: "제공자의 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요." },
   "panel.ai.errorRefused": { en: "The model declined to answer this request.", ko: "모델이 이 요청에 대한 답변을 거부했습니다." },

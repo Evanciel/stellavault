@@ -1182,6 +1182,10 @@ function registerIpcHandlers(config: AppConfig) {
           safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
         onToolResult: (name: string, ok: boolean, summary: string, filePath?: string) =>
           safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+        // Memory-relax (Part 1 §4): autonomous core_memory_append → push "remembered (undo)" toast.
+        // Wired ONLY here (interactive chat:send) — distill/reflect have no memoryAppend dep.
+        onMemoryWrite: (id: string, text: string) =>
+          safeSend('chat:memory-written', { streamId: req.streamId, id, text }),
         onPlan: (steps: string[], done: number) =>
           safeSend('chat:plan', { streamId: req.streamId, steps, doneCount: done }),
       };

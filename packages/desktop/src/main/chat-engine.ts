@@ -635,6 +635,9 @@ export interface ChatStreamOptions {
   executeTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
+  // Memory-relax push audit (Part 1 §4): fires when an AUTONOMOUS core_memory_append succeeds, so
+  // the renderer can show a non-blocking "remembered (undo)" toast. id → undo via memory:delete.
+  onMemoryWrite?: (id: string, text: string) => void;
   onPlan?: (steps: string[], done: number) => void; // set_plan → live checklist
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
   // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
@@ -739,6 +742,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       onDelta,
       onToolCall: opts.onToolCall,
       onToolResult: opts.onToolResult,
+      onMemoryWrite: opts.onMemoryWrite,
       onPlan: opts.onPlan,
       onSkill: opts.onSkill,
       onToolConfirm: opts.onToolConfirm,
@@ -1168,6 +1172,7 @@ export interface AgentLoopCtx {
   onDelta: (d: string) => void;
   onToolCall?: (name: string, detailRedacted: string) => void;
   onToolResult?: (name: string, ok: boolean, summary: string, filePath?: string) => void;
+  onMemoryWrite?: (id: string, text: string) => void; // autonomous core_memory_append → undo toast
   onPlan?: (steps: string[], done: number) => void;
   onSkill?: (name: string) => void; // P3: invoke_skill → chat:skill-invoke surface
   /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
@@ -1358,6 +1363,15 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       const deadEnd = !deadEndExempt && isEmptyToolResult(result);
       if (!deadEndExempt) deadEndCount = deadEnd ? deadEndCount + 1 : 0;
       ctx.onToolResult?.(name, toolOk, summarizeResult(result), writePath || undefined);
+      // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append (no longer force-
+      // confirm) surfaces a non-blocking "remembered (undo)" toast so the silent pre-notice
+      // steering window is closed at WRITE time, not only when the user opens the panel.
+      if (name === 'core_memory_append' && toolOk) {
+        const r = result as { ok?: boolean; id?: string };
+        if (r?.ok && typeof r.id === 'string') {
+          ctx.onMemoryWrite?.(r.id, String((args as Record<string, unknown>).text ?? ''));
+        }
+      }
       messages.push({
         role: 'tool', tool_name: name,
         content: safeStringify(result) + (deadEnd ? '\n(no useful result — adapt your approach or answer from general knowledge)' : ''),

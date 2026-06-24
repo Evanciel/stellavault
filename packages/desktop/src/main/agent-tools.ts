@@ -282,10 +282,18 @@ const AGENT_WRITE_NAMES = new Set<string>([
   'log_decision', 'create_note', 'append_note', 'link_note',
   'core_memory_append', 'core_memory_replace',
 ]);
-// Force-confirm WRITE tools (§3.3 / §7-1): durable memory writes feed the system prompt and are
-// invisible in the file tree, so they ALWAYS require user approval — never the frictionless
-// auto-apply the vault writes get. The agent loop fail-closes them when no approver is wired.
-const AGENT_FORCE_CONFIRM_NAMES = new Set<string>(['core_memory_append', 'core_memory_replace']);
+// Force-confirm WRITE tools. Only core_memory_REPLACE remains here.
+// (Memory-relax analysis, docs/03-analysis/competitive-positioning-memory-relax.md Part 1 §4):
+//  - core_memory_REPLACE is a fact-FLIP — it overwrites an existing TRUE fact with a new one, so a
+//    silent autonomous replace is the highest-impact prompt-steering. It stays gate-before-trust.
+//  - core_memory_APPEND is purely ADDITIVE (a new pinned fact, bounded by MEM_MAX_*; injection is
+//    neutralized at READ time by scanForInjection regardless of write path), so it is RELAXED to
+//    autonomous (like a vault note). Its silent-steering window is instead closed PUSH-side by the
+//    "remembered (undo)" toast (chat:memory-written) emitted on each autonomous append.
+// Reflection/distill loops still can't write either tool (no memoryAppend/memoryReplace dep →
+// dispatcher returns 'memory write unavailable here'), so this relaxation is loop-scoped to the
+// interactive chat:send agent.
+const AGENT_FORCE_CONFIRM_NAMES = new Set<string>(['core_memory_replace']);
 
 export function isAgentWriteTool(name: string): boolean {
   return AGENT_WRITE_NAMES.has(name);

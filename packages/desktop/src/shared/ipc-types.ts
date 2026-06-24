@@ -703,6 +703,9 @@ export interface IpcEventMap {
   'chat:plan': { streamId: string; steps: string[]; doneCount: number };
   // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
   'chat:skill-invoke': { streamId: string; name: string };
+  // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
+  // shows a non-blocking "🧠 remembered: … (undo)" toast (undo → memory:delete by id).
+  'chat:memory-written': { streamId: string; id: string; text: string };
 }
 
 // Helper types for typed invoke/on

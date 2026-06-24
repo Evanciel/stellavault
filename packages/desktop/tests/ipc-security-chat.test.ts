@@ -63,6 +63,7 @@ const CHAT_EVENTS = [
   'chat:reflect-done', // §A: reflection pass finished (proposed memory candidates)
   'chat:plan',         // agent multi-step plan checklist
   'chat:skill-invoke', // P3: invoke_skill loaded a skill
+  'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {
@@ -278,3 +279,19 @@ describe('Agent SKILLS IPC (P3, §4.4) — both-side trust boundary', () => {
     expect(mainSrc).toContain("'chat:skill-invoke'");
   });
 });
+
+describe('Memory-relax (Part 1 §4) — autonomous append + push undo toast', () => {
+  it('chat:memory-written is wired ONLY in the interactive chat:send loop, not distill/reflect', () => {
+    // Autonomous core_memory_append surfaces a push "remembered (undo)" toast — but ONLY in the
+    // interactive agent (chat:send). distill/reflect have no memoryAppend dep (fail-closed), so they
+    // must NOT wire onMemoryWrite (no autonomous memory writes there).
+    const send = mainSrc.match(/ipcMain\.handle\('chat:send'[\s\S]*?\n  \}\);/);
+    expect(send).not.toBeNull();
+    expect(send![0]).toContain('onMemoryWrite:');
+    expect(send![0]).toContain("'chat:memory-written'");
+    const distill = mainSrc.match(/ipcMain\.handle\('chat:distill'[\s\S]*?\n  \}\);/);
+    const reflect = mainSrc.match(/ipcMain\.handle\('chat:reflect'[\s\S]*?\n  \}\);/);
+    expect(distill![0]).not.toContain('onMemoryWrite');
+    expect(reflect![0]).not.toContain('onMemoryWrite');
+  });
+})
