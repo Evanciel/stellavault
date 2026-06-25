@@ -5,13 +5,19 @@
 **让 Claude 记住一切的本地优先第二大脑。**<br/>
 Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破坏、MCP 原生。
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-集成-21-个工具) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
-[**⬇ 下载桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 快速开始**](#安装) · [**🤖 MCP 配置**](#mcp-集成-21-个工具) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
+[**🤖 添加到 Claude / Cursor**](#mcp-集成-21-个工具) · [**⬇ 桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 快速开始**](#安装) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
 
 </div>
+
+> **让 Claude 读取你的知识库的一条命令：**
+>
+> ```bash
+> npx -y stellavault setup    # 将 MCP 服务器接入 Claude Code / Desktop、Cursor、Windsurf、VS Code
+> ```
 
 **一个会自我编译的第二大脑。** Stellavault 把两种关于"知识应当如何存活、生长"的思想融为一体：
 
@@ -199,6 +205,23 @@ stellavault setup            # 一条命令 → Claude Code、Claude Desktop、C
 # 或仅连接 Claude Code:
 claude mcp add stellavault -- stellavault serve
 ```
+
+<details>
+<summary>手动配置 (任意 MCP 客户端) — 复制粘贴 JSON</summary>
+
+```json
+{
+  "mcpServers": {
+    "stellavault": {
+      "command": "npx",
+      "args": ["-y", "stellavault", "serve"]
+    }
+  }
+}
+```
+
+已在 [MCP 注册表](https://registry.modelcontextprotocol.io) 注册为 `io.github.Evanciel/stellavault`(也可在 Glama、Smithery、mcp.so 中发现)。
+</details>
 
 Claude 可以直接搜索、问答、起草、检查并分析你的仓库。搜索会运行完整的混合流水线 — 对 语义 + BM25 + 实体链接 进行 **加权 RRF**，再加上 **FSRS 时新性** 和会话自适应重排序(详见 [搜索与排名](#搜索与排名))。
 
