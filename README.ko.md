@@ -5,13 +5,19 @@
 **Claude가 기억하는 로컬 우선 세컨드 브레인.**<br/>
 Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트 비파괴, MCP 네이티브.
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-연동-21개-도구) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ 데스크톱 앱 다운로드**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 빠른 시작**](#설치) · [**🤖 MCP 설정**](#mcp-연동-21개-도구) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
+[**🤖 Claude / Cursor에 추가**](#mcp-연동-21개-도구) · [**⬇ 데스크톱 앱**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 빠른 시작**](#설치) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
 
 </div>
+
+> **Claude가 내 볼트를 읽게 하는 한 줄 명령:**
+>
+> ```bash
+> npx -y stellavault setup    # Claude Code / Desktop, Cursor, Windsurf, VS Code에 MCP 서버 연결
+> ```
 
 **스스로 컴파일하는 세컨드 브레인.** Stellavault는 "지식이 어떻게 살아 숨 쉬고 자라야 하는가"에 대한 두 가지 아이디어를 하나로 녹였습니다:
 
@@ -199,6 +205,23 @@ stellavault setup            # 명령 한 번 → Claude Code, Claude Desktop, C
 # 또는 Claude Code만 연결:
 claude mcp add stellavault -- stellavault serve
 ```
+
+<details>
+<summary>수동 설정 (모든 MCP 클라이언트) — 복사-붙여넣기 JSON</summary>
+
+```json
+{
+  "mcpServers": {
+    "stellavault": {
+      "command": "npx",
+      "args": ["-y", "stellavault", "serve"]
+    }
+  }
+}
+```
+
+[MCP 레지스트리](https://registry.modelcontextprotocol.io)에 `io.github.Evanciel/stellavault`로 등록 (Glama·Smithery·mcp.so에서도 발견 가능).
+</details>
 
 Claude가 당신의 볼트를 직접 검색·질의·초안 작성·점검·분석할 수 있습니다. 검색은 전체 하이브리드 파이프라인을 실행합니다 — 시맨틱 + BM25 + 엔티티 링킹에 대한 **가중 RRF**, 여기에 **FSRS 최신성**과 세션 적응형 리랭크까지(자세히는 [검색과 랭킹](#검색과-랭킹)).
 

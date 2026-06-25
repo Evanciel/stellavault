@@ -5,13 +5,19 @@
 **Claude が記憶するローカルファーストなセカンドブレイン。**<br/>
 Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完全ローカル、ボールト非破壊、MCP ネイティブ。
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-連携-21ツール) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh.md)
 
-[**⬇ デスクトップアプリをダウンロード**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ クイックスタート**](#インストール) · [**🤖 MCP セットアップ**](#mcp-連携-21ツール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
+[**🤖 Claude / Cursor に追加**](#mcp-連携-21ツール) · [**⬇ デスクトップアプリ**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ クイックスタート**](#インストール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
 
 </div>
+
+> **Claude にボルトを読ませる 1 コマンド:**
+>
+> ```bash
+> npx -y stellavault setup    # Claude Code / Desktop、Cursor、Windsurf、VS Code に MCP サーバーを接続
+> ```
 
 **自らをコンパイルするセカンドブレイン。** Stellavault は、知識はどう生き、どう育つべきかについての 2 つの思想を一つに溶け込ませました:
 
@@ -199,6 +205,23 @@ stellavault setup            # 1コマンド → Claude Code, Claude Desktop, Cu
 # または Claude Code のみ:
 claude mcp add stellavault -- stellavault serve
 ```
+
+<details>
+<summary>手動設定 (任意の MCP クライアント) — コピー&ペースト JSON</summary>
+
+```json
+{
+  "mcpServers": {
+    "stellavault": {
+      "command": "npx",
+      "args": ["-y", "stellavault", "serve"]
+    }
+  }
+}
+```
+
+[MCP レジストリ](https://registry.modelcontextprotocol.io)に `io.github.Evanciel/stellavault` として登録 (Glama・Smithery・mcp.so でも発見可能)。
+</details>
 
 Claude があなたのボールトを直接、検索・質問・ドラフト作成・点検・分析できます。検索はハイブリッドパイプライン全体を実行します — セマンティック + BM25 + エンティティリンキングに対する **重み付き RRF**、加えて **FSRS 新近性** とセッション適応型の再ランキング(詳細は [検索とランキング](#検索とランキング))。
 

@@ -5,13 +5,19 @@
 **The local-first second brain that Claude remembers.**<br/>
 Karpathy's self-compiling wiki × Zettelkasten — fully local, vault-safe, and MCP-native.
 
-[![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-integration-21-tools) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-245%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**⬇ Download Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ Quickstart**](#install) · [**🤖 MCP Setup**](#mcp-integration-21-tools) · [**🌐 Live Demo**](https://evanciel.github.io/stellavault/)
+[**🤖 Add to Claude / Cursor**](#mcp-integration-21-tools) · [**⬇ Desktop App**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ Quickstart**](#install) · [**🌐 Live Demo**](https://evanciel.github.io/stellavault/)
 
 </div>
+
+> **One command to let Claude read your vault:**
+>
+> ```bash
+> npx -y stellavault setup    # wires the MCP server into Claude Code / Desktop, Cursor, Windsurf, or VS Code
+> ```
 
 **A second brain that compiles itself.** Stellavault fuses two ideas about how knowledge should live and grow:
 
@@ -198,6 +204,23 @@ stellavault setup            # one command → Claude Code, Claude Desktop, Curs
 # or, for Claude Code only:
 claude mcp add stellavault -- stellavault serve
 ```
+
+<details>
+<summary>Manual config (any MCP client) — copy-paste JSON</summary>
+
+```json
+{
+  "mcpServers": {
+    "stellavault": {
+      "command": "npx",
+      "args": ["-y", "stellavault", "serve"]
+    }
+  }
+}
+```
+
+Listed on the [MCP registry](https://registry.modelcontextprotocol.io) as `io.github.Evanciel/stellavault` (also discoverable via Glama, Smithery, and mcp.so).
+</details>
 
 Claude can search, ask, draft, lint, and analyze your vault directly. Search runs
 the full hybrid pipeline — **weighted RRF** over semantic + BM25 + entity-linking,

@@ -1,0 +1,19 @@
+# Smithery — local stdio MCP server claim for stellavault.
+# Runs the published npm package's `serve` command over stdio (no hosted runtime).
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      dbPath:
+        type: string
+        description: "Optional path to the SQLite vector DB (STELLAVAULT_DB_PATH). Defaults to a per-vault path resolved from your .stellavault.json config or the current directory."
+    required: []
+  commandFunction: |
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'stellavault', 'serve'],
+      env: config && config.dbPath ? { STELLAVAULT_DB_PATH: config.dbPath } : {}
+    })
+  exampleConfig:
+    dbPath: ""
