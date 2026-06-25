@@ -247,6 +247,9 @@ export interface AppSettings {
   bookmarks: { type: 'note' | 'search'; target: string; label: string }[];
   session: { openTabs: string[]; activeTab: string | null };
   window: { width: number; height: number; x?: number; y?: number };
+  // Always-on daemon (daemon-keepalive §5). Optional so older settings files type-check; default
+  // OFF — the headless keep-alive must be explicitly opted into. Phase 0 uses `enabled` only.
+  daemon?: { enabled: boolean; openAtLogin?: boolean; notify?: boolean; tickMinutes?: number };
   // T1-9: persisted resizable pane widths (px). Optional so older settings
   // files / main getDefaults that predate this slice still type-check; the
   // renderer reads with a fallback. Security agent: add matching keys to
@@ -643,6 +646,13 @@ export interface IpcChannelMap {
   // explicit consent to (de)catalogue a skill. Only promoted skills reach the prompt / invoke.
   'skill:list':         { args: []; result: SkillMeta[] };
   'skill:set-promoted': { args: [name: string, promoted: boolean]; result: { promoted: boolean } };
+
+  // ─── Always-on daemon (daemon-keepalive §5) — headless self-compile ───
+  // run-now triggers a headless "Compile now" of the most-recent session (also a tray action).
+  'daemon:run-now': { args: []; result: { ok: boolean } };
+  // Settings toggle (default OFF) — enabling builds the tray + keep-alive; disabling destroys it.
+  'daemon:set-enabled': { args: [enabled: boolean]; result: { enabled: boolean } };
+  'daemon:get-status':  { args: []; result: { enabled: boolean } };
 
   // ─── Local model server (Ollama) lifecycle (SP1 follow-up) ───
   // Powers the "Start Ollama" affordance in Settings → AI and the chat 'unreachable'

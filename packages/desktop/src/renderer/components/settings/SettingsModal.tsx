@@ -99,6 +99,15 @@ function GeneralTab() {
   const t = useT();
   const [pendingVault, setPendingVault] = useState<VaultRegistryEntry | null>(null);
 
+  // Always-on daemon (daemon-keepalive §5) — local state because daemon:set-enabled builds/destroys
+  // the tray in main and returns the persisted value (it does not flow through the settings:changed
+  // refresh). Optimistic toggle, reconciled by the IPC result.
+  const [daemonOn, setDaemonOn] = useState<boolean>(settings.daemon?.enabled ?? false);
+  const toggleDaemon = (on: boolean) => {
+    setDaemonOn(on);
+    void ipc('daemon:set-enabled', on).then((r) => setDaemonOn(r.enabled)).catch(() => setDaemonOn(!on));
+  };
+
   // "Change…" on the vault path: pick a folder → register it → confirm a restart-switch
   // (a vault swap re-inits the whole core, so it routes through the same restart path
   // as the titlebar vault switcher).
@@ -164,6 +173,15 @@ function GeneralTab() {
             style={{ ...textInputStyle, flex: 1 }}
           />
           <button onClick={() => void pickFolder((rel) => void update({ templatesFolder: rel }))} title={t('settings.general.pickFolder')} style={pickBtnStyle}>📁</button>
+        </div>
+      </Field>
+      <Field label={t('settings.general.daemon.label')} hint={t('settings.general.daemon.hint')}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+            <input type="checkbox" checked={daemonOn} onChange={(e) => toggleDaemon(e.target.checked)} aria-label={t('settings.general.daemon.toggle')} />
+            <span style={{ fontSize: 13, color: 'var(--ink-dim)' }}>{t('settings.general.daemon.toggle')}</span>
+          </label>
+          <button onClick={() => void ipc('daemon:run-now')} style={pickBtnStyle}>{t('settings.general.daemon.compileNow')}</button>
         </div>
       </Field>
 

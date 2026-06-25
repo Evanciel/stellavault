@@ -1,7 +1,7 @@
 // Stellavault Desktop — Main Process
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage } from 'electron';
 import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
@@ -34,6 +34,7 @@ import {
   listBlocks, getBlock, deleteBlock, describeMemoryWrite, looksLikeSecret, type MemoryBlockMeta,
 } from './memory-store.js';
 import { scanForInjection } from './injection-scan.js';
+import { daemonLogEmit, type DistillEvent } from './daemon/daemon-log.js';
 import {
   buildSkillCatalogue, loadSkillBody, listAllSkills, setSkillPromoted, type SkillMeta,
 } from './skill-store.js';
@@ -177,6 +178,28 @@ let engine: OrchestrationEngine | null = null;
 // an identity guard. NEVER carries the API key.
 interface ChatStreamEntry { controller: AbortController; wcId: number; }
 const chatStreamRegistry = new Map<string, ChatStreamEntry>();
+
+// ─── Always-on daemon (daemon-keepalive §2) — tray keep-alive lifecycle ──────
+// `tray` is a MODULE global so it survives GC. `isQuitting` distinguishes an INTENTIONAL quit
+// (tray Quit / before-quit / a vault-switch relaunch) from a mere window close — the conditional
+// window-all-closed quits only when this is set or the daemon is off (§2c). daemonEnabled() reads
+// the persisted opt-in (default OFF).
+let tray: Tray | null = null;
+let isQuitting = false;
+let lockWired = false; // single-instance lock acquired once (whenReady OR runtime daemon-enable)
+const daemonEnabled = (): boolean => { try { return settingsStore?.get().daemon?.enabled === true; } catch { return false; } };
+
+// Acquire the single-instance lock idempotently (§2a + review fix): whenever a process is about to
+// survive headless (daemon enabled — at startup OR toggled on at runtime), it must hold the lock so
+// a later launch can't double-boot and fight the SQLite DB / MCP loopback port. Returns false ONLY
+// when packaged AND another instance already owns the lock. No-op (true) in dev / already-wired.
+function ensureSingleInstanceLock(): boolean {
+  if (!app.isPackaged || lockWired) return true;
+  if (!app.requestSingleInstanceLock()) return false; // another instance owns it
+  app.on('second-instance', () => showMainWindow());
+  lockWired = true;
+  return true;
+}
 
 // Agent (SP-D): a write tool pauses the loop on a per-stream approval promise; the
 // renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
@@ -782,6 +805,170 @@ async function findBacklinks(vaultPath: string, title: string): Promise<Array<{ 
 
 // ─── IPC Handlers ────────────────────────────────────
 
+// ─── Always-on daemon (Design Ref: §3 — daemon-keepalive) ───
+// The distill BODY, extracted so it runs from BOTH the chat:distill IPC handler (windowed,
+// emit=safeSend) AND the tray "Compile now" / future scheduler (headless, emit=daemon log).
+// `headless` adds the §4 safety floor: a poisoned conversation must not file injection payloads as
+// wiki notes nobody reviews, and an unattended run may only CREATE new notes (never mutate existing
+// ones / write memory), bounded by a per-run write cap.
+type DistillEmit = (channel: 'chat:tool-call' | 'chat:tool-result' | 'chat:distill-done', payload: Record<string, unknown>) => void;
+// Headless deny: append_note/link_note MUTATE existing notes (unattended = nobody watches the tool
+// strip to undo); log_decision + core_memory_* are likewise not create-only. distill never wires a
+// memoryWrite dep, but deny them POSITIVELY so a future refactor that re-wires one fails loud (§4 S1).
+const DAEMON_HEADLESS_DENY = new Set(['append_note', 'link_note', 'log_decision', 'core_memory_append', 'core_memory_replace']);
+const DAEMON_WRITE_CAP = 8;
+
+async function runDistill(opts: {
+  messages: ChatMessage[]; streamId: string; emit: DistillEmit; headless: boolean; wcId: number;
+}): Promise<void> {
+  const { messages, streamId, emit, headless, wcId } = opts;
+  const cfg = getAiConfig();
+  // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
+  if (!cfg || cfg.provider !== 'openai-compatible') { emit('chat:distill-done', { streamId, summary: '' }); return; }
+
+  const transcript = messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
+    .join('\n\n')
+    .slice(0, 12_000);
+
+  // §4 safety (headless only): an unattended distill on a prompt-injected conversation must not file
+  // the payload as a durable wiki note nobody reviews. Pre-scan; skip the whole run on a hit. The
+  // windowed path keeps the user in the loop (tool strip), so it is NOT gated here.
+  if (headless && scanForInjection(transcript).blocked.length > 0) {
+    emit('chat:distill-done', { streamId, summary: '' });
+    return;
+  }
+
+  const controller = new AbortController();
+  // wcId=-1 for the daemon: registered in the SAME chatStreamRegistry so before-quit aborts it, but
+  // chat:abort's per-window ownership (ent.wcId === wcId, wcId>=0) never cross-aborts it (§3 S3).
+  const entry: ChatStreamEntry = { controller, wcId };
+  chatStreamRegistry.set(streamId, entry);
+
+  // SP3: describe conversation images with a vision-only pass first (gemma4 can't see images while
+  // tools are present). Untrusted: bound shape + per-image size before decode, cap the description.
+  const images = messages
+    .flatMap((m) => (m.attachments ?? []))
+    .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
+      && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
+    .slice(0, 4)
+    .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
+  let imageBlock = '';
+  if (images.length > 0) {
+    const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
+    if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
+  }
+  const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
+
+  const afterWrite = async (saved: string) => {
+    const safe = assertInsideVault(currentVaultPath, saved);
+    noteSelfWrite(safe);
+    const core = await import('@stellavault/core');
+    if (typeof (core as any).indexFiles === 'function') {
+      await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
+    }
+    bumpVaultFsVersion();
+    bumpGraphCacheVersion();
+  };
+  const baseExecute = buildExecuteAgentTool({
+    searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
+    getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
+    // distill gets READ memory deps only — NO memoryWrite (review-before-apply, §7-1).
+    memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+  });
+  // §4 headless safety floor (S1/S2): create-only + per-run write cap. baseExecute already wires NO
+  // memoryWrite dep (core_memory_* error anyway); the deny set + cap are defence-in-depth that fail
+  // LOUD — append_note/link_note mutate existing notes unattended, which the windowed user could undo.
+  let writes = 0;
+  const executeTool = !headless ? baseExecute : async (name: string, args: Record<string, unknown>) => {
+    if (DAEMON_HEADLESS_DENY.has(name)) return { error: `'${name}' is disabled in headless daemon mode` };
+    if (name === 'create_note') {
+      if (writes >= DAEMON_WRITE_CAP) return { error: 'daemon write cap reached' };
+      writes++;
+    }
+    return baseExecute(name, args);
+  };
+
+  try {
+    await chatStream({
+      cfg, messages: [ingestTurn], ragOn: false, signal: controller.signal, searchEngine,
+      agentOn: true, distill: true, toolset: buildAgentToolset(), executeTool,
+      onToolCall: (name, detailRedacted) => emit('chat:tool-call', { streamId, name, detailRedacted }),
+      onToolResult: (name, ok, summary, filePath) => emit('chat:tool-result', { streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
+      onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
+      onDone: (_citations, fullText) => emit('chat:distill-done', { streamId, summary: fullText.slice(0, 300) }),
+      onError: () => emit('chat:distill-done', { streamId, summary: '' }),
+    });
+  } catch (err) {
+    console.error('[main] runDistill failed:', err);
+    emit('chat:distill-done', { streamId, summary: '' });
+  } finally {
+    if (chatStreamRegistry.get(streamId) === entry) chatStreamRegistry.delete(streamId);
+  }
+}
+
+// Headless emit: write the audit JSONL log (§6 acceptance grep + §4 safety negative-assert) AND
+// broadcast to any open window (a manual "Compile now" may run while a window is open).
+function daemonEmit(open: BrowserWindow[]): DistillEmit {
+  const ev: Record<string, DistillEvent['event']> = { 'chat:tool-call': 'tool-call', 'chat:tool-result': 'tool-result', 'chat:distill-done': 'done' };
+  return (channel, payload) => {
+    daemonLogEmit({ event: ev[channel], streamId: String(payload.streamId ?? ''), name: payload.name as string | undefined, ok: payload.ok as boolean | undefined, filePath: payload.filePath as string | undefined, summary: payload.summary as string | undefined });
+    for (const w of open) { if (!w.isDestroyed()) w.webContents.send(channel, payload); }
+  };
+}
+
+// Tray "Compile now" / daemon:run-now entry (§3 runManualDistill). Phase 0: most-recent session with
+// >= 2 turns, processed once in-memory (no persistent daemon_distill_log until Phase 1, §10-1).
+async function runManualDistill(): Promise<void> {
+  try {
+    const sessions = chatListSessions();
+    const target = sessions[0]; // most recent (desc)
+    if (!target) return;
+    const msgs = chatLoadSession(target.id);
+    if (!Array.isArray(msgs) || msgs.filter((m) => m.role === 'user' || m.role === 'assistant').length < 2) return;
+    const streamId = `daemon-${target.id}`;
+    daemonLogEmit({ event: 'start', streamId });
+    await runDistill({ messages: msgs, streamId, wcId: -1, headless: true, emit: daemonEmit(BrowserWindow.getAllWindows()) });
+  } catch (err) {
+    console.error('[daemon] runManualDistill failed', err);
+  }
+}
+
+// Tray icon — inline 16x16 PNG data URL (no asset file / forge extraResource / cross-env path to
+// get wrong; nativeImage decodes it identically in dev + packaged).
+const TRAY_ICON_DATAURL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAO0lEQVR4nGPIrfnPQAnGJfEfBybKAFyasRpCqmYMQ8jRjGIIuZrhhowaQEUDKI5GqiQkqiRlqmQmkjAArKCDg7leCycAAAAASUVORK5CYII=';
+
+function showMainWindow(): void {
+  const wins = BrowserWindow.getAllWindows();
+  if (wins.length > 0) { const w = wins[0]; if (w.isMinimized()) w.restore(); w.show(); w.focus(); }
+  else createWindow(); // headless re-open: vault is already set, so createWindow skips the picker
+}
+
+function rebuildTrayMenu(): void {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Stellavault', click: () => showMainWindow() },
+    { label: 'Compile now (headless)', click: () => void runManualDistill() },
+    { type: 'separator' },
+    // Quit must set isQuitting so the conditional window-all-closed actually quits (§2c).
+    { label: 'Quit Stellavault', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+}
+
+// Build the tray ONLY when the daemon is opt-in enabled — the tray icon IS the "daemon active"
+// affordance (§2b). Idempotent. destroyTray on disable.
+function buildTray(): void {
+  if (tray || !daemonEnabled()) return;
+  try {
+    tray = new Tray(nativeImage.createFromDataURL(TRAY_ICON_DATAURL));
+    tray.setToolTip('Stellavault — knowledge daemon active');
+    tray.on('click', () => showMainWindow());
+    rebuildTrayMenu();
+  } catch (err) { console.error('[daemon] tray build failed', err); tray = null; }
+}
+function destroyTray(): void { try { tray?.destroy(); } catch { /* already gone */ } tray = null; }
+
 function registerIpcHandlers(config: AppConfig) {
   const vp = config.vaultPath;
 
@@ -1302,88 +1489,35 @@ function registerIpcHandlers(config: AppConfig) {
   // INGEST system prompt — the agent folds the conversation's durable knowledge into the
   // wiki (atomic notes, [[links]], log). Writes auto-apply; no chat bubble is produced (the
   // distillation prose is discarded — only the tool activity + a short summary surface).
+  // Thin wrapper over runDistill (windowed: emit=safeSend, headless=false → identical pre-extraction
+  // behaviour). The daemon path (tray "Compile now" / daemon:run-now) calls runDistill headless.
   ipcMain.handle('chat:distill', async (e, req: { messages: ChatMessage[]; streamId: string; sessionId?: string }): Promise<void> => {
-    const wcId = e.sender.id;
     if (!Array.isArray(req?.messages) || req.messages.length === 0) return;
     if (typeof req.streamId !== 'string' || !req.streamId) return;
-    const cfg = getAiConfig();
     const safeSend = (ch: string, payload: unknown): void => { if (!e.sender.isDestroyed()) e.sender.send(ch, payload); };
-    // Distillation needs a local tools-capable ollama; chatStream re-checks and no-ops otherwise.
-    if (!cfg || cfg.provider !== 'openai-compatible') { safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }); return; }
-
-    const controller = new AbortController();
-    const entry: ChatStreamEntry = { controller, wcId };
-    chatStreamRegistry.set(req.streamId, entry);
-
-    const transcript = req.messages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      // SP4: fold audio/video transcripts in so the distiller files them too.
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.role === 'user' ? foldAttachmentsIntoText(m) : m.text}`)
-      .join('\n\n')
-      .slice(0, 12_000);
-
-    // SP3 attachment distillation: gemma4 can't see images while tools are present, so describe
-    // any conversation images with a VISION-ONLY pass first, then fold that text into the
-    // transcript the tool-using ingest loop distills. Failure/abort → text-only (graceful).
-    // This handler does NOT go through validateChatReq, so bound the images inline (shape +
-    // per-image size) before decoding — a stale/compromised renderer can't drive memory here.
-    const images = req.messages
-      .flatMap((m) => (m.attachments ?? []))
-      .filter((a) => a && a.type === 'image' && typeof a.dataUrl === 'string'
-        && a.dataUrl.length <= CHAT_MAX_ATTACHMENT_CHARS && CHAT_ATTACHMENT_DATAURL_RE.test(a.dataUrl))
-      .slice(0, 4)
-      .map((a) => (a.dataUrl ?? '').replace(/^data:[^,]*,/, ''));
-    let imageBlock = '';
-    if (images.length > 0) {
-      // Cap the model-generated description (untrusted: a prompt-injected image could make it
-      // huge) so it can't bypass the 12k transcript bound and bloat the ingest prompt.
-      const desc = (await describeImages(cfg, images, controller.signal)).slice(0, 4_000);
-      if (desc) imageBlock = `\n\nImage(s) attached in this conversation (auto-described by the vision model — treat as durable visual knowledge to file):\n${desc}`;
-    }
-    const ingestTurn: ChatMessage = { id: randomUUID(), role: 'user', text: `Ingest the following finished conversation into the wiki:\n\n${transcript}${imageBlock}`, ts: Date.now() };
-
-    const afterWrite = async (saved: string) => {
-      const safe = assertInsideVault(currentVaultPath, saved);
-      noteSelfWrite(safe);
-      const core = await import('@stellavault/core');
-      if (typeof (core as any).indexFiles === 'function') {
-        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
-      }
-      bumpVaultFsVersion();
-      bumpGraphCacheVersion();
-    };
-    const executeTool = buildExecuteAgentTool({
-      searchEngine, store, decayEngine, vaultPath: currentVaultPath, coreReady: () => coreReady, afterWrite,
-      getRelatedByPath: agentGetRelated, detectGaps: agentDetectGaps, learningPath: agentLearningPath,
-      // §6 INT-2: distill gets READ memory deps (recall_memory works in the ingest loop too).
-      // NO memoryWrite here — distill auto-applies without a confirm gate, so a reflection/ingest
-      // loop must never perform an unattended durable-memory write (review-before-apply, §7-1).
-      memoryRecall: (query: string, k?: number) => recallMemory(query, k),
+    await runDistill({
+      messages: req.messages, streamId: req.streamId, wcId: e.sender.id, headless: false,
+      emit: (channel, payload) => safeSend(channel, payload),
     });
+  });
 
-    try {
-      await chatStream({
-        cfg,
-        messages: [ingestTurn],
-        ragOn: false,            // distillation does its own search; no RAG pre-injection
-        signal: controller.signal,
-        searchEngine,
-        agentOn: true,
-        distill: true,           // → agent loop uses the Karpathy INGEST prompt
-        toolset: buildAgentToolset(),
-        executeTool,             // writes auto-apply (no onToolConfirm)
-        onToolCall: (name, detailRedacted) => safeSend('chat:tool-call', { streamId: req.streamId, name, detailRedacted }),
-        onToolResult: (name, ok, summary, filePath) => safeSend('chat:tool-result', { streamId: req.streamId, name, ok, summary, filePath: absVaultPath(filePath) }),
-        onDelta: () => { /* distillation prose is not shown as a chat bubble */ },
-        onDone: (_citations, fullText) => safeSend('chat:distill-done', { streamId: req.streamId, summary: fullText.slice(0, 300) }),
-        onError: () => safeSend('chat:distill-done', { streamId: req.streamId, summary: '' }),
-      });
-    } catch (err) {
-      console.error('[main] chat:distill failed:', err);
-      safeSend('chat:distill-done', { streamId: req.streamId, summary: '' });
-    } finally {
-      if (chatStreamRegistry.get(req.streamId) === entry) chatStreamRegistry.delete(req.streamId);
-    }
+  // Daemon: trigger a headless "Compile now" of the most-recent session (also reachable from the
+  // tray menu, §3). Runs the §4 safety floor (create-only, scan, write-cap, no memory write).
+  ipcMain.handle('daemon:run-now', async (): Promise<{ ok: boolean }> => {
+    await runManualDistill();
+    return { ok: true };
+  });
+  ipcMain.handle('daemon:get-status', (): { enabled: boolean } => ({ enabled: daemonEnabled() }));
+  ipcMain.handle('daemon:set-enabled', (_e, enabled: boolean): { enabled: boolean } => {
+    const on = enabled === true;
+    // Runtime-enable must hold the single-instance lock BEFORE the process can survive headless
+    // (review fix): if another packaged instance already owns it, refuse rather than create a
+    // lock-less keep-alive that a future launch could double-boot against.
+    if (on && !ensureSingleInstanceLock()) return { enabled: false };
+    const prev = settingsStore?.get().daemon ?? { enabled: false };
+    settingsStore?.set({ daemon: { ...prev, enabled: on } });
+    if (on) buildTray(); else destroyTray();
+    return { enabled: on };
   });
 
   // Reflection follow-up (§A2): run the SAME agent loop READ-ONLY to PROPOSE durable-memory
@@ -2052,6 +2186,10 @@ function registerIpcHandlers(config: AppConfig) {
       // later ordinary close never silently applies it; the 'close' handler already
       // preventDefaulted, so the session stays on the current vault.
       pendingVaultSwitch = null;
+      // Daemon keep-alive (§2 review fix): before-quit pre-latches isQuitting=true (so a clean
+      // Cmd-Q quits), but a CANCELLED quit (dirty-tab Cancel) lands here — un-latch it, else the
+      // latch sticks and a later window close would kill the headless daemon the user kept alive.
+      isQuitting = false;
       return;
     }
     // Commit a deferred vault switch now that close is confirmed (dirty tabs were
@@ -2068,9 +2206,15 @@ function registerIpcHandlers(config: AppConfig) {
           JSON.stringify({ vaultPath: sw.path, dbPath: sw.dbPath }, null, 2),
           'utf-8',
         );
+        // Daemon keep-alive (§2d CRITICAL): app.relaunch() only QUEUES a relaunch for process exit.
+        // With the conditional window-all-closed, a daemon-ON session would otherwise survive in the
+        // tray on the OLD vault and the queued relaunch would never fire. Mark the quit intentional
+        // so window-all-closed quits (releasing the single-instance lock → the child can boot).
+        isQuitting = true;
         app.relaunch();
       } catch (err) {
         console.error('[main] vault:switch commit failed:', err);
+        isQuitting = false; // relaunch never armed → un-latch so keep-alive isn't silently broken
         return; // keep the session alive on the current vault rather than close into limbo
       }
     }
@@ -3166,6 +3310,14 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // Daemon keep-alive (§2a): single-instance lock so a second launch can't fight the SQLite DB / MCP
+  // loopback port while the daemon keeps a headless instance alive. Needs settingsStore for
+  // daemonEnabled() — create it now (the SecretStore block below is idempotent via `if (!...)`).
+  // Gated on packaged + daemon-enabled so it never interferes with dev or the vault-switch relaunch's
+  // deterministic exit (§2d); --smoke-core already returned above, so CI is untouched.
+  if (!settingsStore) settingsStore = new SettingsStore();
+  if (daemonEnabled() && !ensureSingleInstanceLock()) { app.quit(); return; }
+
   // T2-Task2: SecretStore requires safeStorage, which is only available after
   // app ready. Instantiate here, then run the one-time plaintext-key migration.
   try {
@@ -3208,6 +3360,10 @@ app.whenReady().then(async () => {
   registerAssetProtocol(config);
 
   const win = createWindow();
+
+  // Daemon keep-alive (§2b): build the tray now if the daemon is opt-in enabled (the tray IS the
+  // "daemon active" affordance + the headless Compile-now / Open / Quit menu). No-op when off.
+  buildTray();
 
   // ─── Memory diagnostics (OOM investigation) ──────────────────────────────
   // Large vaults have OOM'd the MAIN process after extended runtime. Log heap +
@@ -3270,6 +3426,7 @@ app.on('before-quit', () => {
 // (no orphaned sockets, no send-after-destroy). SEPARATE listener — the two existing
 // before-quit handlers above are untouched.
 app.on('before-quit', () => {
+  isQuitting = true; // any quit path is intentional → the conditional window-all-closed must quit (§2e)
   for (const { controller } of chatStreamRegistry.values()) {
     try { controller.abort(); } catch { /* already aborted */ }
   }
@@ -3277,7 +3434,11 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  app.quit();
+  // Daemon keep-alive (§2c): a mere window close keeps the headless process alive in the tray when
+  // the daemon is opt-in enabled; an intentional quit (isQuitting: tray Quit / before-quit /
+  // vault-switch relaunch) or daemon-off quits exactly as before. macOS hides the dock when headless.
+  if (isQuitting || !daemonEnabled()) { app.quit(); return; }
+  if (process.platform === 'darwin') app.dock?.hide();
 });
 
 app.on('activate', () => {
