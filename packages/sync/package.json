@@ -7,7 +7,8 @@
   "scripts": {
     "sync": "node sync-to-obsidian.mjs",
     "upload": "node upload-pdca-to-notion.mjs",
-    "setup-scheduler": "node setup-scheduler.mjs"
+    "setup-scheduler": "node setup-scheduler.mjs",
+    "test": "node --test test/writeback.test.mjs"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
