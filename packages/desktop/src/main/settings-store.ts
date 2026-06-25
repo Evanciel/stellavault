@@ -35,6 +35,9 @@ export function getDefaults(): AppSettings {
     publishPort: 3105,
     // T3-3: Agent Memory (embedded MCP server) does not auto-start by default.
     mcpAutoStart: false,
+    // P0-1 (hermes-port-audit §4): review-every-write confirm gate is OFF by default —
+    // autonomous filing + undo is the shipped trust model; this is the explicit opt-in.
+    confirmWrites: false,
   };
 }
 

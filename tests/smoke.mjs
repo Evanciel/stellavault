@@ -312,7 +312,10 @@ await test('chat: sanitize schema strips onerror + blocks javascript:', () => {
   // prose, which would false-trigger the protocol check against the real schema.
   const src = raw
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    // CRLF-safe: JS regex `.` does NOT match `\r`, and `$` (no `m` flag) won't match before a
+    // trailing `\r`, so `/\/\/.*$/` failed to strip line comments on a CRLF-checked-out file
+    // (git autocrlf), leaking the comment's "javascript" prose into the schema slice. Drop the `$`.
+    .split('\n').map((l) => l.replace(/\/\/.*/, '')).join('\n');
 
   const schemaStart = src.indexOf('CHAT_SANITIZE_SCHEMA');
   assert(schemaStart !== -1, 'CHAT_SANITIZE_SCHEMA not found in sanitize.ts');

@@ -21,6 +21,9 @@ export interface ComposerProps {
   /** Agent mode (SP-E): let the model call vault tools + propose confirm-gated writes. */
   agentOn?: boolean;
   onAgentToggle?: (on: boolean) => void;
+  /** P0-2 (hermes-port-audit §4): false on non-local providers → the 🤖 pill is disabled +
+      annotated (the agent loop only fires on a local tools-capable model), not silently no-op. */
+  agentCapable?: boolean;
   /** Auto-distill (SP-I): after each answer, fold the conversation into the wiki. */
   autoDistill?: boolean;
   onAutoDistillToggle?: (on: boolean) => void;
@@ -43,7 +46,7 @@ export interface ComposerProps {
   variant?: 'panel' | 'main';
 }
 
-export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, autoDistill, onAutoDistillToggle, attachments, onPickImages, onRemoveAttachment, visionOn, pickingImages, onPickMedia, transcribeOn, videoOn, pickingMedia, onCommand, commandCtx, variant = 'panel' }: ComposerProps) {
+export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, agentOn, onAgentToggle, agentCapable = true, autoDistill, onAutoDistillToggle, attachments, onPickImages, onRemoveAttachment, visionOn, pickingImages, onPickMedia, transcribeOn, videoOn, pickingMedia, onCommand, commandCtx, variant = 'panel' }: ComposerProps) {
   const t = useT();
   const atts = attachments ?? [];
   const canSend = (value.trim().length > 0 || atts.length > 0) && !atCap;
@@ -201,13 +204,22 @@ export function Composer({ value, onChange, onSend, atCap, ragOn, onRagToggle, a
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 fontSize: isMain ? 12 : 10.5,
-                color: agentOn ? 'var(--accent-2)' : 'var(--ink-dim)',
-                cursor: 'pointer', userSelect: 'none', fontWeight: agentOn ? 600 : 400,
+                color: !agentCapable ? 'var(--ink-faint)' : agentOn ? 'var(--accent-2)' : 'var(--ink-dim)',
+                cursor: agentCapable ? 'pointer' : 'not-allowed',
+                userSelect: 'none', fontWeight: agentOn && agentCapable ? 600 : 400,
+                opacity: agentCapable ? 1 : 0.7,
               }}
-              title={t('panel.ai.agentHint')}
+              title={agentCapable ? t('panel.ai.agentHint') : t('panel.ai.agentLocalOnly')}
             >
-              <input type="checkbox" checked={!!agentOn} onChange={(e) => onAgentToggle(e.target.checked)} style={{ cursor: 'pointer' }} />
+              <input
+                type="checkbox"
+                checked={!!agentOn && agentCapable}
+                disabled={!agentCapable}
+                onChange={(e) => onAgentToggle(e.target.checked)}
+                style={{ cursor: agentCapable ? 'pointer' : 'not-allowed' }}
+              />
               🤖 {t('panel.ai.agentLabel')}
+              {!agentCapable && <span style={{ fontSize: isMain ? 10 : 9, color: 'var(--ink-faint)' }}>{t('panel.ai.agentLocalOnlyShort')}</span>}
             </label>
           )}
           {onAutoDistillToggle && (
