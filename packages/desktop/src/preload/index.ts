@@ -110,8 +110,10 @@ const ALLOWED_CHANNELS = new Set<string>([
   // Agent SKILLS management (P3, §4.4) — list vault Skills + promote/un-promote (consent gate).
   'skill:list',
   'skill:set-promoted',
-  // Always-on daemon (daemon-keepalive §5) — headless self-compile trigger.
+  // Always-on daemon (daemon-keepalive §5) — headless self-compile trigger + opt-in toggle.
   'daemon:run-now',
+  'daemon:set-enabled',
+  'daemon:get-status',
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill',
   // Reflection follow-up (§A): read-only propose-memory pass + apply one approved candidate.

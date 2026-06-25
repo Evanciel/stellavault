@@ -24,6 +24,8 @@ export function getDefaults(): AppSettings {
     bookmarks: [],
     session: { openTabs: [], activeTab: null },
     window: { width: 1400, height: 900 },
+    // Always-on daemon (daemon-keepalive §5) — default OFF; explicit opt-in only.
+    daemon: { enabled: false, openAtLogin: false, notify: true, tickMinutes: 30 },
     // T1-9: default pane widths mirror renderer DEFAULT_SETTINGS + app-store.
     panels: { sidebarWidth: 260, rightPanelWidth: 380 },
     // T1-15: default graph slider values mirror force-sim.ts DEFAULT_SIM_SETTINGS.

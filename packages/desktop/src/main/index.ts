@@ -1,7 +1,7 @@
 // Stellavault Desktop — Main Process
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage } from 'electron';
 import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
@@ -178,6 +178,28 @@ let engine: OrchestrationEngine | null = null;
 // an identity guard. NEVER carries the API key.
 interface ChatStreamEntry { controller: AbortController; wcId: number; }
 const chatStreamRegistry = new Map<string, ChatStreamEntry>();
+
+// ─── Always-on daemon (daemon-keepalive §2) — tray keep-alive lifecycle ──────
+// `tray` is a MODULE global so it survives GC. `isQuitting` distinguishes an INTENTIONAL quit
+// (tray Quit / before-quit / a vault-switch relaunch) from a mere window close — the conditional
+// window-all-closed quits only when this is set or the daemon is off (§2c). daemonEnabled() reads
+// the persisted opt-in (default OFF).
+let tray: Tray | null = null;
+let isQuitting = false;
+let lockWired = false; // single-instance lock acquired once (whenReady OR runtime daemon-enable)
+const daemonEnabled = (): boolean => { try { return settingsStore?.get().daemon?.enabled === true; } catch { return false; } };
+
+// Acquire the single-instance lock idempotently (§2a + review fix): whenever a process is about to
+// survive headless (daemon enabled — at startup OR toggled on at runtime), it must hold the lock so
+// a later launch can't double-boot and fight the SQLite DB / MCP loopback port. Returns false ONLY
+// when packaged AND another instance already owns the lock. No-op (true) in dev / already-wired.
+function ensureSingleInstanceLock(): boolean {
+  if (!app.isPackaged || lockWired) return true;
+  if (!app.requestSingleInstanceLock()) return false; // another instance owns it
+  app.on('second-instance', () => showMainWindow());
+  lockWired = true;
+  return true;
+}
 
 // Agent (SP-D): a write tool pauses the loop on a per-stream approval promise; the
 // renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
@@ -913,6 +935,40 @@ async function runManualDistill(): Promise<void> {
   }
 }
 
+// Tray icon — inline 16x16 PNG data URL (no asset file / forge extraResource / cross-env path to
+// get wrong; nativeImage decodes it identically in dev + packaged).
+const TRAY_ICON_DATAURL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAO0lEQVR4nGPIrfnPQAnGJfEfBybKAFyasRpCqmYMQ8jRjGIIuZrhhowaQEUDKI5GqiQkqiRlqmQmkjAArKCDg7leCycAAAAASUVORK5CYII=';
+
+function showMainWindow(): void {
+  const wins = BrowserWindow.getAllWindows();
+  if (wins.length > 0) { const w = wins[0]; if (w.isMinimized()) w.restore(); w.show(); w.focus(); }
+  else createWindow(); // headless re-open: vault is already set, so createWindow skips the picker
+}
+
+function rebuildTrayMenu(): void {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Stellavault', click: () => showMainWindow() },
+    { label: 'Compile now (headless)', click: () => void runManualDistill() },
+    { type: 'separator' },
+    // Quit must set isQuitting so the conditional window-all-closed actually quits (§2c).
+    { label: 'Quit Stellavault', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+}
+
+// Build the tray ONLY when the daemon is opt-in enabled — the tray icon IS the "daemon active"
+// affordance (§2b). Idempotent. destroyTray on disable.
+function buildTray(): void {
+  if (tray || !daemonEnabled()) return;
+  try {
+    tray = new Tray(nativeImage.createFromDataURL(TRAY_ICON_DATAURL));
+    tray.setToolTip('Stellavault — knowledge daemon active');
+    tray.on('click', () => showMainWindow());
+    rebuildTrayMenu();
+  } catch (err) { console.error('[daemon] tray build failed', err); tray = null; }
+}
+function destroyTray(): void { try { tray?.destroy(); } catch { /* already gone */ } tray = null; }
+
 function registerIpcHandlers(config: AppConfig) {
   const vp = config.vaultPath;
 
@@ -1450,6 +1506,18 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('daemon:run-now', async (): Promise<{ ok: boolean }> => {
     await runManualDistill();
     return { ok: true };
+  });
+  ipcMain.handle('daemon:get-status', (): { enabled: boolean } => ({ enabled: daemonEnabled() }));
+  ipcMain.handle('daemon:set-enabled', (_e, enabled: boolean): { enabled: boolean } => {
+    const on = enabled === true;
+    // Runtime-enable must hold the single-instance lock BEFORE the process can survive headless
+    // (review fix): if another packaged instance already owns it, refuse rather than create a
+    // lock-less keep-alive that a future launch could double-boot against.
+    if (on && !ensureSingleInstanceLock()) return { enabled: false };
+    const prev = settingsStore?.get().daemon ?? { enabled: false };
+    settingsStore?.set({ daemon: { ...prev, enabled: on } });
+    if (on) buildTray(); else destroyTray();
+    return { enabled: on };
   });
 
   // Reflection follow-up (§A2): run the SAME agent loop READ-ONLY to PROPOSE durable-memory
@@ -2118,6 +2186,10 @@ function registerIpcHandlers(config: AppConfig) {
       // later ordinary close never silently applies it; the 'close' handler already
       // preventDefaulted, so the session stays on the current vault.
       pendingVaultSwitch = null;
+      // Daemon keep-alive (§2 review fix): before-quit pre-latches isQuitting=true (so a clean
+      // Cmd-Q quits), but a CANCELLED quit (dirty-tab Cancel) lands here — un-latch it, else the
+      // latch sticks and a later window close would kill the headless daemon the user kept alive.
+      isQuitting = false;
       return;
     }
     // Commit a deferred vault switch now that close is confirmed (dirty tabs were
@@ -2134,9 +2206,15 @@ function registerIpcHandlers(config: AppConfig) {
           JSON.stringify({ vaultPath: sw.path, dbPath: sw.dbPath }, null, 2),
           'utf-8',
         );
+        // Daemon keep-alive (§2d CRITICAL): app.relaunch() only QUEUES a relaunch for process exit.
+        // With the conditional window-all-closed, a daemon-ON session would otherwise survive in the
+        // tray on the OLD vault and the queued relaunch would never fire. Mark the quit intentional
+        // so window-all-closed quits (releasing the single-instance lock → the child can boot).
+        isQuitting = true;
         app.relaunch();
       } catch (err) {
         console.error('[main] vault:switch commit failed:', err);
+        isQuitting = false; // relaunch never armed → un-latch so keep-alive isn't silently broken
         return; // keep the session alive on the current vault rather than close into limbo
       }
     }
@@ -3232,6 +3310,14 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // Daemon keep-alive (§2a): single-instance lock so a second launch can't fight the SQLite DB / MCP
+  // loopback port while the daemon keeps a headless instance alive. Needs settingsStore for
+  // daemonEnabled() — create it now (the SecretStore block below is idempotent via `if (!...)`).
+  // Gated on packaged + daemon-enabled so it never interferes with dev or the vault-switch relaunch's
+  // deterministic exit (§2d); --smoke-core already returned above, so CI is untouched.
+  if (!settingsStore) settingsStore = new SettingsStore();
+  if (daemonEnabled() && !ensureSingleInstanceLock()) { app.quit(); return; }
+
   // T2-Task2: SecretStore requires safeStorage, which is only available after
   // app ready. Instantiate here, then run the one-time plaintext-key migration.
   try {
@@ -3274,6 +3360,10 @@ app.whenReady().then(async () => {
   registerAssetProtocol(config);
 
   const win = createWindow();
+
+  // Daemon keep-alive (§2b): build the tray now if the daemon is opt-in enabled (the tray IS the
+  // "daemon active" affordance + the headless Compile-now / Open / Quit menu). No-op when off.
+  buildTray();
 
   // ─── Memory diagnostics (OOM investigation) ──────────────────────────────
   // Large vaults have OOM'd the MAIN process after extended runtime. Log heap +
@@ -3336,6 +3426,7 @@ app.on('before-quit', () => {
 // (no orphaned sockets, no send-after-destroy). SEPARATE listener — the two existing
 // before-quit handlers above are untouched.
 app.on('before-quit', () => {
+  isQuitting = true; // any quit path is intentional → the conditional window-all-closed must quit (§2e)
   for (const { controller } of chatStreamRegistry.values()) {
     try { controller.abort(); } catch { /* already aborted */ }
   }
@@ -3343,7 +3434,11 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  app.quit();
+  // Daemon keep-alive (§2c): a mere window close keeps the headless process alive in the tray when
+  // the daemon is opt-in enabled; an intentional quit (isQuitting: tray Quit / before-quit /
+  // vault-switch relaunch) or daemon-off quits exactly as before. macOS hides the dock when headless.
+  if (isQuitting || !daemonEnabled()) { app.quit(); return; }
+  if (process.platform === 'darwin') app.dock?.hide();
 });
 
 app.on('activate', () => {
