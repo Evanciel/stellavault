@@ -45,6 +45,7 @@ const allowedEventsBody = setBody(preloadSrc, 'ALLOWED_EVENTS');
 const CHAT_INVOKE_CHANNELS = [
   'chat:send',
   'chat:abort',
+  'chat:steer',        // P1-3: steer a running agent stream (owner-guarded + screened in main)
   'chat:list-sessions',
   'chat:load-session',
   'chat:rename-session',
@@ -64,6 +65,7 @@ const CHAT_EVENTS = [
   'chat:plan',         // agent multi-step plan checklist
   'chat:skill-invoke', // P3: invoke_skill loaded a skill
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast
+  'chat:vitals',       // P1-4: context-fill bar frame (pre-stream)
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {
@@ -123,6 +125,20 @@ describe('SP1 chat IPC — main handlers (main side)', () => {
     expect(abortHandler).not.toBeNull();
     expect(abortHandler![0]).toContain('e.sender.id');
     expect(abortHandler![0]).toContain('abort');
+  });
+
+  it('chat:steer owner-guards + re-scans the steer text (injection + secret) before enqueue (P1-3)', () => {
+    // A steer note is renderer-supplied free text that enters an AUTONOMOUS tool-calling loop and
+    // can drive subsequent writes — so main MUST owner-guard (wcId) AND re-run BOTH detectors
+    // before it touches model context, mirroring memory:apply-candidate. Lock the whole gate.
+    const h = mainSrc.match(/ipcMain\.handle\('chat:steer'[\s\S]*?\n  \}\);/);
+    expect(h).not.toBeNull();
+    expect(h![0]).toContain('e.sender.id');                              // owner guard (per-stream authz)
+    expect(h![0]).toMatch(/scanForInjection\([\s\S]*?\)\.blocked\.length > 0/); // injection screen
+    expect(h![0]).toContain('looksLikeSecret(');                         // secret screen
+    expect(h![0]).toContain('MAX_STEER_QUEUE');                          // queue-depth bound (DoS)
+    // Steer must NEVER abort the stream — abort is the sole terminal signal.
+    expect(h![0]).not.toContain('controller.abort(');
   });
 });
 

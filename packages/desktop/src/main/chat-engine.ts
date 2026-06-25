@@ -640,6 +640,9 @@ export interface ChatStreamOptions {
   onMemoryWrite?: (id: string, text: string) => void;
   onPlan?: (steps: string[], done: number) => void; // set_plan → live checklist
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  // Steer-after-tool (P1-3): drained at the agent-loop top to inject queued role:'user' notes
+  // before the next model turn (without aborting). Wired only by chat:send (NOT distill/reflect).
+  drainSteer?: () => string[];
   // Distillation pass (Karpathy ingest): same agent loop, but the system prompt is the
   // INGEST prompt — fold the conversation's durable knowledge into the wiki. Implies agent.
   distill?: boolean;
@@ -746,6 +749,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       onPlan: opts.onPlan,
       onSkill: opts.onSkill,
       onToolConfirm: opts.onToolConfirm,
+      drainSteer: opts.drainSteer,
       succeed,
       fail,
       preloopCitations: citations,
@@ -1177,6 +1181,8 @@ export interface AgentLoopCtx {
   onSkill?: (name: string) => void; // P3: invoke_skill → chat:skill-invoke surface
   /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
   onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** Steer-after-tool (P1-3): returns queued user notes to inject before the NEXT model turn. */
+  drainSteer?: () => string[];
   succeed: (citations: ChatCitation[], fullText: string) => void;
   fail: (message: string, category: ErrorCategory) => void;
   preloopCitations: ChatCitation[];
@@ -1224,6 +1230,15 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
 
   for (let step = 0; step < AGENT_MAX_STEPS; step++) {
     if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+
+    // Steer-after-tool (P1-3): inject queued user notes BEFORE the next model turn. This is the
+    // ONLY injection point — NEVER inside the tool-call batch below, which would break the
+    // assistant(tool_calls)→role:'tool' alternation native ollama requires (can 400). role:'user'
+    // ONLY (renderer-origin system turns are forbidden upstream). Abort wins: the check above runs
+    // first, so a steer queued on an aborting stream is dropped when the entry is deleted.
+    if (ctx.drainSteer) {
+      for (const note of ctx.drainSteer()) messages.push({ role: 'user', content: note });
+    }
 
     let res: StreamOnceResult;
     try {

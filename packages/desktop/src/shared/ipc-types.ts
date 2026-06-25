@@ -612,6 +612,10 @@ export interface IpcChannelMap {
   // sessionId routes the persisted assistant turn to the right session on done.
   'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean }]; result: void };
   'chat:abort': { args: [streamId: string]; result: void };
+  // Steer-after-tool (P1-3): enqueue a free-text steer note onto a RUNNING agent stream — injected
+  // before the next model turn WITHOUT aborting. MAIN owner-guards (wcId), length/queue-bounds, and
+  // injection+secret-screens the text before it enters the loop; a stale/missing stream is a no-op.
+  'chat:steer': { args: [streamId: string, text: string]; result: void };
   // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
   'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
@@ -717,6 +721,10 @@ export interface IpcEventMap {
   // Agent multi-step plan (set_plan) — declarative/idempotent: every emit carries the WHOLE plan,
   // doneCount ∈ [0, steps.length], last-writer-wins per streamId. steps are short display labels.
   'chat:plan': { streamId: string; steps: string[]; doneCount: number };
+  // Context-fill vitals (P1-4): ONE pre-stream frame per send. fillPct/charsIn are TEXT-ONLY input
+  // message fill vs budgetChars (CHAT_MAX_TOTAL_CHARS — the app's own hard cap), NOT a token count
+  // and NOT a model context window; excludes system/RAG/coreMemory/image-attachment chars.
+  'chat:vitals': { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
   // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
   'chat:skill-invoke': { streamId: string; name: string };
   // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer

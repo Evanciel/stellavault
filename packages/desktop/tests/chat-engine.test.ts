@@ -405,7 +405,7 @@ const step = (over: Partial<Step> = {}): Step => ({ text: '', toolCalls: [], abo
 
 async function runLoop(steps: Step[], opts: any = {}) {
   const { runAgentLoop } = await import('../src/main/chat-engine.js');
-  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [], plan: [], skill: [] };
+  const calls: any = { execute: [], toolCall: [], toolResult: [], confirm: [], succeed: [], fail: [], deltas: [], stepMsgs: [], stepFull: [], plan: [], skill: [] };
   let i = 0;
   const ctx = {
     turns: opts.turns ?? [{ id: 'u', role: 'user', text: 'q', ts: 1 }],
@@ -423,7 +423,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
       if (opts.toolThrows) throw new Error('boom');
       return opts.toolResult ?? { ok: true };
     },
-    streamStep: async (msgs: any[]) => { calls.stepMsgs.push(msgs.length); return steps[i++] ?? step(); },
+    streamStep: async (msgs: any[]) => { calls.stepMsgs.push(msgs.length); calls.stepFull.push(msgs.map((m: any) => ({ role: m.role, content: m.content }))); return steps[i++] ?? step(); },
     signal: opts.signal ?? new AbortController().signal,
     onDelta: (d: string) => calls.deltas.push(d),
     onToolCall: (n: string) => calls.toolCall.push(n),
@@ -431,6 +431,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     onPlan: (steps: string[], done: number) => calls.plan.push({ steps, done }),
     onSkill: (n: string) => calls.skill.push(n), // P3
     onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
+    drainSteer: opts.drainSteer,       // P1-3: steer notes injected at the loop top
     succeed: (c: any, t: string) => calls.succeed.push({ c, t }),
     fail: (m: string, cat: string) => calls.fail.push({ m, cat }),
     preloopCitations: opts.preloop ?? [],
@@ -1341,6 +1342,56 @@ describe('runAgentLoop — recall_memory dead-end exemption (P1 §6 INT-7)', () 
     expect(c.execute).toHaveLength(4); // AGENT_MAX_RECALL — over-limit calls skip execute
     expect(c.succeed).toHaveLength(1);
     expect(c.fail).toHaveLength(0);
+  });
+});
+
+describe('runAgentLoop — P1-3 steer-after-tool injection', () => {
+  it('injects a steer note as role:user at the loop top BEFORE the next model turn (alternation kept)', async () => {
+    // drainSteer runs at EVERY loop top (incl. step 0, before turn 1). To simulate a steer that
+    // arrives WHILE the first tool runs, return the note on the 2nd drain (step 1 top) — it must
+    // then land as role:'user' in the 2nd streamStep's messages AFTER the prior assistant(tool_call)
+    // + tool turns (so assistant→tool→user alternation is preserved), never mid tool-batch.
+    let drainCount = 0;
+    const c = await runLoop([
+      step({ toolCalls: [tc('search_vault', { query: 'x' })] }),
+      step({ text: 'answer informed by steer' }),
+    ], {
+      toolResult: { ok: true, results: [{ x: 1 }] },
+      drainSteer: () => { drainCount++; return drainCount === 2 ? ['focus on auth notes'] : []; },
+    });
+    // 2nd streamStep's messages must contain the injected user note, and it must be the LAST turn.
+    const second = c.stepFull[1];
+    const steerTurn = second.find((m: any) => m.role === 'user' && m.content === 'focus on auth notes');
+    expect(steerTurn).toBeTruthy();
+    expect(second[second.length - 1]).toEqual({ role: 'user', content: 'focus on auth notes' });
+    expect(c.succeed).toHaveLength(1);
+    expect(c.fail).toHaveLength(0);
+  });
+
+  it('drainSteer returning [] injects nothing (no spurious user turns)', async () => {
+    const c = await runLoop([
+      step({ toolCalls: [tc('search_vault', { query: 'x' })] }),
+      step({ text: 'answer' }),
+    ], { toolResult: { ok: true, results: [{ x: 1 }] }, drainSteer: () => [] });
+    // No turn beyond the seed user 'q' should be role:user-injected by steer.
+    const injected = c.stepFull.flat().filter((m: any) => m.role === 'user' && m.content !== 'q');
+    expect(injected).toHaveLength(0);
+  });
+
+  it('a steer note is purely additive — never aborts the stream', async () => {
+    const ac = new AbortController();
+    let drained = false;
+    const c = await runLoop([
+      step({ toolCalls: [tc('search_vault', { query: 'x' })] }),
+      step({ text: 'done' }),
+    ], {
+      signal: ac.signal,
+      toolResult: { ok: true, results: [{ x: 1 }] },
+      drainSteer: () => (drained ? [] : (drained = true, ['steer'])),
+    });
+    expect(ac.signal.aborted).toBe(false);          // steer never touches the controller
+    expect(c.fail).toHaveLength(0);                 // never fail('aborted')
+    expect(c.succeed).toHaveLength(1);
   });
 });
 

@@ -176,7 +176,10 @@ let engine: OrchestrationEngine | null = null;
 // (wcId) so abort/cap can be authorised against the owner. Created BEFORE the RAG
 // await in chat:send so an in-flight search is cancellable; deleted in finally with
 // an identity guard. NEVER carries the API key.
-interface ChatStreamEntry { controller: AbortController; wcId: number; }
+// steerQueue (P1-3): per-stream bounded queue of user "steer" notes. The agent loop drains it at
+// its OUTER top and injects each as a role:'user' message before the NEXT model turn. Lives ON the
+// entry so the identity-guarded finally delete + before-quit clear free it with zero extra cleanup.
+interface ChatStreamEntry { controller: AbortController; wcId: number; steerQueue: string[]; }
 const chatStreamRegistry = new Map<string, ChatStreamEntry>();
 
 // ─── Always-on daemon (daemon-keepalive §2) — tray keep-alive lifecycle ──────
@@ -210,6 +213,10 @@ const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const CHAT_MAX_MESSAGES = 100;
 const CHAT_MAX_MSG_CHARS = 24_000;
 const CHAT_MAX_TOTAL_CHARS = 120_000;
+// Steer-after-tool (P1-3): bound the per-stream steer queue. Depth cap + an aggregate-char cap
+// (CHAT_MAX_MSG_CHARS) so a renderer can't pile up unbounded context during a confirm-pause — the
+// agent-loop messages[] has NO CHAT_MAX_TOTAL_CHARS re-check (that cap only runs at send time).
+const MAX_STEER_QUEUE = 8;
 const CHAT_MAX_IMAGES_PER_MSG = 6;
 const CHAT_MAX_ATTACHMENT_CHARS = 14_000_000; // ~10MB raw → base64 expansion headroom
 const CHAT_MAX_TOTAL_ATTACHMENT_CHARS = 40_000_000; // aggregate base64 across ALL turns (~30MB)
@@ -226,7 +233,7 @@ const MEDIA_MIME: Record<string, string> = {
 // rejection reason. Caps message count / per-message length / total length.
 function validateChatReq(
   req: any,
-): { ok: true; clean: ChatMessage[] } | { ok: false; msg: string } {
+): { ok: true; clean: ChatMessage[]; totalChars: number } | { ok: false; msg: string } {
   if (!req || typeof req.streamId !== 'string' || !CHAT_UUID_RE.test(req.streamId)) {
     return { ok: false, msg: 'bad streamId' };
   }
@@ -300,7 +307,9 @@ function validateChatReq(
     });
   }
   if (total > CHAT_MAX_TOTAL_CHARS) return { ok: false, msg: 'conversation too long' };
-  return { ok: true, clean };
+  // totalChars (P1-4 vitals): the message+transcript char sum — the SAME universe CHAT_MAX_TOTAL_CHARS
+  // bounds (system/RAG/coreMemory/image-base64 are injected later and are NOT counted here).
+  return { ok: true, clean, totalChars: total };
 }
 
 // ─── Agent Memory / MCP server (T3-3) ────────────────
@@ -843,7 +852,7 @@ async function runDistill(opts: {
   const controller = new AbortController();
   // wcId=-1 for the daemon: registered in the SAME chatStreamRegistry so before-quit aborts it, but
   // chat:abort's per-window ownership (ent.wcId === wcId, wcId>=0) never cross-aborts it (§3 S3).
-  const entry: ChatStreamEntry = { controller, wcId };
+  const entry: ChatStreamEntry = { controller, wcId, steerQueue: [] };
   chatStreamRegistry.set(streamId, entry);
 
   // SP3: describe conversation images with a vision-only pass first (gemma4 can't see images while
@@ -1318,7 +1327,7 @@ function registerIpcHandlers(config: AppConfig) {
     }
 
     const controller = new AbortController();
-    const entry: ChatStreamEntry = { controller, wcId };
+    const entry: ChatStreamEntry = { controller, wcId, steerQueue: [] };
     // Register BEFORE any await so an in-flight RAG search is cancellable via
     // chat:abort / before-quit.
     chatStreamRegistry.set(req.streamId, entry);
@@ -1409,7 +1418,23 @@ function registerIpcHandlers(config: AppConfig) {
           safeSend('chat:tool-confirm', { streamId: req.streamId, name, argsPreview });
         });
       };
+      // Steer-after-tool (P1-3): the agent loop drains this at its OUTER top (between model turns)
+      // and injects each note as a role:'user' message — so a steer lands in the NEXT turn while the
+      // in-flight tool finishes. Drain-and-clear; only the agent path wires (so distill/reflect/cloud
+      // streams keep a queue nothing consumes — harmless, bounded, freed in the finally).
+      agentOpts.drainSteer = () => entry.steerQueue.splice(0);
     }
+
+    // Context-fill vitals (P1-4): emit ONE pre-stream frame — text-only input message fill vs the
+    // app's OWN hard cap (CHAT_MAX_TOTAL_CHARS). Honest overflow signal; NOT a token count and NOT a
+    // model context window (system/RAG/coreMemory/image-base64 chars are excluded — they aren't
+    // bounded by this cap, so counting them would read >100% on a legal request).
+    safeSend('chat:vitals', {
+      streamId: req.streamId,
+      fillPct: Math.min(100, Math.round((v.totalChars / CHAT_MAX_TOTAL_CHARS) * 100)),
+      charsIn: v.totalChars,
+      budgetChars: CHAT_MAX_TOTAL_CHARS,
+    });
 
     try {
       await chatStream({
@@ -1539,7 +1564,7 @@ function registerIpcHandlers(config: AppConfig) {
     if (!cfg || cfg.provider !== 'openai-compatible') { emitDone([]); return; }
 
     const controller = new AbortController();
-    const entry: ChatStreamEntry = { controller, wcId };
+    const entry: ChatStreamEntry = { controller, wcId, steerQueue: [] };
     chatStreamRegistry.set(req.streamId, entry);
 
     const transcript = req.messages
@@ -1623,6 +1648,27 @@ function registerIpcHandlers(config: AppConfig) {
     if (entry.wcId !== e.sender.id) return; // not your stream
     entry.controller.abort();
     chatStreamRegistry.delete(streamId);
+  });
+
+  // Steer-after-tool (P1-3): enqueue a free-text "steer" note onto a RUNNING stream. The agent loop
+  // drains it before the NEXT model turn WITHOUT aborting the current step (steer never touches the
+  // AbortController — abort is the sole terminal signal). MAIN owns all trust: owner-guard by wcId
+  // (mirrors chat:abort), length cap, BOTH injection + secret screens (the note enters an autonomous
+  // tool-calling loop and could drive writes — same screen as memory writes / reflection candidates,
+  // index.ts:1582-1583), and queue bounds (depth + aggregate chars) so a confirm-pause can't pile up
+  // unbounded context. Stale/missing entry → silent no-op (a too-late steer just drops).
+  ipcMain.handle('chat:steer', (e, streamId: string, text: string): void => {
+    const entry = chatStreamRegistry.get(streamId);
+    if (!entry) return;
+    if (entry.wcId !== e.sender.id) return; // not your stream
+    const s = String(text ?? '').trim();
+    if (!s || s.length > CHAT_MAX_MSG_CHARS) return;
+    if (scanForInjection(s).blocked.length > 0) return; // never inject a poisoned steer
+    if (looksLikeSecret(s)) return;                      // never let a pasted secret ride the loop
+    if (entry.steerQueue.length >= MAX_STEER_QUEUE) return;
+    const queued = entry.steerQueue.reduce((n, x) => n + x.length, 0);
+    if (queued + s.length > CHAT_MAX_MSG_CHARS) return;  // bound aggregate context during a pause
+    entry.steerQueue.push(s);
   });
 
   // SP2: pick image file(s) to attach to a chat turn. The DIALOG is the only path to a file
