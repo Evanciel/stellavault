@@ -790,6 +790,21 @@ function AITab() {
             )}
             {modelError && <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>{modelError}</div>}
           </Field>
+
+          {/* P0-1 (hermes-port-audit §4): opt-in "review every vault write" gate. OFF by default —
+              ChatView reads settings.confirmWrites and sends it on chat:send; the main loop pauses
+              every regular write for approval when set (core_memory_replace always confirms). */}
+          <Field label={t('settings.ai.confirmWrites.label')} hint={t('settings.ai.confirmWrites.hint')}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!settings.confirmWrites}
+                onChange={(e) => void update({ confirmWrites: e.target.checked })}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              {t('settings.ai.confirmWrites.label')}
+            </label>
+          </Field>
         </>
       )}
     </div>

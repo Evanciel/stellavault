@@ -143,6 +143,11 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const ai = useSettingsStore((s) => s.settings.ai);
   const canStartOllama =
     ai?.provider === 'openai-compatible' && isLocalProviderUrl(ai?.baseURL ?? '');
+  // P0-1 (hermes-port-audit §4): opt-in review-every-write gate, sent on chat:send. Default OFF.
+  const confirmWrites = useSettingsStore((s) => s.settings.confirmWrites);
+  // P0-2: the agent loop only fires on a LOCAL tools-capable model (chat-engine gate) — mirror that
+  // here so the 🤖 pill disables + annotates on cloud providers instead of silently no-op'ing.
+  const agentCapable = canStartOllama;
   // SP2: show the 📎 attach affordance only for a local vision-capable setup (gemma4:e4b).
   // Same local-provider gate as Start-Ollama — local models we ship are vision-capable.
   const visionOn = canStartOllama;
@@ -456,13 +461,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     setConfirm(null);
     streamMapRef.current.set(newStreamId, assistantTurn.id);
     syncActiveCount();
-    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn }).catch(() => {
+    // P0-2: never send agentOn to a non-local model — the engine would drop it to single-shot
+    // anyway; gating here keeps the wire honest. P0-1: forward the review-every-write opt-in.
+    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn: agentOn && agentCapable, confirmWrites: !!confirmWrites }).catch(() => {
       setCapMessage(true);
       streamMapRef.current.delete(newStreamId);
       syncActiveCount();
       setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
     });
-  }, [atCap, ragOn, agentOn, sessionId, syncActiveCount]);
+  }, [atCap, ragOn, agentOn, agentCapable, confirmWrites, sessionId, syncActiveCount]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -926,6 +933,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
         onRagToggle={setRagOn}
         agentOn={agentOn}
         onAgentToggle={setAgentOn}
+        agentCapable={agentCapable}
         autoDistill={autoDistill}
         onAutoDistillToggle={setAutoDistill}
         attachments={attachments.map((a) => ({ id: a.uid, type: a.type, fileName: a.fileName, dataUrl: a.dataUrl, transcript: a.transcript }))}

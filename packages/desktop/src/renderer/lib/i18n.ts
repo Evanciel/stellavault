@@ -197,6 +197,9 @@ export const messages = {
   "settings.ai.apiKey.button.hide": { en: "Hide", ko: "숨김" },
   "settings.ai.apiKey.button.show.aria": { en: "Show API key", ko: "API 키 표시" },
   "settings.ai.apiKey.button.hide.aria": { en: "Hide API key", ko: "API 키 숨김" },
+  // P0-1 (hermes-port-audit §4): opt-in review-every-write confirm gate.
+  "settings.ai.confirmWrites.label": { en: "Confirm every vault write", ko: "볼트 쓰기마다 확인" },
+  "settings.ai.confirmWrites.hint": { en: "When on, the agent pauses for your approval before each note write (create / append / link / decision). Off by default — the second brain files writes automatically and you can undo them. Memory corrections always confirm regardless.", ko: "켜면 에이전트가 노트 쓰기(생성 / 추가 / 링크 / 결정)마다 승인을 기다립니다. 기본값은 꺼짐 — 세컨드 브레인이 자동으로 저장하며 실행 취소할 수 있습니다. 메모리 정정은 설정과 무관하게 항상 확인합니다." },
   "settings.ai.model.label": { en: "Model", ko: "모델" },
   "settings.ai.model.custom": { en: "Custom…", ko: "사용자 지정…" },
   "settings.ai.model.none": { en: "(none)", ko: "(없음)" },
@@ -278,7 +281,11 @@ export const messages = {
   "panel.ai.chatEmptyHint": { en: "Start a conversation grounded in your own notes.", ko: "내 노트를 기반으로 대화를 시작하세요." },
   "panel.ai.chatMainTitle": { en: "Chat with your second brain", ko: "내 세컨드 브레인과 대화하기" },
   "panel.ai.agentLabel": { en: "Agent", ko: "에이전트" },
-  "panel.ai.agentHint": { en: "Let the AI search/read your vault and propose edits (writes need your approval).", ko: "AI가 볼트를 검색·읽고 편집을 제안합니다 (쓰기는 승인 필요)." },
+  "panel.ai.agentHint": { en: "Let the AI search/read your vault and file edits automatically. Turn on “Confirm every vault write” in Settings → AI to approve each write.", ko: "AI가 볼트를 검색·읽고 편집을 자동으로 저장합니다. 설정 → AI에서 “볼트 쓰기마다 확인”을 켜면 매 쓰기를 승인합니다." },
+  // P0-2 (hermes-port-audit §4): the 🤖 pill is disabled on non-local providers (the agent loop
+  // only fires on a local tools-capable model) — this annotates WHY instead of silently no-op'ing.
+  "panel.ai.agentLocalOnly": { en: "Agent mode needs a local tools-capable model (e.g. Ollama gemma4). Set the provider to local Ollama in Settings → AI.", ko: "에이전트 모드는 로컬 도구 지원 모델이 필요합니다 (예: Ollama gemma4). 설정 → AI에서 공급자를 로컬 Ollama로 설정하세요." },
+  "panel.ai.agentLocalOnlyShort": { en: "(local model only)", ko: "(로컬 모델 전용)" },
   "panel.ai.agentWriteConfirm": { en: "The agent wants to write to your vault:", ko: "에이전트가 볼트에 쓰려고 합니다:" },
   "panel.ai.agentApprove": { en: "Approve", ko: "승인" },
   "panel.ai.agentDeny": { en: "Deny", ko: "거부" },

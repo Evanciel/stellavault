@@ -180,7 +180,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
     type: 'function',
     function: {
       name: 'core_memory_append',
-      description: "Save a NEW durable fact about the user to your long-term memory (a preference, their environment, an ongoing project). Use when the user tells you something worth remembering across conversations. This WRITES to memory and ALWAYS requires the user to approve it. Keep each fact short and atomic. NEVER store secrets/keys.",
+      description: "Save a NEW durable fact about the user to your long-term memory (a preference, their environment, an ongoing project). Use when the user tells you something worth remembering across conversations. This WRITES to memory automatically and the user can undo it from the chat. Keep each fact short and atomic. NEVER store secrets/keys.",
       parameters: {
         type: 'object',
         properties: { text: { type: 'string', description: 'one short durable fact about the user' } },
@@ -208,7 +208,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
     type: 'function',
     function: {
       name: 'log_decision',
-      description: "Record a NEW decision in the vault's decision journal. This WRITES a file to the vault and REQUIRES the user to approve it before it runs.",
+      description: "Record a NEW decision in the vault's decision journal. This WRITES a file to the vault (the user may be asked to confirm).",
       parameters: {
         type: 'object',
         properties: {
@@ -227,7 +227,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
     type: 'function',
     function: {
       name: 'create_note',
-      description: "Create a NEW markdown note in the vault (the second brain). WRITES a file and requires the user to approve it. Use [[Other Note]] wiki-links in the content to connect it to existing notes.",
+      description: "Create a NEW markdown note in the vault (the second brain). WRITES a file to the vault (the user may be asked to confirm). Use [[Other Note]] wiki-links in the content to connect it to existing notes.",
       parameters: {
         type: 'object',
         properties: {
@@ -244,7 +244,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
     type: 'function',
     function: {
       name: 'append_note',
-      description: 'Append markdown content to the END of an existing note. WRITES the file and requires the user to approve it.',
+      description: 'Append markdown content to the END of an existing note. WRITES the file (the user may be asked to confirm).',
       parameters: {
         type: 'object',
         properties: {
@@ -259,7 +259,7 @@ export const AGENT_TOOL_SCHEMAS: unknown[] = [
     type: 'function',
     function: {
       name: 'link_note',
-      description: 'Connect a note to another by inserting a [[Target Title]] wiki-link into it (creates a graph edge). WRITES the file and requires approval.',
+      description: 'Connect a note to another by inserting a [[Target Title]] wiki-link into it (creates a graph edge). WRITES the file (the user may be asked to confirm).',
       parameters: {
         type: 'object',
         properties: {

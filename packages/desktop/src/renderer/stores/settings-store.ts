@@ -29,6 +29,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   publishPort: 3105,
   // T3-3: Agent Memory (embedded MCP server) does not auto-start by default.
   mcpAutoStart: false,
+  // P0-1: review-every-write confirm gate OFF by default (autonomous filing + undo is shipped).
+  confirmWrites: false,
 };
 
 interface SettingsState {

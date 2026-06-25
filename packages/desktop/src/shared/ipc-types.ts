@@ -285,6 +285,12 @@ export interface AppSettings {
   // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
   // Optional; defaults false in both main getDefaults + renderer DEFAULT.
   mcpAutoStart?: boolean;
+  // P0-1 (hermes-port-audit §4): "review every vault write". When true, ChatView sends
+  // chat:send.confirmWrites=true so the agent PAUSES on every create/append/link/log_decision
+  // write for explicit approval (core_memory_replace always confirms regardless). Default OFF —
+  // the second brain files writes autonomously-with-undo by design (memory-relax philosophy);
+  // this is the opt-in for users who want a confirm gate. Optional so older settings type-check.
+  confirmWrites?: boolean;
 }
 
 // ─── Second-brain auto-capture (Design §6) ──────────────────────────────────
