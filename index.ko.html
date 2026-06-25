@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stellavault — Self-Compiling Knowledge MCP Server</title>
-<meta name="description" content="Drop anything. It organizes itself. Claude knows everything you know. Self-compiling Zettelkasten with 21 MCP tools.">
+<title>Stellavault — 자기 컴파일 지식 MCP 서버</title>
+<meta name="description" content="뭐든 던져 넣으세요. 스스로 정리됩니다. Claude가 당신이 아는 모든 걸 기억합니다. 21개 MCP 도구를 갖춘 자기 컴파일 제텔카스텐.">
 <meta name="theme-color" content="#6366f1">
-<meta property="og:title" content="Stellavault — Self-Compiling Knowledge MCP Server">
-<meta property="og:description" content="Drop anything. It organizes itself. Claude knows everything you know.">
+<meta property="og:title" content="Stellavault — 자기 컴파일 지식 MCP 서버">
+<meta property="og:description" content="뭐든 던져 넣으세요. 스스로 정리됩니다. Claude가 당신이 아는 모든 걸 기억합니다.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
@@ -231,25 +231,25 @@ footer{padding:60px 0;text-align:center}
 <section class="hero">
   <div class="graph-visual" id="graphVisual"></div>
   <div class="hero-inner container">
-    <div class="hero-badge">local-first <span class="sep">&#9679;</span> vault files never modified <span class="sep">&#9679;</span> MIT</div>
-    <h1>Drop anything.<br>It <em>compiles itself</em><br>into knowledge.</h1>
-    <p class="hero-sub">Self-compiling Zettelkasten MCP server. Ingest PDFs, YouTube, documents&mdash;auto-organized into linked wiki. Claude accesses your entire knowledge base through 21 MCP tools.</p>
+    <div class="hero-badge">로컬 우선 <span class="sep">&#9679;</span> 원본 파일 절대 수정 안 함 <span class="sep">&#9679;</span> MIT</div>
+    <h1>뭐든 던지면<br><em>스스로 컴파일</em>되어<br>지식이 됩니다.</h1>
+    <p class="hero-sub">자기 컴파일 제텔카스텐 MCP 서버. PDF·유튜브·문서를 던져 넣으면 연결된 위키로 자동 정리됩니다. Claude가 21개 MCP 도구로 당신의 지식 전체에 접근합니다.</p>
     <div class="hero-cta">
       <button class="cta-install" id="ctaInstall">
         <span class="prompt">$</span> npx -y stellavault setup
-        <span class="copy-hint">click to copy</span>
+        <span class="copy-hint">클릭하여 복사</span>
       </button>
-      <a href="https://github.com/Evanciel/stellavault" class="cta-secondary">View on GitHub &rarr;</a>
-      <a href="https://github.com/Evanciel/stellavault" class="cta-mobile">View on GitHub &rarr;</a>
+      <a href="https://github.com/Evanciel/stellavault" class="cta-secondary">GitHub에서 보기 &rarr;</a>
+      <a href="https://github.com/Evanciel/stellavault" class="cta-mobile">GitHub에서 보기 &rarr;</a>
     </div>
     <div class="hero-proof">
-      <span><span class="proof-num">21</span> MCP tools</span>
+      <span>MCP 도구 <span class="proof-num">21</span>개</span>
       <span class="proof-sep">&#9679;</span>
       <span>Claude Code &middot; Desktop &middot; Cursor</span>
       <span class="proof-sep">&#9679;</span>
-      <span><span class="proof-num">700+</span> tests passing</span>
+      <span>테스트 <span class="proof-num">700+</span> 통과</span>
       <span class="proof-sep">&#9679;</span>
-      <span>No cloud required</span>
+      <span>클라우드 불필요</span>
     </div>
   </div>
 </section>
@@ -259,33 +259,33 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ PROBLEMS ═══ -->
 <section class="s-problems">
   <div class="container">
-    <div class="section-label reveal">The Problem</div>
-    <h2 class="section-title reveal">Notes pile up.<br>Knowledge doesn't.</h2>
-    <p class="section-desc reveal">Three things break every knowledge system. Stellavault fixes all three automatically.</p>
+    <div class="section-label reveal">문제</div>
+    <h2 class="section-title reveal">노트는 쌓이지만<br>지식은 쌓이지 않습니다.</h2>
+    <p class="section-desc reveal">모든 지식 시스템을 망가뜨리는 세 가지. Stellavault가 셋 다 자동으로 해결합니다.</p>
     <div class="problems">
       <div class="problem-card reveal">
         <span class="problem-icon">&#128466;</span>
-        <div class="problem-label">Problem</div>
-        <div class="problem-title">Notes rot in folders</div>
-        <div class="problem-desc">You save articles, highlight books, clip videos. They never become connected knowledge.</div>
+        <div class="problem-label">문제</div>
+        <div class="problem-title">노트가 폴더에서 썩는다</div>
+        <div class="problem-desc">아티클을 저장하고, 책을 하이라이트하고, 영상을 클립합니다. 하지만 연결된 지식이 되진 않죠.</div>
         <span class="problem-arrow">&darr;</span>
-        <div class="problem-solution">Auto-compiling wiki &mdash; raw notes become linked concepts in &lt;100ms</div>
+        <div class="problem-solution">자동 컴파일 위키 &mdash; 원시 노트가 100ms 안에 연결된 개념으로</div>
       </div>
       <div class="problem-card reveal">
         <span class="problem-icon">&#128270;</span>
-        <div class="problem-label">Problem</div>
-        <div class="problem-title">Search finds words, not meaning</div>
-        <div class="problem-desc">Keyword search misses semantic connections. You know you wrote it, but can't find it.</div>
+        <div class="problem-label">문제</div>
+        <div class="problem-title">검색은 단어만, 의미는 못 찾는다</div>
+        <div class="problem-desc">키워드 검색은 의미적 연결을 놓칩니다. 분명히 적었는데 못 찾죠.</div>
         <span class="problem-arrow">&darr;</span>
-        <div class="problem-solution">Hybrid AI search &mdash; BM25 + vector + RRF, 50+ languages, locally</div>
+        <div class="problem-solution">하이브리드 AI 검색 &mdash; BM25 + 벡터 + RRF, 50개 이상 언어, 로컬</div>
       </div>
       <div class="problem-card reveal">
         <span class="problem-icon">&#129302;</span>
-        <div class="problem-label">Problem</div>
-        <div class="problem-title">AI doesn't know what you know</div>
-        <div class="problem-desc">ChatGPT has the internet. It doesn't have your notes, your decisions, your context.</div>
+        <div class="problem-label">문제</div>
+        <div class="problem-title">AI는 당신이 아는 걸 모른다</div>
+        <div class="problem-desc">ChatGPT는 인터넷을 압니다. 하지만 당신의 노트·결정·맥락은 모릅니다.</div>
         <span class="problem-arrow">&darr;</span>
-        <div class="problem-solution">21 MCP tools &mdash; Claude searches, asks, drafts from your vault</div>
+        <div class="problem-solution">21개 MCP 도구 &mdash; Claude가 당신의 볼트에서 검색·질문·초안 작성</div>
       </div>
     </div>
   </div>
@@ -296,14 +296,14 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ PIPELINE ═══ -->
 <section class="s-pipeline">
   <div class="container">
-    <div class="section-label reveal">The Pipeline</div>
-    <h2 class="section-title reveal">Karpathy's self-compiling loop,<br>built for your brain.</h2>
-    <p class="section-desc reveal">Inspired by Andrej Karpathy and Niklas Luhmann. Every input flows through the same pipeline. You never manually organize.</p>
+    <div class="section-label reveal">파이프라인</div>
+    <h2 class="section-title reveal">Karpathy의 자기 컴파일 루프,<br>당신의 뇌를 위해.</h2>
+    <p class="section-desc reveal">Andrej Karpathy와 Niklas Luhmann에서 영감. 모든 입력은 같은 파이프라인을 흐릅니다. 수동 정리는 전혀 없습니다.</p>
     <div class="pipeline-flow reveal">
-      <div class="pipeline-step"><div class="step-num">01</div><div class="step-name">Capture</div><div class="step-desc">Drop PDF, paste YouTube, type thought. Drag files in browser. Any format.</div></div>
-      <div class="pipeline-step"><div class="step-num">02</div><div class="step-name">Organize</div><div class="step-desc">Zettelkasten auto-classification. Index codes, tags, wikilinks auto-inserted.</div></div>
-      <div class="pipeline-step"><div class="step-num">03</div><div class="step-name">Distill</div><div class="step-desc">Compile into wiki. Extract concepts. Detect gaps, contradictions, duplicates.</div></div>
-      <div class="pipeline-step"><div class="step-num">04</div><div class="step-name">Express</div><div class="step-desc">Generate drafts. Blog, report, outline. AI-enhanced via Claude. Ship it.</div></div>
+      <div class="pipeline-step"><div class="step-num">01</div><div class="step-name">캡처</div><div class="step-desc">PDF 던지기, 유튜브 붙여넣기, 생각 적기. 브라우저에 파일 드래그. 모든 포맷.</div></div>
+      <div class="pipeline-step"><div class="step-num">02</div><div class="step-name">정리</div><div class="step-desc">제텔카스텐 자동 분류. 인덱스 코드·태그·위키링크 자동 삽입.</div></div>
+      <div class="pipeline-step"><div class="step-num">03</div><div class="step-name">증류</div><div class="step-desc">위키로 컴파일. 개념 추출. 빈틈·모순·중복 감지.</div></div>
+      <div class="pipeline-step"><div class="step-num">04</div><div class="step-name">표현</div><div class="step-desc">초안 생성. 블로그·리포트·아웃라인. Claude로 AI 강화. 바로 출판.</div></div>
     </div>
   </div>
 </section>
@@ -311,18 +311,18 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ COMPOUNDING LOOP ═══ -->
 <section style="padding:80px 0">
   <div class="container" style="text-align:center">
-    <div class="section-label reveal">The Compounding Loop</div>
-    <h2 class="section-title reveal">Gets smarter every session.</h2>
-    <p class="section-desc reveal" style="margin:0 auto 40px">Every conversation with Claude becomes knowledge. Knowledge improves the next conversation. Karpathy's self-evolving architecture.</p>
+    <div class="section-label reveal">복리 루프</div>
+    <h2 class="section-title reveal">세션마다 더 똑똑해집니다.</h2>
+    <p class="section-desc reveal" style="margin:0 auto 40px">Claude와의 모든 대화가 지식이 됩니다. 그 지식이 다음 대화를 개선합니다. Karpathy의 자기 진화 아키텍처.</p>
     <div class="reveal" style="max-width:700px;margin:0 auto;padding:32px;background:var(--surface);border:1px solid var(--border);border-radius:14px;font-family:var(--font-mono);font-size:13px;line-height:2.2;color:var(--text-dim);text-align:left">
       <span style="color:var(--cyan)">Session</span> &rarr; <code style="color:var(--violet-bright)">session-save</code> &rarr; <span style="color:var(--text)">daily-log</span> &rarr; <code style="color:var(--violet-bright)">flush</code> &rarr; <span style="color:var(--emerald)">wiki</span><br>
       <span style="color:var(--text-muted);margin-left:16px">&uarr;</span><span style="padding-left:280px;color:var(--text-muted)">&darr;</span><br>
-      <span style="color:var(--text-muted);margin-left:16px">&larr;&larr; Claude reads wiki via MCP (21 tools) &larr;&larr;&larr;</span>
+      <span style="color:var(--text-muted);margin-left:16px">&larr;&larr; Claude가 MCP(21개 도구)로 위키를 읽음 &larr;&larr;&larr;</span>
     </div>
     <div style="display:flex;gap:16px;justify-content:center;margin-top:28px;flex-wrap:wrap" class="reveal">
-      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">session-save</span><br><span style="color:var(--text-dim)">Auto-capture decisions &amp; lessons</span></div>
-      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">flush</span><br><span style="color:var(--text-dim)">Daily logs &rarr; wiki compilation</span></div>
-      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">Claude Code hooks</span><br><span style="color:var(--text-dim)">Fully automatic capture</span></div>
+      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">session-save</span><br><span style="color:var(--text-dim)">결정 &amp; 교훈 자동 캡처</span></div>
+      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">flush</span><br><span style="color:var(--text-dim)">데일리 로그 &rarr; 위키 컴파일</span></div>
+      <div style="padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px"><span style="color:var(--violet-bright);font-family:var(--font-mono)">Claude Code 훅</span><br><span style="color:var(--text-dim)">완전 자동 캡처</span></div>
     </div>
   </div>
 </section>
@@ -332,8 +332,8 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ SCREENSHOTS ═══ -->
 <section class="s-screenshots">
   <div class="container">
-    <div class="section-label reveal">See It In Action</div>
-    <h2 class="section-title reveal">Your vault as a<br>living neural network.</h2>
+    <div class="section-label reveal">실제 동작</div>
+    <h2 class="section-title reveal">당신의 볼트가<br>살아있는 신경망으로.</h2>
     <div class="screenshot-hero reveal">
       <video autoplay loop muted playsinline style="width:100%;display:block;border-radius:14px">
         <source src="images/screenshots/stellavault-demo.webm" type="video/webm">
@@ -343,17 +343,17 @@ footer{padding:60px 0;text-align:center}
     <div class="screenshot-grid">
       <div class="screenshot-card reveal" data-lb="0">
         <img src="images/screenshots/search-active.png" alt="Semantic Search" loading="lazy">
-        <div class="caption">Hybrid AI search &mdash; meaning, not just keywords</div>
+        <div class="caption">하이브리드 AI 검색 &mdash; 키워드가 아니라 의미로</div>
         <div class="expand-hint">&#x26F6;</div>
       </div>
       <div class="screenshot-card reveal" data-lb="1">
         <img src="images/screenshots/graph-heatmap.png" alt="Knowledge Heatmap" loading="lazy">
-        <div class="caption">Heatmap overlay &mdash; see where your knowledge lives</div>
+        <div class="caption">히트맵 오버레이 &mdash; 지식이 어디에 모여 있는지</div>
         <div class="expand-hint">&#x26F6;</div>
       </div>
       <div class="screenshot-card reveal" data-lb="2">
         <img src="images/screenshots/graph-light-mode.png" alt="Light Mode" loading="lazy">
-        <div class="caption">Light mode &mdash; monochrome with color on interaction</div>
+        <div class="caption">라이트 모드 &mdash; 모노크롬, 상호작용 시 컬러</div>
         <div class="expand-hint">&#x26F6;</div>
       </div>
     </div>
@@ -365,32 +365,32 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ MCP ═══ -->
 <section class="s-mcp">
   <div class="container">
-    <div class="section-label reveal">Claude Integration</div>
-    <h2 class="section-title reveal">Claude remembers<br>everything you know.</h2>
-    <p class="section-desc reveal">One command connects your vault to Claude Code. Claude searches, asks, and drafts from your knowledge. Local-first &mdash; no API key needed, no data leaves your machine.</p>
+    <div class="section-label reveal">Claude 연동</div>
+    <h2 class="section-title reveal">Claude가 당신이 아는<br>모든 걸 기억합니다.</h2>
+    <p class="section-desc reveal">명령 한 줄로 볼트를 Claude Code에 연결. Claude가 당신의 지식에서 검색·질문·초안을 작성합니다. 로컬 우선 &mdash; API 키 불필요, 데이터는 기기를 떠나지 않습니다.</p>
     <div class="mcp-connect reveal"><span class="prompt">$</span> <code>claude mcp add stellavault -- stellavault serve</code></div>
     <div class="mcp-grid reveal">
-      <div class="mcp-tool"><span class="dot"></span><code>search</code><span class="desc">hybrid AI search</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>ask</code><span class="desc">Q&A from vault</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>generate-draft</code><span class="desc">AI writes drafts</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-document</code><span class="desc">full doc + meta</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-related</code><span class="desc">semantic neighbors</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>detect-gaps</code><span class="desc">knowledge gaps</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-decay-status</code><span class="desc">fading memories</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-learning-path</code><span class="desc">review order</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-evolution</code><span class="desc">idea drift tracking</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>link-code</code><span class="desc">code-knowledge links</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-node</code><span class="desc">AI writes notes</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-link</code><span class="desc">auto-connect</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>log-decision</code><span class="desc">decision journal</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>get-morning-brief</code><span class="desc">daily briefing</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>list-topics</code><span class="desc">topic cloud</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>search</code><span class="desc">하이브리드 AI 검색</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>ask</code><span class="desc">볼트 기반 Q&A</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>generate-draft</code><span class="desc">AI 초안 작성</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-document</code><span class="desc">전체 문서 + 메타</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-related</code><span class="desc">의미적 이웃</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>detect-gaps</code><span class="desc">지식 빈틈</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-decay-status</code><span class="desc">잊혀가는 기억</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-learning-path</code><span class="desc">복습 순서</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-evolution</code><span class="desc">아이디어 변화 추적</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>link-code</code><span class="desc">코드-지식 연결</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-node</code><span class="desc">AI 노트 작성</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>create-knowledge-link</code><span class="desc">자동 연결</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>log-decision</code><span class="desc">결정 저널</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>get-morning-brief</code><span class="desc">데일리 브리핑</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>list-topics</code><span class="desc">토픽 클라우드</span></div>
       <div class="mcp-tool"><span class="dot"></span><code>export</code><span class="desc">JSON / CSV</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>find-decisions</code><span class="desc">decision lookup</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>create-snapshot</code><span class="desc">context save</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>load-snapshot</code><span class="desc">context restore</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>generate-claude-md</code><span class="desc">auto CLAUDE.md</span></div>
-      <div class="mcp-tool"><span class="dot"></span><code>federated-search</code><span class="desc">P2P search</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>find-decisions</code><span class="desc">결정 조회</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>create-snapshot</code><span class="desc">컨텍스트 저장</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>load-snapshot</code><span class="desc">컨텍스트 복원</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>generate-claude-md</code><span class="desc">CLAUDE.md 자동생성</span></div>
+      <div class="mcp-tool"><span class="dot"></span><code>federated-search</code><span class="desc">P2P 검색</span></div>
     </div>
   </div>
 </section>
@@ -400,9 +400,9 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ FORMATS ═══ -->
 <section class="s-formats">
   <div class="container">
-    <div class="section-label reveal">Ingest Anything</div>
-    <h2 class="section-title reveal">14 formats. One command.</h2>
-    <p class="section-desc reveal">Text extraction built-in. No external services. Transcripts with timestamps.</p>
+    <div class="section-label reveal">무엇이든 흡수</div>
+    <h2 class="section-title reveal">14가지 포맷. 명령 하나.</h2>
+    <p class="section-desc reveal">텍스트 추출 내장. 외부 서비스 불필요. 타임스탬프 포함 자막.</p>
     <div class="formats-grid reveal">
       <div class="format-chip"><div class="format-ext">.pdf</div><div class="format-name">unpdf</div></div>
       <div class="format-chip"><div class="format-ext">.docx</div><div class="format-name">mammoth</div></div>
@@ -423,13 +423,13 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ SETUP ═══ -->
 <section class="s-setup">
   <div class="container">
-    <div class="section-label reveal">Get Started</div>
-    <h2 class="section-title reveal">5 minutes to a living<br>knowledge graph.</h2>
+    <div class="section-label reveal">시작하기</div>
+    <h2 class="section-title reveal">5분이면 살아있는<br>지식 그래프.</h2>
     <div class="setup-steps">
-      <div class="setup-step reveal"><div class="setup-num">1</div><div class="setup-label">Install globally</div><code class="setup-cmd">npm install -g stellavault</code><div class="setup-desc">Node.js 20+ required. Or skip install with <code>npx</code>.</div></div>
-      <div class="setup-step reveal"><div class="setup-num">2</div><div class="setup-label">Initialize your vault</div><code class="setup-cmd">stellavault init</code><div class="setup-desc">Interactive setup. Points to your Obsidian vault. Indexes everything.</div></div>
-      <div class="setup-step reveal"><div class="setup-num">3</div><div class="setup-label">Connect to Claude</div><code class="setup-cmd">stellavault setup</code><div class="setup-desc">Adds the MCP server to Claude Code, Claude Desktop, Cursor, Windsurf, or VS Code &mdash; one command.</div></div>
-      <div class="setup-step reveal"><div class="setup-num">4</div><div class="setup-label">Launch the graph</div><code class="setup-cmd">stellavault graph</code><div class="setup-desc">3D neural graph in browser. Drag files to ingest. Mobile ready.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">1</div><div class="setup-label">전역 설치</div><code class="setup-cmd">npm install -g stellavault</code><div class="setup-desc">Node.js 20+ 필요. 또는 <code>npx</code>로 설치 없이.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">2</div><div class="setup-label">볼트 초기화</div><code class="setup-cmd">stellavault init</code><div class="setup-desc">대화형 설정. 옵시디언 볼트를 지정하고 전체 색인.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">3</div><div class="setup-label">Claude에 연결</div><code class="setup-cmd">stellavault setup</code><div class="setup-desc">Claude Code·Claude Desktop·Cursor·Windsurf·VS Code에 MCP 서버 추가 &mdash; 명령 하나로.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">4</div><div class="setup-label">그래프 실행</div><code class="setup-cmd">stellavault graph</code><div class="setup-desc">브라우저에서 3D 신경망 그래프. 파일을 드래그해 흡수. 모바일 지원.</div></div>
     </div>
   </div>
 </section>
@@ -439,18 +439,18 @@ footer{padding:60px 0;text-align:center}
 <!-- ═══ TECH ═══ -->
 <section class="s-tech">
   <div class="container">
-    <div class="section-label reveal">Under The Hood</div>
-    <h2 class="section-title reveal">Local-first. No cloud required.</h2>
-    <p class="section-desc reveal">Your knowledge stays on your machine. No API keys needed for core features.</p>
+    <div class="section-label reveal">내부 구조</div>
+    <h2 class="section-title reveal">로컬 우선. 클라우드 불필요.</h2>
+    <p class="section-desc reveal">당신의 지식은 기기에 머뭅니다. 핵심 기능에 API 키가 필요 없습니다.</p>
     <div class="tech-grid reveal">
-      <div class="tech-item"><span class="label">Embeddings</span><span class="value">multilingual-MiniLM</span></div>
-      <div class="tech-item"><span class="label">Vector Store</span><span class="value">SQLite-vec</span></div>
-      <div class="tech-item"><span class="label">Search</span><span class="value">BM25 + Cosine + RRF</span></div>
-      <div class="tech-item"><span class="label">Memory</span><span class="value">FSRS repetition</span></div>
-      <div class="tech-item"><span class="label">3D Graph</span><span class="value">React Three Fiber</span></div>
-      <div class="tech-item"><span class="label">AI Protocol</span><span class="value">MCP (21 tools)</span></div>
-      <div class="tech-item"><span class="label">Runtime</span><span class="value">Node.js 20+ ESM</span></div>
-      <div class="tech-item"><span class="label">Package</span><span class="value">688KB on npm</span></div>
+      <div class="tech-item"><span class="label">임베딩</span><span class="value">multilingual-MiniLM</span></div>
+      <div class="tech-item"><span class="label">벡터 저장소</span><span class="value">SQLite-vec</span></div>
+      <div class="tech-item"><span class="label">검색</span><span class="value">BM25 + Cosine + RRF</span></div>
+      <div class="tech-item"><span class="label">메모리</span><span class="value">FSRS 간격 반복</span></div>
+      <div class="tech-item"><span class="label">3D 그래프</span><span class="value">React Three Fiber</span></div>
+      <div class="tech-item"><span class="label">AI 프로토콜</span><span class="value">MCP (21개 도구)</span></div>
+      <div class="tech-item"><span class="label">런타임</span><span class="value">Node.js 20+ ESM</span></div>
+      <div class="tech-item"><span class="label">패키지</span><span class="value">npm 688KB</span></div>
     </div>
   </div>
 </section>
@@ -460,18 +460,18 @@ footer{padding:60px 0;text-align:center}
   <div class="container">
     <div class="footer-cta reveal">
       <div class="footer-brand">Stellavault</div>
-      <div class="footer-tagline">Self-compiling knowledge MCP server</div>
+      <div class="footer-tagline">자기 컴파일 지식 MCP 서버</div>
       <button class="cta-install" onclick="navigator.clipboard.writeText('npx -y stellavault setup');this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),2000)">
         <span class="prompt">$</span> npx -y stellavault setup
-        <span class="copy-hint">click to copy</span>
+        <span class="copy-hint">클릭하여 복사</span>
       </button>
     </div>
     <div class="footer-links">
-      <a href="index.ko.html">한국어</a>
+      <a href="index.html">English</a>
       <a href="https://github.com/Evanciel/stellavault">GitHub</a>
       <a href="https://www.npmjs.com/package/stellavault">npm</a>
-      <a href="https://github.com/Evanciel/stellavault/releases">Releases</a>
-      <a href="https://github.com/Evanciel/stellavault-obsidian">Obsidian Plugin</a>
+      <a href="https://github.com/Evanciel/stellavault/releases">릴리스</a>
+      <a href="https://github.com/Evanciel/stellavault-obsidian">옵시디언 플러그인</a>
     </div>
     <div class="footer-copy">MIT License &middot; Built by <a href="https://github.com/Evanciel" style="color:var(--violet-bright)">Evan</a></div>
   </div>
@@ -490,9 +490,9 @@ footer{padding:60px 0;text-align:center}
 // Lightbox
 !function(){
   const slides=[
-    {src:'images/screenshots/search-active.png',cap:'Hybrid AI search — meaning, not just keywords'},
-    {src:'images/screenshots/graph-heatmap.png',cap:'Heatmap overlay — see where your knowledge lives'},
-    {src:'images/screenshots/graph-light-mode.png',cap:'Light mode — monochrome with color on interaction'},
+    {src:'images/screenshots/search-active.png',cap:'하이브리드 AI 검색 — 키워드가 아니라 의미로'},
+    {src:'images/screenshots/graph-heatmap.png',cap:'히트맵 오버레이 — 지식이 어디에 모여 있는지'},
+    {src:'images/screenshots/graph-light-mode.png',cap:'라이트 모드 — 모노크롬, 상호작용 시 컬러'},
   ];
   let cur=0;
   const lb=document.getElementById('lightbox'),img=document.getElementById('lbImg'),cap=document.getElementById('lbCaption');
@@ -509,7 +509,7 @@ footer{padding:60px 0;text-align:center}
 
 !function(){const c=document.getElementById('stars'),s=document.createDocumentFragment();for(let i=0;i<100;i++){const d=document.createElement('div');const sz=Math.random()*2+.5;d.style.cssText=`position:absolute;width:${sz}px;height:${sz}px;background:#fff;border-radius:50%;opacity:${Math.random()*.35+.05};left:${Math.random()*100}%;top:${Math.random()*100}%;animation:pulse ${Math.random()*5+3}s ${Math.random()*4}s ease-in-out infinite`;s.appendChild(d)}c.appendChild(s)}();
 !function(){const g=document.getElementById('graphVisual'),nodes=[],cls=['v','c','e'];for(let i=0;i<24;i++){const d=document.createElement('div'),sz=Math.random()*10+3,x=Math.random()*100,y=Math.random()*100;d.className=`node ${cls[i%3]}`;d.style.cssText=`width:${sz}px;height:${sz}px;left:${x}%;top:${y}%;animation-delay:${Math.random()*3}s;animation-duration:${Math.random()*4+2}s`;g.appendChild(d);nodes.push({x,y})}for(let i=0;i<15;i++){const a=nodes[0|Math.random()*nodes.length],b=nodes[0|Math.random()*nodes.length];if(a===b)continue;const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy);if(len>35)continue;const e=document.createElement('div');e.className='edge';e.style.cssText=`left:${a.x}%;top:${a.y}%;width:${len}%;transform:rotate(${Math.atan2(dy,dx)*180/Math.PI}deg);opacity:.25`;g.appendChild(e)}}();
-document.getElementById('ctaInstall').addEventListener('click',function(){navigator.clipboard.writeText('npx -y stellavault setup');this.classList.add('copied');this.querySelector('.copy-hint').textContent='copied!';setTimeout(()=>{this.classList.remove('copied');this.querySelector('.copy-hint').textContent='click to copy'},2000)});
+document.getElementById('ctaInstall').addEventListener('click',function(){navigator.clipboard.writeText('npx -y stellavault setup');this.classList.add('copied');this.querySelector('.copy-hint').textContent='복사됨!';setTimeout(()=>{this.classList.remove('copied');this.querySelector('.copy-hint').textContent='클릭하여 복사'},2000)});
 const obs=new IntersectionObserver(e=>{e.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');obs.unobserve(e.target)}})},{threshold:.1,rootMargin:'0px 0px -40px 0px'});document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
 document.querySelectorAll('.mcp-tool').forEach((el,i)=>el.style.setProperty('transition-delay',i*25+'ms'));
 </script>

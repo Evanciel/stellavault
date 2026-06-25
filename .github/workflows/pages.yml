@@ -7,6 +7,7 @@ on:
       - docs/landing/**
       - images/screenshots/**
       - index.html
+      - index.ko.html
   workflow_dispatch:
 
 permissions:
@@ -31,6 +32,7 @@ jobs:
         run: |
           mkdir -p _site/images/screenshots
           cp index.html _site/
+          cp index.ko.html _site/
           cp images/screenshots/*.png _site/images/screenshots/ 2>/dev/null || true
           cp images/screenshots/*.webm _site/images/screenshots/ 2>/dev/null || true
 
