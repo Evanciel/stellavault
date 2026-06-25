@@ -46,10 +46,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Use Node.js 24
+      # Node 22, NOT 24: electron-forge packaging (electron-packager "Finalizing
+      # package") dies SILENTLY on Node 24 — the make exits without producing out/,
+      # failing the launch-smoke gate. The exact `npm run make` command succeeds on
+      # Node 22 locally. setup-node@v5 (node24 action runtime) satisfies the GitHub
+      # action-runtime deadline independently of the Node version we build under.
+      - name: Use Node.js 22
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Resolve version from tag
