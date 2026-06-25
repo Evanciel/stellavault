@@ -8,6 +8,8 @@
 # 동기화 상태 파일
 .sync-state.json
 .upload-state.json
+.sync-conflicts.json
+.sync-state.json.bak
 
 # Autopilot runtime state (per-machine, not portable)
 .autopilot-state.json
