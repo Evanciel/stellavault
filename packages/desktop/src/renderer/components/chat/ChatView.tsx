@@ -127,6 +127,12 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [planSteps, setPlanSteps] = useState<string[]>([]);
   const [planDone, setPlanDone] = useState(0);
   const [input, setInput] = useState('');
+  // Steer-after-tool (P1-3): free text the user types WHILE the agent runs; sent via chat:steer to
+  // the last live stream and injected before its next model turn (never aborts). Cleared only after
+  // the invoke resolves, so a too-late/no-op steer stays in the box for the user to resend.
+  const [steerInput, setSteerInput] = useState('');
+  // Context-fill vitals (P1-4): one pre-stream frame per send (text-only input fill vs the hard cap).
+  const [vitals, setVitals] = useState<{ fillPct: number; charsIn: number; budgetChars: number } | null>(null);
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
   // activeCount drives Stop/Composer affordances; mirrors streamMapRef.size.
@@ -371,6 +377,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       setPlanSteps(e.steps);
       setPlanDone(Math.max(0, Math.min(e.doneCount, e.steps.length)));
     });
+    // Context-fill vitals (P1-4): one pre-stream frame per send; stream-filtered so two concurrent
+    // streams never cross-contaminate the bar. Session-switch reset is automatic (key remount).
+    const offVitals = onIpc('chat:vitals', (p: unknown) => {
+      const e = p as { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
+      if (!ownsStream(e.streamId)) return;
+      setVitals({ fillPct: e.fillPct, charsIn: e.charsIn, budgetChars: e.budgetChars });
+    });
 
     return () => {
       offChunk();
@@ -383,6 +396,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       offReflectDone();
       offMemoryWritten();
       offPlan();
+      offVitals();
     };
   }, [syncActiveCount, sessionId, variant]);
 
@@ -567,6 +581,20 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       return next;
     });
   }, [syncActiveCount]);
+
+  // Steer-after-tool (P1-3): inject a note into the most-recently-started stream WITHOUT aborting it
+  // (same last-live selection as stop()). Forwards free text only — never names a tool, never spawns
+  // a stream (NOT dispatchTurn). Main screens/bounds the text. Clear the box ONLY after the invoke
+  // resolves: a too-late steer (final-answer turn / non-agent stream is a main-side no-op) leaves the
+  // text so the user can resend it as a normal message.
+  const steer = useCallback((text: string) => {
+    const note = text.trim();
+    if (!note) return;
+    const entries = [...streamMapRef.current.entries()];
+    const last = entries[entries.length - 1];
+    if (!last) return;
+    void ipc('chat:steer', last[0], note).then(() => setSteerInput('')).catch(() => {});
+  }, []);
 
   const retry = useCallback(() => {
     setError(null);
@@ -885,6 +913,27 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
         </div>
       )}
 
+      {/* Steer-after-tool (P1-3): inject a note into the RUNNING agent without stopping it. Same gate
+          as the 🤖 pill — only a live, local, tools-capable agent loop actually drains the steer
+          (cloud/single-shot is a main-side no-op). Enter sends; the box clears only on resolve. */}
+      {isStreaming && agentOn && agentCapable && (
+        <div style={{ padding: isMain ? '0 16px 6px' : '0 10px 6px', display: 'flex', justifyContent: 'center' }}>
+          <input
+            type="text"
+            value={steerInput}
+            onChange={(ev) => setSteerInput(ev.target.value)}
+            onKeyDown={(ev) => { if (ev.key === 'Enter' && steerInput.trim()) { ev.preventDefault(); steer(steerInput); } }}
+            placeholder={t('panel.ai.steerHint')}
+            aria-label={t('panel.ai.steerHint')}
+            style={{
+              width: '100%', maxWidth: isMain ? 768 : undefined,
+              padding: '5px 10px', fontSize: 11, borderRadius: 6,
+              background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--ink)',
+            }}
+          />
+        </div>
+      )}
+
       {capMessage && !atCap && (
         <div style={{ padding: '0 10px 4px', fontSize: 9.5, color: 'var(--ink-faint)' }}>
           {t('panel.ai.capReached')}
@@ -916,6 +965,20 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
           >
             🧠 {t('panel.ai.reflectButton')}
           </button>
+        </div>
+      )}
+
+      {/* Context-fill vitals bar (P1-4): text-only input message fill vs the app's hard cap. Two
+          colors — ok, then red past 85%. An honest overflow signal, NOT a token count / model
+          window. Numeric-only (no i18n) per the tight P1 scope; resets on session switch (remount). */}
+      {vitals && isStreaming && (
+        <div style={{ padding: isMain ? '0 16px 4px' : '0 10px 4px', maxWidth: isMain ? 768 : undefined, margin: isMain ? '0 auto' : undefined }}>
+          <div style={{ height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${vitals.fillPct}%`, background: vitals.fillPct > 85 ? '#e5484d' : 'var(--accent-2)', transition: 'width 120ms' }} />
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--ink-faint)', marginTop: 2, textAlign: 'right' }}>
+            {`${vitals.fillPct}% · ${vitals.charsIn.toLocaleString()}/${vitals.budgetChars.toLocaleString()}`}
+          </div>
         </div>
       )}
 

@@ -286,6 +286,8 @@ export const messages = {
   // only fires on a local tools-capable model) — this annotates WHY instead of silently no-op'ing.
   "panel.ai.agentLocalOnly": { en: "Agent mode needs a local tools-capable model (e.g. Ollama gemma4). Set the provider to local Ollama in Settings → AI.", ko: "에이전트 모드는 로컬 도구 지원 모델이 필요합니다 (예: Ollama gemma4). 설정 → AI에서 공급자를 로컬 Ollama로 설정하세요." },
   "panel.ai.agentLocalOnlyShort": { en: "(local model only)", ko: "(로컬 모델 전용)" },
+  // Steer-after-tool (P1-3): the input shown while the agent runs — inject a note for its next turn.
+  "panel.ai.steerHint": { en: "Steer the agent — add a note for its next step (Enter)…", ko: "에이전트에 지시 추가 — 다음 단계에 반영 (Enter)…" },
   "panel.ai.agentWriteConfirm": { en: "The agent wants to write to your vault:", ko: "에이전트가 볼트에 쓰려고 합니다:" },
   "panel.ai.agentApprove": { en: "Approve", ko: "승인" },
   "panel.ai.agentDeny": { en: "Deny", ko: "거부" },

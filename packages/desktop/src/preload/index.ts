@@ -95,6 +95,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   // SP1 multiturn chat — renderer to main commands (invoke)
   'chat:send',
   'chat:abort',
+  'chat:steer', // P1-3: steer a running agent stream (main owner-guards + screens the text)
   'chat:list-sessions',
   'chat:load-session',
   'chat:rename-session',
@@ -158,6 +159,7 @@ const ALLOWED_EVENTS = new Set<string>([
   // Reflection follow-up (§A): read-only reflection pass finished (proposed memory candidates)
   'chat:reflect-done',
   'chat:plan', // agent multi-step plan checklist (one-way main→renderer)
+  'chat:vitals', // P1-4: context-fill bar frame (one-way main→renderer)
   'chat:skill-invoke', // P3: invoke_skill loaded a skill (one-way main→renderer)
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast (one-way)
   // Ollama auto-download byte progress (e.sender targeted)

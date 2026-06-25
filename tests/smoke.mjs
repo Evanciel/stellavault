@@ -239,6 +239,14 @@ await test('chat: preload allowlists chat:send (channel) + chat:chunk (event)', 
 
   assert(setBlock('ALLOWED_CHANNELS').includes("'chat:send'"), "'chat:send' missing from ALLOWED_CHANNELS");
   assert(setBlock('ALLOWED_EVENTS').includes("'chat:chunk'"), "'chat:chunk' missing from ALLOWED_EVENTS");
+  // P1: steer command (renderer→main) + vitals event (main→renderer) — same trust-boundary rule.
+  assert(setBlock('ALLOWED_CHANNELS').includes("'chat:steer'"), "'chat:steer' missing from ALLOWED_CHANNELS");
+  assert(setBlock('ALLOWED_EVENTS').includes("'chat:vitals'"), "'chat:vitals' missing from ALLOWED_EVENTS");
+
+  // Both must also exist in the typed IpcChannelMap/IpcEventMap (the renderer's compile-time map).
+  const ipcTypes = readFileSync(join(DESKTOP_SRC, 'shared', 'ipc-types.ts'), 'utf-8');
+  assert(ipcTypes.includes("'chat:steer'"), "'chat:steer' missing from ipc-types");
+  assert(ipcTypes.includes("'chat:vitals'"), "'chat:vitals' missing from ipc-types");
 });
 
 await test('chat: SSE parser is pure (parses a static frame, issues no network call)', () => {
