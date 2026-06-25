@@ -236,18 +236,18 @@ footer{padding:60px 0;text-align:center}
     <p class="hero-sub">Self-compiling Zettelkasten MCP server. Ingest PDFs, YouTube, documents&mdash;auto-organized into linked wiki. Claude accesses your entire knowledge base through 21 MCP tools.</p>
     <div class="hero-cta">
       <button class="cta-install" id="ctaInstall">
-        <span class="prompt">$</span> npm install -g stellavault
+        <span class="prompt">$</span> npx -y stellavault setup
         <span class="copy-hint">click to copy</span>
       </button>
       <a href="https://github.com/Evanciel/stellavault" class="cta-secondary">View on GitHub &rarr;</a>
       <a href="https://github.com/Evanciel/stellavault" class="cta-mobile">View on GitHub &rarr;</a>
     </div>
     <div class="hero-proof">
-      <span><span class="proof-num">171KB</span> on npm</span>
-      <span class="proof-sep">&#9679;</span>
       <span><span class="proof-num">21</span> MCP tools</span>
       <span class="proof-sep">&#9679;</span>
-      <span><span class="proof-num">127</span> tests passing</span>
+      <span>Claude Code &middot; Desktop &middot; Cursor</span>
+      <span class="proof-sep">&#9679;</span>
+      <span><span class="proof-num">700+</span> tests passing</span>
       <span class="proof-sep">&#9679;</span>
       <span>No cloud required</span>
     </div>
@@ -426,9 +426,10 @@ footer{padding:60px 0;text-align:center}
     <div class="section-label reveal">Get Started</div>
     <h2 class="section-title reveal">5 minutes to a living<br>knowledge graph.</h2>
     <div class="setup-steps">
-      <div class="setup-step reveal"><div class="setup-num">1</div><div class="setup-label">Install globally</div><code class="setup-cmd">npm install -g stellavault</code><div class="setup-desc">171KB. Node.js 20+ required.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">1</div><div class="setup-label">Install globally</div><code class="setup-cmd">npm install -g stellavault</code><div class="setup-desc">Node.js 20+ required. Or skip install with <code>npx</code>.</div></div>
       <div class="setup-step reveal"><div class="setup-num">2</div><div class="setup-label">Initialize your vault</div><code class="setup-cmd">stellavault init</code><div class="setup-desc">Interactive setup. Points to your Obsidian vault. Indexes everything.</div></div>
-      <div class="setup-step reveal"><div class="setup-num">3</div><div class="setup-label">Launch the graph</div><code class="setup-cmd">stellavault graph</code><div class="setup-desc">3D neural graph in browser. Drag files to ingest. Mobile ready.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">3</div><div class="setup-label">Connect to Claude</div><code class="setup-cmd">stellavault setup</code><div class="setup-desc">Adds the MCP server to Claude Code, Claude Desktop, Cursor, Windsurf, or VS Code &mdash; one command.</div></div>
+      <div class="setup-step reveal"><div class="setup-num">4</div><div class="setup-label">Launch the graph</div><code class="setup-cmd">stellavault graph</code><div class="setup-desc">3D neural graph in browser. Drag files to ingest. Mobile ready.</div></div>
     </div>
   </div>
 </section>
@@ -449,7 +450,7 @@ footer{padding:60px 0;text-align:center}
       <div class="tech-item"><span class="label">3D Graph</span><span class="value">React Three Fiber</span></div>
       <div class="tech-item"><span class="label">AI Protocol</span><span class="value">MCP (21 tools)</span></div>
       <div class="tech-item"><span class="label">Runtime</span><span class="value">Node.js 20+ ESM</span></div>
-      <div class="tech-item"><span class="label">Package</span><span class="value">171KB on npm</span></div>
+      <div class="tech-item"><span class="label">Package</span><span class="value">688KB on npm</span></div>
     </div>
   </div>
 </section>
@@ -460,8 +461,8 @@ footer{padding:60px 0;text-align:center}
     <div class="footer-cta reveal">
       <div class="footer-brand">Stellavault</div>
       <div class="footer-tagline">Self-compiling knowledge MCP server</div>
-      <button class="cta-install" onclick="navigator.clipboard.writeText('npm install -g stellavault');this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),2000)">
-        <span class="prompt">$</span> npm install -g stellavault
+      <button class="cta-install" onclick="navigator.clipboard.writeText('npx -y stellavault setup');this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),2000)">
+        <span class="prompt">$</span> npx -y stellavault setup
         <span class="copy-hint">click to copy</span>
       </button>
     </div>
@@ -507,7 +508,7 @@ footer{padding:60px 0;text-align:center}
 
 !function(){const c=document.getElementById('stars'),s=document.createDocumentFragment();for(let i=0;i<100;i++){const d=document.createElement('div');const sz=Math.random()*2+.5;d.style.cssText=`position:absolute;width:${sz}px;height:${sz}px;background:#fff;border-radius:50%;opacity:${Math.random()*.35+.05};left:${Math.random()*100}%;top:${Math.random()*100}%;animation:pulse ${Math.random()*5+3}s ${Math.random()*4}s ease-in-out infinite`;s.appendChild(d)}c.appendChild(s)}();
 !function(){const g=document.getElementById('graphVisual'),nodes=[],cls=['v','c','e'];for(let i=0;i<24;i++){const d=document.createElement('div'),sz=Math.random()*10+3,x=Math.random()*100,y=Math.random()*100;d.className=`node ${cls[i%3]}`;d.style.cssText=`width:${sz}px;height:${sz}px;left:${x}%;top:${y}%;animation-delay:${Math.random()*3}s;animation-duration:${Math.random()*4+2}s`;g.appendChild(d);nodes.push({x,y})}for(let i=0;i<15;i++){const a=nodes[0|Math.random()*nodes.length],b=nodes[0|Math.random()*nodes.length];if(a===b)continue;const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy);if(len>35)continue;const e=document.createElement('div');e.className='edge';e.style.cssText=`left:${a.x}%;top:${a.y}%;width:${len}%;transform:rotate(${Math.atan2(dy,dx)*180/Math.PI}deg);opacity:.25`;g.appendChild(e)}}();
-document.getElementById('ctaInstall').addEventListener('click',function(){navigator.clipboard.writeText('npm install -g stellavault');this.classList.add('copied');this.querySelector('.copy-hint').textContent='copied!';setTimeout(()=>{this.classList.remove('copied');this.querySelector('.copy-hint').textContent='click to copy'},2000)});
+document.getElementById('ctaInstall').addEventListener('click',function(){navigator.clipboard.writeText('npx -y stellavault setup');this.classList.add('copied');this.querySelector('.copy-hint').textContent='copied!';setTimeout(()=>{this.classList.remove('copied');this.querySelector('.copy-hint').textContent='click to copy'},2000)});
 const obs=new IntersectionObserver(e=>{e.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');obs.unobserve(e.target)}})},{threshold:.1,rootMargin:'0px 0px -40px 0px'});document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
 document.querySelectorAll('.mcp-tool').forEach((el,i)=>el.style.setProperty('transition-delay',i*25+'ms'));
 </script>
