@@ -8,6 +8,7 @@ export function useGraph() {
   const mode = useGraphStore((s) => s.mode);
   const view = useGraphStore((s) => s.view);
   const rawCap = useGraphStore((s) => s.rawCap);
+  const galaxyNonce = useGraphStore((s) => s.galaxyNonce);
   const initialLoadDone = useRef(false);
   const savedPositions = useRef<Map<string, [number, number, number]>>(new Map());
 
@@ -68,7 +69,7 @@ export function useGraph() {
 
     load();
     return () => { cancelled = true; };
-  }, [mode, view, rawCap, setGraphData, setLoading, setError]);
+  }, [mode, view, rawCap, galaxyNonce, setGraphData, setLoading, setError]);
 
   // force layout이 위치를 업데이트할 때마다 저장
   const nodes = useGraphStore((s) => s.nodes);

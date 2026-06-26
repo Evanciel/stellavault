@@ -41,22 +41,24 @@ function Scene() {
   const theme = useGraphStore((s) => s.theme);
   const isLight = theme === 'light';
   const view = useGraphStore((s) => s.view);
+  const fitNodes = useGraphStore((s) => s.nodes);
   const controlsRef = useRef<any>(null);
 
-  // Re-fit the camera whenever the view swaps (cluster<->raw). The new content has a
-  // different extent, so without this the camera keeps the prior framing and the galaxy
-  // looks shrunken/oversized on toggle-back (resetCamera animates to the standard origin
-  // framing, content-independent). Skip the first mount — the initial framing is already set.
+  // Re-fit the camera on ANY scene swap — cluster⇄raw toggle, drilldown into a cluster, AND
+  // "← All clusters" back (which keeps view='cluster' but swaps members→super-nodes, so a
+  // view-only key would miss it). The signature changes only on a real swap (count/first-id),
+  // NOT on the worker's per-frame position updates (same count+id), so it fires once per swap.
+  // fitView is content-aware + NaN-guarded; cluster super-nodes are baked (ready), raw/members
+  // come from the async force worker (wait for it to settle).
   const didFitMountRef = useRef(false);
+  const fitSig = `${view}|${fitNodes.length}|${fitNodes[0]?.id ?? ''}`;
   useEffect(() => {
     if (!didFitMountRef.current) { didFitMountRef.current = true; return; }
-    // Only re-fit when landing on CLUSTER (raw→cluster is the toggle-back that looks shrunken).
-    // Cluster positions are server-baked & clean; raw positions come from the async force worker
-    // (transient NaN mid-sim), and raw's default framing is already fine — so don't fit raw.
-    if (view !== 'cluster') return;
-    const id = setTimeout(() => (window as any).__sv_fitView?.(), 350);
+    const isClusterGalaxy = view === 'cluster' && !!fitNodes[0]?.isCluster;
+    const id = setTimeout(() => (window as any).__sv_fitView?.(), isClusterGalaxy ? 350 : 1200);
     return () => clearTimeout(id);
-  }, [view]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitSig]);
 
   const shouldSpin = !hoveredNodeId && !selectedNodeId && highlightedNodeIds.size === 0;
 
@@ -149,9 +151,9 @@ export function Graph3D() {
                 const s = useGraphStore.getState();
                 s.selectNode(null);
                 s.setGraphData(members.members ?? [], members.intraEdges ?? [], s.clusters);
-                // members are re-laid-out by the worker (~1s) — content-fit once they've spread
-                // so the opened cluster isn't left tiny under the galaxy's camera distance.
-                setTimeout(() => (window as any).__sv_fitView?.(), 1100);
+                // (camera re-fit is handled by the scene-signature effect in Scene — the node
+                // swap changes the fit signature, which schedules fitView after the worker lays
+                // the members out.)
               })
               .catch((err) => useGraphStore.getState().setError(String(err)))
               .finally(() => useGraphStore.getState().setLoading(false));

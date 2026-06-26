@@ -35,6 +35,7 @@ export function Layout() {
   const setMode = useGraphStore((s) => s.setMode);
   const view = useGraphStore((s) => s.view);
   const setView = useGraphStore((s) => s.setView);
+  const reloadGalaxy = useGraphStore((s) => s.reloadGalaxy);
   const theme = useGraphStore((s) => s.theme);
   const toggleTheme = useGraphStore((s) => s.toggleTheme);
   const showDecay = useGraphStore((s) => s.showDecayOverlay);
@@ -88,7 +89,14 @@ export function Layout() {
           return (
             <button
               key={v}
-              onClick={() => { if (!loading) setView(v); }}
+              // Clicking the ALREADY-active 'cluster' while drilled into a cluster reloads the
+              // galaxy (un-drills); otherwise just switch view. (Drilldown keeps view='cluster',
+              // so a plain setView('cluster') would be a no-op and feel dead.)
+              onClick={() => {
+                if (loading) return;
+                if (v === view) { if (v === 'cluster') reloadGalaxy(); }
+                else setView(v);
+              }}
               disabled={loading}
               style={{
                 padding: '4px 12px', fontSize: '11px', border: 'none', borderRadius: '4px',
@@ -115,7 +123,7 @@ export function Layout() {
       )}
       {/* Single home affordance — re-fetch the galaxy (also resets drilldown). */}
       <button
-        onClick={() => { if (!loading) setView('cluster'); }}
+        onClick={() => { if (!loading) reloadGalaxy(); }}
         disabled={loading}
         title={t('btn.allClusters')}
         style={{

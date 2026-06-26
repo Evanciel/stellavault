@@ -49,6 +49,10 @@ interface GraphState {
   // Orthogonal to mode; drives /api/graph?view=. rawCap caps the raw "All nodes" fetch.
   view: 'cluster' | 'raw';
   rawCap: number;
+  // Bumped to force useGraph to re-fetch the cluster galaxy even when `view` is unchanged —
+  // a drilldown stays on view='cluster' (members in place), so "← All clusters" can't rely on
+  // a view change to refetch; reloadGalaxy() bumps this.
+  galaxyNonce: number;
   pulseParticlePos: [number, number, number] | null;
   hiddenClusters: Set<number>;
   theme: 'dark' | 'light';
@@ -88,6 +92,8 @@ interface GraphState {
   setMode: (mode: GraphMode) => void;
   setView: (view: 'cluster' | 'raw') => void;
   setRawCap: (cap: number) => void;
+  /** Return to the folded cluster galaxy (un-drill) — forces a refetch via galaxyNonce. */
+  reloadGalaxy: () => void;
   setPulseParticlePos: (pos: [number, number, number] | null) => void;
   toggleHiddenCluster: (id: number) => void;
   toggleTheme: () => void;
@@ -121,6 +127,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   mode: 'semantic',
   view: 'cluster' as const,
   rawCap: 4000,
+  galaxyNonce: 0,
   pulseParticlePos: null,
   hiddenClusters: new Set(),
   theme: 'dark',
@@ -156,6 +163,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   setMode: (mode) => set({ mode }),
   setView: (view) => set({ view }),
   setRawCap: (cap) => set({ rawCap: cap }),
+  reloadGalaxy: () => set((s) => ({ view: 'cluster', galaxyNonce: s.galaxyNonce + 1 })),
   setPulseParticlePos: (pos) => set({ pulseParticlePos: pos }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' as const })),
   setExporting: (v) => set({ isExporting: v }),
