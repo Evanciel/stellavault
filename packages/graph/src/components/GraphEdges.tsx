@@ -14,6 +14,8 @@ export function GraphEdges() {
 
   const theme = useGraphStore((s) => s.theme);
   const isLight = theme === 'light';
+  const view = useGraphStore((s) => s.view);
+  const isClusterView = view === 'cluster' && nodes.some((n) => n.isCluster);
   const activeId = hoveredNodeId || selectedNodeId;
   const hasPulse = highlightedNodeIds.size > 0;
 
@@ -66,12 +68,20 @@ export function GraphEdges() {
     if (!dimMatRef.current) return;
     const dist = camera.position.length();
     let fade = 1;
-    if (dist > 500) fade = 0;
-    else if (dist > 300) fade = 1 - (dist - 300) / 200;
+    if (isClusterView) {
+      // The cluster GALAXY is framed from ~600+, so the raw view's 300→500 fade would zero
+      // the meta-edges entirely (the "links invisible" report). The skeleton is only ~56
+      // aggregated edges — keep it visible far out, fading only when truly zoomed away.
+      if (dist > 1700) fade = 0;
+      else if (dist > 1300) fade = 1 - (dist - 1300) / 400;
+    } else {
+      if (dist > 500) fade = 0;
+      else if (dist > 300) fade = 1 - (dist - 300) / 200;
+    }
 
     const baseOpacity = isLight
-      ? (hasInteraction ? 0.03 : 0.35)
-      : (hasInteraction ? 0.005 : 0.1);
+      ? (hasInteraction ? 0.03 : (isClusterView ? 0.5 : 0.35))
+      : (hasInteraction ? 0.005 : (isClusterView ? 0.5 : 0.1));
     dimMatRef.current.opacity = baseOpacity * fade;
   });
 
@@ -81,7 +91,9 @@ export function GraphEdges() {
         <lineSegments geometry={dimGeo}>
           <lineBasicMaterial
             ref={dimMatRef}
-            color={isLight ? '#8890a0' : '#4466aa'}
+            // Cluster meta-edges get a brighter tint than the raw synapse colour so the galaxy
+            // skeleton actually reads at the far cluster-view camera distance.
+            color={isLight ? '#8890a0' : (isClusterView ? '#7da6e8' : '#4466aa')}
             transparent
             opacity={isLight ? 0.3 : 0.1}
             depthWrite={false}

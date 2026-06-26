@@ -10,6 +10,22 @@
 import { Billboard, Text } from '@react-three/drei';
 import { useGraphStore } from '../stores/graph-store.js';
 
+// Cluster palette (matches GraphNodes.tsx PALETTE order) — the label is tinted to its OWN
+// cluster colour instead of stark white, so it reads as part of the dot rather than a row of
+// equally-loud captions. Each is softened toward white for legibility on the dark canvas.
+const PALETTE_HEX = [
+  '#7c3aed', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
+  '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
+  '#14b8a6', '#e879f9', '#eab308', '#22d3ee', '#fb7185',
+];
+
+/** Lighten a hex toward white by `t` (0..1) so saturated cluster colours stay readable. */
+function soften(hex: string, t: number): string {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  const mix = (c: number) => Math.round(c + (255 - c) * t);
+  return `#${[mix(r), mix(g), mix(b)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
 export function ClusterLabels() {
   const nodes = useGraphStore((s) => s.nodes);
   const hiddenClusters = useGraphStore((s) => s.hiddenClusters);
@@ -19,26 +35,36 @@ export function ClusterLabels() {
   const clusterNodes = nodes.filter((n) => n.isCluster && n.position);
   if (clusterNodes.length === 0) return null;
 
-  // Outline contrasts against whichever canvas background is active.
+  // The biggest cluster anchors the relative scale so opacity/size de-emphasise the long tail
+  // of small clusters (the source of the "too many equally-white captions" clutter).
+  const maxMc = Math.max(...clusterNodes.map((n) => n.memberCount ?? 1), 1);
+  // Outline contrasts against whichever canvas background is active (kept thin).
   const outlineColor = isLight ? '#ffffff' : '#05050f';
-  const fillColor = isLight ? '#1a1a2e' : '#e6e9ff';
 
   return (
     <group>
       {clusterNodes.map((n) => {
         if (hiddenClusters.has(n.clusterId)) return null;
         const mc = n.memberCount ?? 1;
-        // Mirror the dot's clamped sizing (2 + min(12, sqrt(memberCount))) so big clusters get
-        // bigger labels WITHOUT illegible extremes from raw-proportional fontSize.
-        const fontSize = 4 + 0.6 * Math.min(12, Math.sqrt(mc));
+        const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
+        // Mirror the dot's clamped sizing but a touch smaller, so the galaxy isn't all-caps soup.
+        const fontSize = 3 + 0.5 * Math.min(12, Math.sqrt(mc));
+        // Tint to the cluster colour instead of white: saturated as-is on the light canvas,
+        // softened toward white on the dark canvas so it stays legible without shouting.
+        const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
+        const fillColor = isLight ? base : soften(base, 0.55);
+        // Small clusters recede; the few large ones carry the eye. Range ~0.45..0.95.
+        const fillOpacity = 0.45 + 0.5 * rel;
         const [x, y, z] = n.position!;
         return (
           <Billboard key={n.id} position={[x, y + n.size * 1.5 + 6, z]}>
             <Text
               fontSize={fontSize}
               color={fillColor}
-              outlineWidth={fontSize * 0.08}
+              fillOpacity={fillOpacity}
+              outlineWidth={fontSize * 0.06}
               outlineColor={outlineColor}
+              outlineOpacity={fillOpacity * 0.8}
               anchorX="center"
               anchorY="middle"
               maxWidth={160}
