@@ -49,10 +49,10 @@ export function ClusterLabels() {
         const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
         // Mirror the dot's clamped sizing but a touch smaller, so the galaxy isn't all-caps soup.
         const fontSize = 3 + 0.5 * Math.min(12, Math.sqrt(mc));
-        // Tint to the cluster colour instead of white: saturated as-is on the light canvas,
-        // softened toward white on the dark canvas so it stays legible without shouting.
+        // Tint to the cluster colour — keep it COLOURFUL: only a light lift toward white on the
+        // dark canvas for legibility (the dark outline carries the contrast), saturated on light.
         const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
-        const fillColor = isLight ? base : soften(base, 0.55);
+        const fillColor = isLight ? base : soften(base, 0.28);
         // Small clusters recede; the few large ones carry the eye. Range ~0.45..0.95.
         const fillOpacity = 0.45 + 0.5 * rel;
         const [x, y, z] = n.position!;

@@ -44,12 +44,15 @@ export function Tooltip() {
             border: '1px solid rgba(100, 120, 255, 0.3)',
             borderRadius: '8px',
             padding: '8px 12px',
-            maxWidth: '250px',
+            // width:max-content (capped) so the abspos drei <Html center> box wraps at the box
+            // edge instead of collapsing to min-content (= one WORD per line → looked vertical).
+            width: 'max-content',
+            maxWidth: '260px',
             backdropFilter: 'blur(8px)',
             transform: 'translateY(-40px)',
           }}>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#e0e0f0', marginBottom: '4px', lineHeight: 1.3 }}>
-              {hoveredNode.label}
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#e0e0f0', marginBottom: '4px', lineHeight: 1.35, wordBreak: 'break-word' }}>
+              {hoveredNode.label.length > 90 ? `${hoveredNode.label.slice(0, 88)}…` : hoveredNode.label}
             </div>
             {hoveredNode.tags.length > 0 && (
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px' }}>

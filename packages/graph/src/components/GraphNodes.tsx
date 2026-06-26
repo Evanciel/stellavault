@@ -176,16 +176,16 @@ export function GraphNodes() {
       let sz = 4 + node.size * 3;
       let gsz = 12 + node.size * 8;
 
-      // Super-node anchor boost: a cluster dot stands for up to ~200 notes, so make it clearly
-      // brighter + bigger (with a stronger glow halo) than the meta-edge skeleton — otherwise the
-      // dim raw-palette dot disappears under the lines in the cluster view. Propagates into the
-      // hover/select branches below (they multiply from here).
+      // Super-node = a PLANET (lit sphere drawn by <ClusterPlanets/>), so the flat Points sprite
+      // shrinks to a tiny bright core hidden inside the sphere — it stays ONLY so the existing
+      // Points raycaster keeps hover/drilldown working (threshold-based, independent of size).
+      // A modest halo reads as the planet's atmosphere glow. Brightness lift keeps the core warm.
       if (node.isCluster) {
         r = Math.min(r * 0.55 + 0.45, 1);
         g = Math.min(g * 0.55 + 0.45, 1);
         b = Math.min(b * 0.55 + 0.45, 1);
-        sz *= 1.8;
-        gsz *= 2.0;
+        sz *= 0.32;
+        gsz *= 0.9;
       }
 
       // Design Ref: §2.3 — F06 히트맵 오버레이 (decay와 상호 배타)

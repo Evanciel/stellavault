@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { GraphNodes } from './GraphNodes.js';
 import { GraphEdges } from './GraphEdges.js';
 import { ClusterLabels } from './ClusterLabels.js';
+import { ClusterPlanets } from './ClusterPlanets.js';
 import { StarField } from './StarField.js';
 import { Tooltip } from './Tooltip.js';
 import { PulseAnimator } from './PulseParticle.js';
@@ -82,6 +83,7 @@ function Scene() {
       <StarField />
       <GraphEdges />
       <GraphNodes />
+      <ClusterPlanets />
       <ClusterLabels />
       <ConstellationView />
       <PulseAnimator />
