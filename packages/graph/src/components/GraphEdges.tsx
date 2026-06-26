@@ -82,8 +82,8 @@ export function GraphEdges() {
     // Compromise: the meta-edges must be VISIBLE at the far cluster distance, but not so loud
     // they bury the super-node dots. ~0.28 reads as a faint skeleton the nodes still sit above.
     const baseOpacity = isLight
-      ? (hasInteraction ? 0.03 : (isClusterView ? 0.3 : 0.35))
-      : (hasInteraction ? 0.005 : (isClusterView ? 0.28 : 0.1));
+      ? (hasInteraction ? 0.03 : (isClusterView ? 0.26 : 0.35))
+      : (hasInteraction ? 0.005 : (isClusterView ? 0.2 : 0.1));
     dimMatRef.current.opacity = baseOpacity * fade;
   });
 
@@ -93,9 +93,10 @@ export function GraphEdges() {
         <lineSegments geometry={dimGeo}>
           <lineBasicMaterial
             ref={dimMatRef}
-            // Cluster meta-edges get a brighter tint than the raw synapse colour so the galaxy
-            // skeleton actually reads at the far cluster-view camera distance.
-            color={isLight ? '#8890a0' : (isClusterView ? '#7da6e8' : '#4466aa')}
+            // Cluster meta-edges: a muted indigo that blends with the dark galaxy mood (the
+            // bright #7da6e8 competed with the nodes). Kept visible via the distance-fade fix +
+            // base opacity, not by shouting in colour.
+            color={isLight ? '#8890a0' : (isClusterView ? '#5a6699' : '#4466aa')}
             transparent
             opacity={isLight ? 0.3 : 0.1}
             depthWrite={false}
