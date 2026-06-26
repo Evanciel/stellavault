@@ -174,7 +174,9 @@ export function ClusterPlanets() {
         <Planet
           key={n.id}
           position={n.position as [number, number, number]}
-          radius={1.6 + (n.size ?? 3) * 0.9}
+          // Smaller than the old flat-dot size — as actual spheres in a ~125-radius galaxy the
+          // big-cluster planets otherwise touch/overlap. Range ≈ 1.5 (small) .. 6 (largest).
+          radius={0.7 + (n.size ?? 3) * 0.4}
           color={PALETTE_HEX[n.clusterId % PALETTE_HEX.length]}
           seed={n.clusterId}
           // spread the 5 types across clusters; +the cluster's own id so colour≠type lockstep

@@ -50,12 +50,13 @@ function Scene() {
   // NOT on the worker's per-frame position updates (same count+id), so it fires once per swap.
   // fitView is content-aware + NaN-guarded; cluster super-nodes are baked (ready), raw/members
   // come from the async force worker (wait for it to settle).
-  const didFitMountRef = useRef(false);
   const fitSig = `${view}|${fitNodes.length}|${fitNodes[0]?.id ?? ''}`;
   useEffect(() => {
-    if (!didFitMountRef.current) { didFitMountRef.current = true; return; }
+    if (fitNodes.length === 0) return; // nothing loaded yet — fit on the next (data) change
+    // Fit on the first populated paint AND every swap. Cluster super-nodes are baked (ready);
+    // raw/drilled members come from the async force worker (wait for it to settle).
     const isClusterGalaxy = view === 'cluster' && !!fitNodes[0]?.isCluster;
-    const id = setTimeout(() => (window as any).__sv_fitView?.(), isClusterGalaxy ? 350 : 1200);
+    const id = setTimeout(() => (window as any).__sv_fitView?.(), isClusterGalaxy ? 400 : 1200);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitSig]);
@@ -213,13 +214,19 @@ export function Graph3D() {
       const cen = [0, 0, 0];
       for (const p of pts) { cen[0] += p[0]; cen[1] += p[1]; cen[2] += p[2]; }
       cen[0] /= pts.length; cen[1] /= pts.length; cen[2] /= pts.length;
-      let maxR = 0;
-      for (const p of pts) { const r = Math.hypot(p[0] - cen[0], p[1] - cen[1], p[2] - cen[2]); if (r > maxR) maxR = r; }
-      if (!Number.isFinite(maxR) || maxR < 1) maxR = 100;
+      // Use a PERCENTILE radius, not the absolute max: the force-settled galaxy is dense in the
+      // middle with a few far outliers, so framing to the true max leaves the bulk tiny. The 88th
+      // percentile frames the body (a couple of outliers may sit just past the edge — fine).
+      const dists = pts
+        .map((p) => Math.hypot(p[0] - cen[0], p[1] - cen[1], p[2] - cen[2]))
+        .sort((a, b) => a - b);
+      let r = dists[Math.floor(dists.length * 0.88)] ?? dists[dists.length - 1] ?? 100;
+      // FLOOR it: if the fit fires while the set is small / half-settled (mid force-layout), a
+      // tiny radius would dolly the camera way too close → the galaxy overflows + planets look
+      // enormous (the reported over-zoom). 85 keeps a sane minimum distance.
+      r = Number.isFinite(r) ? Math.max(r, 85) : 120;
       const fov = ((cam.fov ?? 50) * Math.PI) / 180;
-      // margin 1.1 ≈ the fresh-load framing (most clusters sit central with a few outliers at maxR,
-      // so a tight margin fills the view like the initial paint rather than leaving a shrunken blob).
-      const dist = Math.min(1900, (maxR * 1.1) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      const dist = Math.min(1900, (r * 1.35) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
       const center = new THREE.Vector3(cen[0], cen[1], cen[2]);
       const dir = controls.object.position.clone().sub(controls.target).normalize();
       const endPos = center.clone().add(dir.multiplyScalar(dist));
@@ -332,7 +339,7 @@ export function Graph3D() {
   return (
     <>
     <Canvas
-      camera={{ position: [0, 100, 600], fov: 55, near: 1, far: 5000 }}
+      camera={{ position: [0, 70, 360], fov: 55, near: 1, far: 5000 }}
       raycaster={{ params: { Points: { threshold: 15 } } } as any}
       style={{ background: bgStyle }}
       gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}

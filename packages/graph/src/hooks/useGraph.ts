@@ -29,8 +29,11 @@ export function useGraph() {
 
         let positioned;
         if (!initialLoadDone.current) {
-          // 첫 로드: 랜덤 위치 (force layout이 이후 정리)
+          // 첫 로드: 랜덤 위치 (force layout이 이후 정리) — 단, 클러스터 슈퍼노드는 서버가 구운
+          // 갤럭시 위치를 그대로 쓴다(랜덤이면 첫 페인트가 흩어지고 maxR이 reload와 달라져 카메라
+          // fit이 들쭉날쭉해진다 — else 분기와 동일 규칙).
           positioned = nodes.map((n: any) => {
+            if (n.isCluster && n.position) return n;
             const pos: [number, number, number] = [
               (Math.random() - 0.5) * 500,
               (Math.random() - 0.5) * 500,
