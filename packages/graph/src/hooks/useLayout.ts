@@ -5,20 +5,40 @@ import { useGraphStore } from '../stores/graph-store.js';
 
 export function useLayout() {
   const ranRef = useRef(false);
+  const sigRef = useRef<string>('');
+  const workerRef = useRef<Worker | null>(null);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
-  const clusters = useGraphStore((s) => s.clusters);
+  const view = useGraphStore((s) => s.view);
   const setGraphData = useGraphStore((s) => s.setGraphData);
 
   useEffect(() => {
-    // 첫 로드에만 실행
-    if (nodes.length === 0 || ranRef.current) return;
+    // Swap-sensitive signature. The old dep was the BOOLEAN `[nodes.length > 0]`, which does
+    // NOT change on a raw↔cluster↔drilldown swap (both true) → the effect never re-ran and
+    // ranRef reset was dead. This signature changes on node-count change, first-node-id change
+    // (drilldown / cluster→raw), AND view change → the worker re-layouts those swaps.
+    const sig = `${nodes.length}:${nodes[0]?.id ?? ''}:${view}`;
+    if (sig !== sigRef.current) {
+      sigRef.current = sig;
+      ranRef.current = false; // new node-set → allow a fresh layout pass
+    }
+
+    // The cluster SUPER-NODE view carries baked galaxy positions from the server — never
+    // re-layout it (detect by isCluster, NOT by view: a drilldown keeps view='cluster' but
+    // swaps in member nodes that have NO server positions and DO need the worker). Also skip
+    // an empty set. Raw + drilled-down members fall through to the worker.
+    if (nodes[0]?.isCluster || nodes.length === 0) return;
+    if (ranRef.current) return;
     ranRef.current = true;
 
+    // Terminate any in-flight worker from a prior node-set before spawning a new one, so
+    // toggling raw↔drilldown doesn't accumulate orphaned layout Workers.
+    workerRef.current?.terminate();
     const worker = new Worker(
       new URL('../lib/layout.worker.ts', import.meta.url),
       { type: 'module' },
     );
+    workerRef.current = worker;
 
     worker.onmessage = (e) => {
       const { type, positions } = e.data;
@@ -41,5 +61,5 @@ export function useLayout() {
     });
 
     return () => worker.terminate();
-  }, [nodes.length > 0]);
+  }, [nodes.length, nodes[0]?.id, view, edges, setGraphData]);
 }

@@ -6,7 +6,7 @@ import cors from 'cors';
 import { randomBytes } from 'node:crypto';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
-import { buildGraphData, type BuildGraphOptions } from './graph-data.js';
+import { buildGraphData, buildClusteredGraph, flattenClusterLevel, type BuildGraphOptions, type BuildClusteredOptions, type ClusteredGraph } from './graph-data.js';
 import type { GraphData } from '../types/graph.js';
 import { createFederationRouter } from './routes/federation.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
@@ -115,35 +115,99 @@ export function createApiServer(options: ApiServerOptions) {
     app.use(express.static(graphUiPath, { index: 'index.html', extensions: ['html'] }));
   }
 
-  // GET /api/graph?mode=semantic|folder — 전체 그래프 데이터
+  // GET /api/graph?view=cluster|raw&mode=semantic|folder&cap=N — 전체 그래프 데이터.
+  // `view` (default cluster) is ORTHOGONAL to `mode` (semantic|folder): mode decides how
+  // clusters form, view decides whether the client sees folded super-nodes (cluster) or
+  // individual notes (raw). The cluster view is cheap to RENDER (≤80 dots) but the FIRST
+  // uncached build of EITHER view runs a scoped-embedding load + O(n²) all-pairs cosine +
+  // k-means + force-settle — a multi-second single-threaded Express event-loop stall. The
+  // client must show a loading state on the toggle so the tap isn't silently swallowed.
   const GRAPH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  interface GraphCacheEntry { data: GraphData; generatedAt: string; cachedAt: number }
+  type GraphView = 'cluster' | 'raw';
+  // Store BOTH the flattened GraphData (returned to clients) AND, for cluster keys, the raw
+  // ClusteredGraph (so /api/graph/cluster/:id can reuse its members Map without a rebuild
+  // that would re-run k-means → DIFFERENT cluster assignments).
+  interface GraphCacheEntry { data: GraphData; clustered?: ClusteredGraph; generatedAt: string; cachedAt: number }
   const graphCaches = new Map<string, GraphCacheEntry>();
+
+  function parseView(q: unknown): GraphView { return q === 'raw' ? 'raw' : 'cluster'; }
+  function parseMode(q: unknown): 'semantic' | 'folder' { return q === 'folder' ? 'folder' : 'semantic'; }
+
+  // Clamp the requested cap to a small whitelist (round to nearest 1000) per view. This is
+  // what bounds cache cardinality (~a handful of `view:mode:cap` keys, NOT the TTL — the Map
+  // only overwrites/clears, it never evicts on expiry) AND prevents ?cap spam from minting
+  // unbounded fresh O(n²) builds (project Threat Model "service denial"). raw is the
+  // expensive direction (full-cap buildGraphData) so it is clamped tighter (≤4000); cluster
+  // only feeds clusterCap (~3000) into buildGraphData so it tolerates a higher ceiling.
+  // undefined cap → '' sentinel so the default build occupies a single cache slot.
+  function clampCap(view: GraphView, raw: number): number | undefined {
+    if (!Number.isFinite(raw) || raw <= 0) return undefined;
+    const max = view === 'raw' ? 4000 : 6000;
+    const rounded = Math.round(raw / 1000) * 1000;
+    return Math.max(1000, Math.min(max, rounded));
+  }
+
+  async function buildGraphEntry(view: GraphView, mode: 'semantic' | 'folder', cap: number | undefined): Promise<GraphCacheEntry> {
+    const now = new Date().toISOString();
+    if (view === 'cluster') {
+      const g = await buildClusteredGraph(store, { mode, clusterCap: cap });
+      return { data: flattenClusterLevel(g.clusterLevel), clustered: g, generatedAt: now, cachedAt: Date.now() };
+    }
+    const data = await buildGraphData(store, { mode, nodeCap: cap });
+    return { data, generatedAt: now, cachedAt: Date.now() };
+  }
 
   app.get('/api/graph', async (req, res) => {
     try {
-      const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
-      const cached = graphCaches.get(mode);
+      const view = parseView(req.query.view);
+      const mode = parseMode(req.query.mode);
+      const cap = clampCap(view, Number(req.query.cap));
+      const cacheKey = `${view}:${mode}:${cap ?? ''}`;
+      const cached = graphCaches.get(cacheKey);
       if (!cached || Date.now() - cached.cachedAt > GRAPH_CACHE_TTL) {
-        const data = await buildGraphData(store, { mode });
-        const now = new Date().toISOString();
-        graphCaches.set(mode, { data, generatedAt: now, cachedAt: Date.now() });
+        graphCaches.set(cacheKey, await buildGraphEntry(view, mode, cap));
       }
-      const entry = graphCaches.get(mode)!;
-      res.json({ data: entry.data, generatedAt: entry.generatedAt, mode });
+      const entry = graphCaches.get(cacheKey)!;
+      res.json({ data: entry.data, generatedAt: entry.generatedAt, mode, view });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
     }
   });
 
-  // GET /api/graph/refresh?mode= — 캐시 무효화 + 재생성
+  // GET /api/graph/refresh?view=&mode=&cap= — 캐시 무효화 + 재생성.
+  // MUST mirror the SAME composite key + parse + build branch as /api/graph, else refresh
+  // writes one key and the GET reads another → silent no-op.
   app.get('/api/graph/refresh', async (req, res) => {
     try {
-      const mode = (req.query.mode as string) === 'folder' ? 'folder' : 'semantic';
-      const data = await buildGraphData(store, { mode });
-      const now = new Date().toISOString();
-      graphCaches.set(mode, { data, generatedAt: now, cachedAt: Date.now() });
-      res.json({ data, generatedAt: now, mode });
+      const view = parseView(req.query.view);
+      const mode = parseMode(req.query.mode);
+      const cap = clampCap(view, Number(req.query.cap));
+      const cacheKey = `${view}:${mode}:${cap ?? ''}`;
+      const entry = await buildGraphEntry(view, mode, cap);
+      graphCaches.set(cacheKey, entry);
+      res.json({ data: entry.data, generatedAt: entry.generatedAt, mode, view });
+    } catch (err) {
+      console.error(err); res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/graph/cluster/:id?mode=&cap= — drill-down: one cluster's members + intra-edges.
+  // Reuses the cached ClusteredGraph's members Map (NO scoped rebuild — that would re-run
+  // k-means and yield DIFFERENT cluster ids). Rebuilds + re-caches only if the cluster cache
+  // entry is missing/TTL-expired.
+  app.get('/api/graph/cluster/:id', async (req, res) => {
+    try {
+      const mode = parseMode(req.query.mode);
+      const cap = clampCap('cluster', Number(req.query.cap));
+      const cacheKey = `cluster:${mode}:${cap ?? ''}`;
+      let cached = graphCaches.get(cacheKey);
+      if (!cached || !cached.clustered || Date.now() - cached.cachedAt > GRAPH_CACHE_TTL) {
+        cached = await buildGraphEntry('cluster', mode, cap);
+        graphCaches.set(cacheKey, cached);
+      }
+      const members = cached.clustered!.members.get(Number(req.params.id));
+      if (!members) { res.status(404).json({ error: 'Cluster not found' }); return; }
+      res.json({ data: members });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
     }

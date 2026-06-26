@@ -1,6 +1,6 @@
 // 시냅스 엣지 — hover 강조 + pulse + 줌아웃 시 페이드
 
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
@@ -52,6 +52,12 @@ export function GraphEdges() {
 
     return { litGeo: make(litPos), dimGeo: make(dimPos) };
   }, [nodes, edges, activeId, hasPulse, highlightedNodeIds]);
+
+  // Dispose the raw BufferGeometries from the PREVIOUS memo output. make() allocates new
+  // THREE.BufferGeometry imperatively and the deps include activeId/highlight, so this fires
+  // on HOVER (not just toggle) — without disposal the old GPU geometries leaked every churn,
+  // compounded by the full edge swap on every cluster↔raw toggle.
+  useEffect(() => () => { litGeo?.dispose(); dimGeo?.dispose(); }, [litGeo, dimGeo]);
 
   const hasInteraction = hasPulse || !!activeId;
 

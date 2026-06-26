@@ -6,6 +6,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GraphNodes } from './GraphNodes.js';
 import { GraphEdges } from './GraphEdges.js';
+import { ClusterLabels } from './ClusterLabels.js';
 import { StarField } from './StarField.js';
 import { Tooltip } from './Tooltip.js';
 import { PulseAnimator } from './PulseParticle.js';
@@ -38,7 +39,23 @@ function Scene() {
   const highlightedNodeIds = useGraphStore((s) => s.highlightedNodeIds);
   const theme = useGraphStore((s) => s.theme);
   const isLight = theme === 'light';
+  const view = useGraphStore((s) => s.view);
   const controlsRef = useRef<any>(null);
+
+  // Re-fit the camera whenever the view swaps (cluster<->raw). The new content has a
+  // different extent, so without this the camera keeps the prior framing and the galaxy
+  // looks shrunken/oversized on toggle-back (resetCamera animates to the standard origin
+  // framing, content-independent). Skip the first mount — the initial framing is already set.
+  const didFitMountRef = useRef(false);
+  useEffect(() => {
+    if (!didFitMountRef.current) { didFitMountRef.current = true; return; }
+    // Only re-fit when landing on CLUSTER (raw→cluster is the toggle-back that looks shrunken).
+    // Cluster positions are server-baked & clean; raw positions come from the async force worker
+    // (transient NaN mid-sim), and raw's default framing is already fine — so don't fit raw.
+    if (view !== 'cluster') return;
+    const id = setTimeout(() => (window as any).__sv_fitView?.(), 350);
+    return () => clearTimeout(id);
+  }, [view]);
 
   const shouldSpin = !hoveredNodeId && !selectedNodeId && highlightedNodeIds.size === 0;
 
@@ -65,6 +82,7 @@ function Scene() {
       <StarField />
       <GraphEdges />
       <GraphNodes />
+      <ClusterLabels />
       <ConstellationView />
       <PulseAnimator />
       <Tooltip />
@@ -111,6 +129,32 @@ export function Graph3D() {
       setTimeout(() => {
         const currentState = useGraphStore.getState();
         if (currentState.hoveredNodeId) {
+          // Cluster super-node click → drill down. FULL-REPLACE the graph with this cluster's
+          // members + intra-edges (desktop parity), instead of opening an empty NodeDetail.
+          // members carry un-laid-out positions, so the full-replace changes nodes[0].id and
+          // useLayout's swap-sensitive signature reheats the opened cluster via the worker.
+          const m = /^cluster:(\d+)$/.exec(currentState.hoveredNodeId);
+          const hovered = currentState.nodes.find((nn) => nn.id === currentState.hoveredNodeId);
+          if (m || hovered?.isCluster) {
+            const cid = m ? m[1] : String(hovered!.clusterId);
+            const { mode, view, rawCap } = currentState;
+            const capParam = view === 'raw' ? `&cap=${rawCap}` : '';
+            currentState.setLoading(true);
+            fetch(`/api/graph/cluster/${cid}?view=cluster&mode=${mode}${capParam}`)
+              .then((r) => { if (!r.ok) throw new Error(`API error: ${r.status}`); return r.json(); })
+              .then((json) => {
+                const members = json.data;
+                const s = useGraphStore.getState();
+                s.selectNode(null);
+                s.setGraphData(members.members ?? [], members.intraEdges ?? [], s.clusters);
+                // members are re-laid-out by the worker (~1s) — content-fit once they've spread
+                // so the opened cluster isn't left tiny under the galaxy's camera distance.
+                setTimeout(() => (window as any).__sv_fitView?.(), 1100);
+              })
+              .catch((err) => useGraphStore.getState().setError(String(err)))
+              .finally(() => useGraphStore.getState().setLoading(false));
+            return;
+          }
           if (currentState.selectedNodeId === currentState.hoveredNodeId) {
             currentState.selectNode(null);
           } else {
@@ -150,6 +194,45 @@ export function Graph3D() {
       requestAnimationFrame(animate);
     }
     (window as any).__sv_resetCamera = resetCamera;
+
+    // Content-aware fit: frame the CURRENT node set (cluster super-nodes are server-baked;
+    // a fixed distance can't frame both the small cluster galaxy and the wide raw hairball,
+    // so compute the bounding sphere and dolly to fit). Keeps the current view direction.
+    function fitView() {
+      const controls = (window as any).__sv_controls?.current;
+      const cam = (window as any).__sv_camera as THREE.PerspectiveCamera | undefined;
+      if (!controls || !cam) return;
+      const pts = useGraphStore.getState().nodes
+        .map((n: any) => n.position)
+        .filter((p: any) => Array.isArray(p) && p.length === 3 && p.every((v: number) => Number.isFinite(v)));
+      if (pts.length === 0) return;
+      const cen = [0, 0, 0];
+      for (const p of pts) { cen[0] += p[0]; cen[1] += p[1]; cen[2] += p[2]; }
+      cen[0] /= pts.length; cen[1] /= pts.length; cen[2] /= pts.length;
+      let maxR = 0;
+      for (const p of pts) { const r = Math.hypot(p[0] - cen[0], p[1] - cen[1], p[2] - cen[2]); if (r > maxR) maxR = r; }
+      if (!Number.isFinite(maxR) || maxR < 1) maxR = 100;
+      const fov = ((cam.fov ?? 50) * Math.PI) / 180;
+      // margin 1.1 ≈ the fresh-load framing (most clusters sit central with a few outliers at maxR,
+      // so a tight margin fills the view like the initial paint rather than leaving a shrunken blob).
+      const dist = Math.min(1900, (maxR * 1.1) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      const center = new THREE.Vector3(cen[0], cen[1], cen[2]);
+      const dir = controls.object.position.clone().sub(controls.target).normalize();
+      const endPos = center.clone().add(dir.multiplyScalar(dist));
+      const startTarget = controls.target.clone();
+      const startPos = controls.object.position.clone();
+      let t = 0;
+      function animate() {
+        t += 0.03; if (t > 1) t = 1;
+        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        controls.target.lerpVectors(startTarget, center, ease);
+        controls.object.position.lerpVectors(startPos, endPos, ease);
+        controls.update();
+        if (t < 1) requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
+    (window as any).__sv_fitView = fitView;
 
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;

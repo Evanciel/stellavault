@@ -11,6 +11,13 @@ export interface GraphNode {
   source?: string;
   type?: string;
   lastModified?: string;
+  // ─── Cluster-view fields (set only on flattened super-nodes, see graph-data.ts flattenClusterLevel) ───
+  /** true when this GraphNode is a folded cluster super-node (id `cluster:<N>`). */
+  isCluster?: boolean;
+  /** # of notes folded into this super-node (drives label + size). */
+  memberCount?: number;
+  /** Most-connected member id (opened on drill-down). */
+  representativeId?: string;
 }
 
 export interface GraphEdge {

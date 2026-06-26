@@ -4,11 +4,13 @@
 import { Router } from 'express';
 import type { VectorStore } from '../../store/types.js';
 import type { GraphData } from '../../types/graph.js';
-import { buildGraphData } from '../graph-data.js';
+import { buildGraphData, type ClusteredGraph } from '../graph-data.js';
 
 interface ProfileCardOptions {
   store: VectorStore;
-  graphCaches: Map<string, { data: GraphData; generatedAt: string; cachedAt: number }>;
+  // clustered? matches server.ts GraphCacheEntry (cluster-view drilldown reuse); this router
+  // keys by bare mode and never reads it, but the shared Map type must stay assignable.
+  graphCaches: Map<string, { data: GraphData; clustered?: ClusteredGraph; generatedAt: string; cachedAt: number }>;
   GRAPH_CACHE_TTL: number;
 }
 

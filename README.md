@@ -242,10 +242,37 @@ plus **FSRS recency** and session-adaptive reranking (see [Search & Ranking](#se
 ## 3D Visualization
 
 - Neural graph with cluster coloring (React Three Fiber)
+- **Cluster view (default)** — a large vault folds into a small galaxy of labeled cluster
+  super-nodes; an in-viewer `[Cluster | All nodes]` toggle switches to the dense raw view
+  without reload, and clicking a super-node drills into that cluster's members
 - Constellation view (MST star patterns)
 - Heatmap overlay + Timeline slider + Decay overlay
 - Multiverse view — your vault as a universe in a P2P network
 - Dark/Light theme
+
+### Graph viewer scaling
+
+The 3D graph renderer is bounded by two environment knobs (set them in the environment
+before launching `stellavault graph`):
+
+| Env var | Default | Applies to | What it caps |
+| --- | --- | --- | --- |
+| `GRAPH_NODE_CAP` | `1500` | **raw / "All nodes"** view | # of (most-recent) notes rendered as individual nodes. |
+| `GRAPH_CLUSTER_CAP` | `3000` | **cluster** view (default) | # of notes folded into the galaxy before clustering. |
+
+**Why the caps matter.** Edge construction is an inline **O(n²) all-pairs cosine** loop —
+`n·(n-1)/2` pairs, each over 384 dims (see `packages/core/src/api/graph-data.ts`, the
+`neighbors` loop). At `cap=3000` that is ~4.5M pairs (the multi-second build the 5-minute
+server cache absorbs); raising toward 13000 is ~84M pairs = **minutes** of build plus a
+multi-GB intermediate array that **freezes the single-threaded Express handler** (there is no
+worker). The raw "All nodes" path is the expensive direction (it runs the full cap), so the
+server clamps the requested `?cap` per view (raw ≤ 4000, cluster ≤ 6000, rounded) to bound
+both build cost and cache cardinality.
+
+**Even the default cluster view is cheap to RENDER, not to BUILD.** The first uncached fetch
+of either view runs the scoped-embedding load + the O(n²) cosine pass + k-means + a force
+settle on a single thread, stalling the handler for seconds. The viewer shows a loading state
+on the toggle so the tap isn't silently swallowed during that cold build.
 
 <table>
   <tr>
