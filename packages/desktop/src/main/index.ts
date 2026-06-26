@@ -11,6 +11,7 @@ import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskRespo
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { SecretStore } from './secret-store.js';
+import { OpenAiOAuth, OAuthError, type OAuthProgress } from './oauth-openai.js';
 import { migrateLegacyApiKey } from './migrate-legacy-api-key.js';
 import { assertInsideVault, sanitizeAssetName, assertAssetSize, ALLOWED_IMAGE_EXT, MAX_CHAT_IMAGE_BYTES, assertImageMatches, sniffMediaType, ALLOWED_MEDIA_EXT, MAX_CHAT_MEDIA_BYTES, assertMediaMatches } from './path-safety.js';
 import { OrchestrationEngine } from './orchestration/engine.js';
@@ -132,6 +133,7 @@ function broadcastSettingsChanged(settings: AppSettings): void {
     settings,
     (p) => !!secretStore?.hasSecret(p),
     secretStore?.isPersistent() ?? false,
+    oauthRedactStatus(),
   );
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('settings:changed', safe);
@@ -153,6 +155,111 @@ function getAiConfig(): LlmConfig | undefined {
   } catch {
     return undefined;
   }
+}
+
+// ─── Track B: Sign in with ChatGPT (Codex device-code OAuth) ─────────────────
+// EXPERIMENTAL, off-by-default. DOUBLE-GATED:
+//  (1) OAUTH_EXPERIMENTAL — env flag read ONCE at startup (a renderer can never flip it).
+//  (2) a MAIN-ONLY consent file (~/.stellavault/oauth-consent.json) — NOT in settings:set, so a
+//      compromised renderer cannot spoof consent; only the dialog-driven oauth:start-device records it.
+const OAUTH_EXPERIMENTAL = process.env.STELLAVAULT_OAUTH_EXPERIMENTAL === '1';
+const OAUTH_CONSENT_FILE = join(homedir(), '.stellavault', 'oauth-consent.json');
+let oauth: OpenAiOAuth | null = null;
+
+function getOauth(): OpenAiOAuth {
+  if (!oauth) {
+    if (!secretStore) secretStore = new SecretStore();
+    oauth = new OpenAiOAuth({ secretStore });
+  }
+  return oauth;
+}
+
+/** Has the user recorded device-flow consent (main-only file)? Re-checked before every device call. */
+function oauthConsentGranted(): boolean {
+  try {
+    if (!existsSync(OAUTH_CONSENT_FILE)) return false;
+    const j = JSON.parse(readFileSync(OAUTH_CONSENT_FILE, 'utf-8'));
+    return j?.accepted === true;
+  } catch { return false; }
+}
+
+/** Non-secret OAuth status for redactSecrets (never tokens). hasToken + the routing/plan metadata,
+ *  plus the experimental gate (drives the renderer's openai-chatgpt dropdown option). */
+function oauthRedactStatus(): { hasToken: boolean; accountId?: string; expiresAt?: number; plan?: string; experimental: boolean } {
+  if (!OAUTH_EXPERIMENTAL) return { hasToken: false, experimental: false };
+  try {
+    const s = getOauth().status();
+    return { hasToken: s.hasToken, accountId: s.accountId, expiresAt: s.expiresAt, plan: s.plan, experimental: true };
+  } catch {
+    return { hasToken: false, experimental: true };
+  }
+}
+
+/** Record consent (main-only) — written ONLY from the dialog-driven oauth:start-device handler. */
+function recordOauthConsent(): void {
+  try {
+    mkdirSync(dirname(OAUTH_CONSENT_FILE), { recursive: true });
+    writeFileSync(OAUTH_CONSENT_FILE, JSON.stringify({ accepted: true, ts: Date.now() }));
+  } catch (err) {
+    console.error('[main] oauth consent write failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/** Resolve the outbound auth headers for a provider. apikey/baseurl providers build them
+ *  synchronously (byte-identically to the inline header maps); openai-chatgpt awaits the OAuth
+ *  module (proactive refresh inside). Empty map when nothing is configured. */
+async function getAuthHeaders(provider: string, cfg: LlmConfig | undefined): Promise<Record<string, string>> {
+  if (provider === 'openai-chatgpt') {
+    if (!OAUTH_EXPERIMENTAL) return {};
+    try { return await getOauth().getValidAccessHeaders(); }
+    catch { return {}; } // not signed in / refresh failed → no headers (synthesizer returns null)
+  }
+  // apikey/baseurl providers: the synthesizer builds provider headers from cfg.apiKey itself; the
+  // resolved map is unused on those paths but kept non-null for a uniform call shape.
+  if (!cfg) return {};
+  return {};
+}
+
+/** Detect a 401-category failure from the synthesizer. callOpenAiChatGpt rejects with
+ *  `ChatGPT Responses API error 401` on an expired token — there is no error category on
+ *  this buffered path (unlike chat-engine's streaming onError), so we match the status in
+ *  the message. Anchored on " 401" / "401\b" so it can't false-positive on a body that
+ *  merely contains the digits 401 somewhere. */
+function isChatGptAuth401(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err ?? '');
+  return /\b401\b/.test(m);
+}
+
+/** Track B retry-once-on-401 for the BUFFERED Ask/Wiki synthesizer path (spec step 8/9).
+ *  The proactive ~60s refresh masks the common case, but a token can expire mid-Ask. For
+ *  provider 'openai-chatgpt' ONLY, wrap the synthesizer so its first 401 triggers a single
+ *  oauth.refresh() (single-flight), re-resolves headers via getAuthHeaders, and retries the
+ *  call exactly once with a fresh synthesizer; a second 401 surfaces (→ extractive fallback).
+ *  All other providers get the base synthesizer unchanged. */
+function withChatGptRefresh<T extends { synthesize: (args: any) => Promise<string> } | null | undefined>(
+  cfg: LlmConfig | undefined | null,
+  authHeaders: Record<string, string>,
+  build: (auth: Record<string, string>) => T,
+): T {
+  const base = build(authHeaders);
+  if (!base || cfg?.provider !== 'openai-chatgpt') return base;
+  const wrapped = {
+    ...base,
+    async synthesize(args: any): Promise<string> {
+      try {
+        return await base.synthesize(args);
+      } catch (err) {
+        if (!isChatGptAuth401(err)) throw err;
+        // Single 401 → refresh once (single-flight), rebuild with fresh headers, retry once.
+        await getOauth().refresh();
+        const fresh = await getAuthHeaders('openai-chatgpt', cfg);
+        const retry = build(fresh);
+        if (!retry) throw err; // refresh yielded no usable headers → surface the original 401
+        return await retry.synthesize(args);
+      }
+    },
+  };
+  return wrapped as T;
 }
 
 // ─── Core engine (lazy loaded to avoid blocking startup) ───
@@ -1270,7 +1377,9 @@ function registerIpcHandlers(config: AppConfig) {
         // returns a real synthesized + cited answer; otherwise null → askVault uses
         // its extractive search-list fallback (and the synthesizer itself falls back
         // internally on any LLM error, so a bad key never breaks Ask).
-        const synthesizer = makeSynthesizer(getAiConfig()) ?? undefined;
+        const askCfg = getAiConfig();
+        const askAuth = await getAuthHeaders(askCfg?.provider ?? 'none', askCfg);
+        const synthesizer = withChatGptRefresh(askCfg, askAuth, (auth) => makeSynthesizer(askCfg, auth) ?? undefined) ?? undefined;
         const res = await (core as any).askVault(searchEngine, question, { limit: 8, synthesizer });
         return {
           answer: res?.answer ?? '',
@@ -1319,9 +1428,22 @@ function registerIpcHandlers(config: AppConfig) {
     const safeSend = (ch: string, payload: unknown): void => {
       if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
     };
-    // 'openai-compatible' (Ollama/LM Studio) may legitimately have no key. Every other
-    // provider requires one — surface a categorised error instead of a stuck bubble.
-    if (!cfg || (!cfg.apiKey && cfg.provider !== 'openai-compatible')) {
+    // Track B (openai-chatgpt): gate on a VALID OAuth token (resolve headers) instead of apiKey.
+    // The resolved auth map rides cfg.authHeaders so chat-engine never touches the token store.
+    if (cfg && cfg.provider === 'openai-chatgpt') {
+      if (!OAUTH_EXPERIMENTAL) {
+        safeSend('chat:error', { streamId: req.streamId, message: 'ChatGPT sign-in is not enabled', category: 'key-missing' });
+        return;
+      }
+      try {
+        cfg.authHeaders = await getOauth().getValidAccessHeaders();
+      } catch {
+        safeSend('chat:error', { streamId: req.streamId, message: 'Sign in with ChatGPT to use this provider', category: 'key-missing' });
+        return;
+      }
+    } else if (!cfg || (!cfg.apiKey && cfg.provider !== 'openai-compatible')) {
+      // 'openai-compatible' (Ollama/LM Studio) may legitimately have no key. Every other
+      // provider requires one — surface a categorised error instead of a stuck bubble.
       safeSend('chat:error', { streamId: req.streamId, message: 'No AI provider configured', category: 'key-missing' });
       return;
     }
@@ -1437,33 +1559,60 @@ function registerIpcHandlers(config: AppConfig) {
     });
 
     try {
-      await chatStream({
-        cfg,
-        messages: v.clean,
-        ragOn: !!req.ragOn,
-        signal: controller.signal,
-        searchEngine, // module-level; may be null → engine null-guards
-        // Agent MEMORY (P1, §3.2/§4.5): always-injected pinned user facts, pre-scanned + capped.
-        // Injected for EVERY provider (agent + cloud/single-shot). '' when the store is empty.
-        coreMemory: buildCoreMemoryBlock(),
-        ...agentOpts,
-        onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
-        onDone: (citations, fullText: string) => {
-          safeSend('chat:done', { streamId: req.streamId, citations });
-          const assistant: ChatMessage = {
-            id: randomUUID(),
-            role: 'assistant',
-            text: fullText,
-            ts: Date.now(),
-            citations,
-          };
-          // Persist the full turn (user turns + the new assistant turn). The store
-          // debounces, redacts, and strips citation snippet bodies at rest.
-          chatSaveSession(req.sessionId, [...v.clean, assistant]);
-        },
-        onError: (message: string, category?: ErrorCategory) =>
-          safeSend('chat:error', { streamId: req.streamId, message, category: category ?? 'generic' }),
+      // Track B retry-once-on-401: the proactive ~60s refresh masks the common case, but a token
+      // can expire mid-use. On a categorized 401 (key-missing) for openai-chatgpt, refresh once
+      // (single-flight) and RE-ISSUE the stream with fresh headers; a second 401 surfaces. No
+      // tokens cross to the renderer — only the resolved Authorization/Account-ID headers ride cfg.
+      const runStream = (attempt: number): Promise<void> => new Promise<void>((resolveStream) => {
+        let settledOnce = false;
+        void chatStream({
+          cfg,
+          messages: v.clean,
+          ragOn: !!req.ragOn,
+          signal: controller.signal,
+          searchEngine, // module-level; may be null → engine null-guards
+          // Agent MEMORY (P1, §3.2/§4.5): always-injected pinned user facts, pre-scanned + capped.
+          // Injected for EVERY provider (agent + cloud/single-shot). '' when the store is empty.
+          coreMemory: buildCoreMemoryBlock(),
+          ...agentOpts,
+          onDelta: (d: string) => safeSend('chat:chunk', { streamId: req.streamId, delta: d }),
+          onDone: (citations, fullText: string) => {
+            safeSend('chat:done', { streamId: req.streamId, citations });
+            const assistant: ChatMessage = {
+              id: randomUUID(),
+              role: 'assistant',
+              text: fullText,
+              ts: Date.now(),
+              citations,
+            };
+            // Persist the full turn (user turns + the new assistant turn). The store
+            // debounces, redacts, and strips citation snippet bodies at rest.
+            chatSaveSession(req.sessionId, [...v.clean, assistant]);
+            if (!settledOnce) { settledOnce = true; resolveStream(); }
+          },
+          onError: (message: string, category?: ErrorCategory) => {
+            // Retry-once on a 401 (key-missing) for the OAuth provider, with a fresh token.
+            if (
+              attempt === 0 && cfg.provider === 'openai-chatgpt' && category === 'key-missing' &&
+              !controller.signal.aborted
+            ) {
+              void (async () => {
+                try {
+                  cfg.authHeaders = await getOauth().refreshAfter401(cfg.authHeaders?.Authorization?.replace(/^Bearer\s+/i, '') ?? '');
+                  if (!settledOnce) { settledOnce = true; resolveStream(runStream(1)); }
+                  return;
+                } catch { /* refresh failed → fall through to surface the error */ }
+                safeSend('chat:error', { streamId: req.streamId, message, category });
+                if (!settledOnce) { settledOnce = true; resolveStream(); }
+              })();
+              return;
+            }
+            safeSend('chat:error', { streamId: req.streamId, message, category: category ?? 'generic' });
+            if (!settledOnce) { settledOnce = true; resolveStream(); }
+          },
+        });
       });
+      await runStream(0);
     } catch (err) {
       // Generic message to the renderer; details stay console-only (and redacted by
       // chat-engine's own logging — never the key).
@@ -2085,6 +2234,7 @@ function registerIpcHandlers(config: AppConfig) {
       settingsStore.get(),
       (p) => !!secretStore?.hasSecret(p),
       secretStore?.isPersistent() ?? false,
+      oauthRedactStatus(),
     );
   });
   ipcMain.handle('settings:set', (_e, patch: Partial<AppSettings>) => {
@@ -2099,12 +2249,20 @@ function registerIpcHandlers(config: AppConfig) {
       // This also blocks null-deletion of ai fields via deepMerge's null=delete
       // sentinel (a renderer sending { ai: { provider: null } } would wipe the
       // provider from the stored object — self-DoS, not a key leak, but unwanted).
-      const { provider, model, baseURL } = rawPatch.ai as Record<string, unknown>;
+      const { provider, model, baseURL, oauthAccountId, oauthExpiresAt, hasToken, oauthPlan } =
+        rawPatch.ai as Record<string, unknown>;
       const safeAi: Record<string, unknown> = {};
       // Only propagate known scalar fields; silently ignore null/unknown keys.
       if (provider !== undefined && provider !== null) safeAi.provider = provider;
       if (model !== undefined && model !== null) safeAi.model = model;
       if (baseURL !== undefined && baseURL !== null) safeAi.baseURL = baseURL;
+      // Track B: accept ONLY non-secret OAuth status scalars (display mirror). NO consent field
+      // here — consent is main-only (oauth-consent.json), un-spoofable via settings:set; and NO
+      // token fields (refresh_token/access_token/id_token) — those are dropped by being unnamed.
+      if (oauthAccountId !== undefined && oauthAccountId !== null) safeAi.oauthAccountId = oauthAccountId;
+      if (oauthExpiresAt !== undefined && oauthExpiresAt !== null) safeAi.oauthExpiresAt = oauthExpiresAt;
+      if (hasToken !== undefined && hasToken !== null) safeAi.hasToken = hasToken;
+      if (oauthPlan !== undefined && oauthPlan !== null) safeAi.oauthPlan = oauthPlan;
       (rawPatch as Record<string, unknown>).ai = safeAi;
     }
 
@@ -2117,6 +2275,7 @@ function registerIpcHandlers(config: AppConfig) {
       merged,
       (p) => !!secretStore?.hasSecret(p),
       secretStore?.isPersistent() ?? false,
+      oauthRedactStatus(),
     );
   });
 
@@ -2187,6 +2346,42 @@ function registerIpcHandlers(config: AppConfig) {
   ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
     if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
     secretStore?.clearSecret(provider);
+  });
+
+  // ─── Track B: Sign in with ChatGPT (Codex device-code OAuth) ───────────────
+  // EXPERIMENTAL, off-by-default. Every handler is DOUBLE-GATED: OAUTH_EXPERIMENTAL (env, read once
+  // at startup — a renderer can never flip it) AND a main-only consent file re-checked before every
+  // device call (NOT in settings:set, so a compromised renderer cannot spoof consent). Tokens +
+  // device_auth_id are MAIN-ONLY; the renderer receives only {hasToken,accountId,expiresAt,plan} and
+  // a device-flow progress projection carrying ONLY {status,user_code,verification_url,expiresIn}.
+  ipcMain.handle('oauth:start-device', async (e, req: { consentAccepted?: boolean }): Promise<{ ok: boolean; reason?: string }> => {
+    if (!OAUTH_EXPERIMENTAL) return { ok: false, reason: 'disabled' }; // gate 1: env
+    // The intentful, dialog-driven arg is the ONLY path that records consent.
+    if (req?.consentAccepted === true) recordOauthConsent();
+    if (!oauthConsentGranted()) return { ok: false, reason: 'consent-required' }; // gate 2: main-only consent
+    const wcId = e.sender.id;
+    // onProgress emits the renderer-safe projection ONLY (never device_auth_id/tokens). Guard every
+    // send with !isDestroyed() so a closed settings window doesn't crash the flow.
+    const onProgress = (p: OAuthProgress): void => {
+      if (!e.sender.isDestroyed()) e.sender.send('oauth:progress', p);
+    };
+    try {
+      await getOauth().startDeviceFlow(wcId, onProgress);
+      return { ok: true };
+    } catch (err) {
+      const reason = err instanceof OAuthError ? err.kind : 'generic';
+      return { ok: false, reason };
+    }
+  });
+  ipcMain.handle('oauth:status', (): { hasToken: boolean; accountId?: string; expiresAt?: number; plan?: string; oauthExperimental: boolean } => {
+    if (!OAUTH_EXPERIMENTAL) return { hasToken: false, oauthExperimental: false };
+    return { ...getOauth().status(), oauthExperimental: true };
+  });
+  ipcMain.handle('oauth:logout', (e): { ok: boolean } => {
+    if (!OAUTH_EXPERIMENTAL) return { ok: false };
+    getOauth().cancel(e.sender.id); // abort any in-flight device flow for this window
+    getOauth().logout();            // zero the stored + in-memory blob
+    return { ok: true };
   });
 
   // Window controls
@@ -2373,7 +2568,9 @@ function registerIpcHandlers(config: AppConfig) {
       }
 
       // LLM path. core's SynthesisSource uses title + snippet for grounding.
-      const synthesizer = makeSynthesizer(getAiConfig());
+      const synCfg = getAiConfig();
+      const synAuth = await getAuthHeaders(synCfg?.provider ?? 'none', synCfg);
+      const synthesizer = withChatGptRefresh(synCfg, synAuth, (auth) => makeSynthesizer(synCfg, auth));
       if (synthesizer) {
         try {
           const article = await synthesizer.synthesize({
@@ -3152,9 +3349,17 @@ function createWindow() {
   };
   win.on('resize', saveBoundsDebounced);
   win.on('move', saveBoundsDebounced);
+  // Track B (security invariant): closing the window MUST abort any in-flight ChatGPT
+  // device-flow poll for this webContents — otherwise the poll keeps POSTing to
+  // auth.openai.com every ~2s for up to 900s after the Settings window is gone. Capture
+  // the wcId NOW (it's unreadable once webContents is destroyed) and cancel on both
+  // 'close' and the terminal 'destroyed'. `oauth` may be uninitialised → optional-chain.
+  const wcId = win.webContents.id;
+  win.webContents.on('destroyed', () => { try { oauth?.cancel(wcId); } catch { /* */ } });
   win.on('close', (event) => {
     if (boundsTimer) clearTimeout(boundsTimer);
     saveBounds();
+    try { oauth?.cancel(wcId); } catch { /* */ }
     // T2-18: dirty-close round-trip. The first close attempt is intercepted and
     // delegated to the renderer (which knows tab dirty-state). The renderer either
     // saves/discards then signals window:confirm-close(true) → win.destroy(), which
@@ -3477,6 +3682,9 @@ app.on('before-quit', () => {
     try { controller.abort(); } catch { /* already aborted */ }
   }
   chatStreamRegistry.clear();
+  // Track B: abort any in-flight device-flow polling so no token-bearing POST outlives the app, and
+  // zero the in-memory token blob (the encrypted on-disk copy persists; only the heap copy is wiped).
+  try { oauth?.cancelAll(); } catch { /* */ }
 });
 
 app.on('window-all-closed', () => {

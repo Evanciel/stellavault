@@ -262,3 +262,112 @@ export async function safeFetch(url: string, opts: SafeFetchOptions = {}): Promi
     };
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Track B (Sign in with ChatGPT) hardened POST helpers — used by oauth-openai.ts for the
+// device/exchange/refresh calls to auth.openai.com. Every call is redirect:'error' (a Bearer/
+// secret-carrying POST has NO benign redirect — hard-fail is strictly safer than re-issuing) +
+// per-hop assertPublicUrl (SSRF/IP) + a SYNCHRONOUS exact-host pin BEFORE the request is sent.
+// NOTE: the STREAMING Responses path is NOT routed here (safeFetch/these helpers buffer + cannot
+// stream SSE); chat-engine hardens its OWN net.request for that path.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Exact host pin: case-folded equality with a trailing-dot strip. This is NOT `endsWith` —
+ *  `endsWith('chatgpt.com')` would accept `chatgpt.com.evil.com`, and a trailing-dot host
+ *  ("chatgpt.com.") must also be rejected (it resolves to the same site, bypassing a naive
+ *  equality). Throws on mismatch so it can guard a request BEFORE any token header is attached. */
+export function assertExactHost(host: string, allowed: string): void {
+  const norm = (h: string) => String(h).trim().toLowerCase().replace(/\.+$/, '');
+  if (norm(host) !== norm(allowed)) {
+    throw new Error('Outbound host not allowed');
+  }
+}
+
+const DEFAULT_POST_TIMEOUT_MS = 30_000;
+const DEFAULT_POST_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB — OAuth/token responses are tiny
+
+export interface SafePostResult {
+  status: number;
+  body: string;
+}
+
+interface SafePostOptions {
+  allowedHost: string;            // exact-host pin (auth.openai.com)
+  headers?: Record<string, string>;
+  contentType: string;            // 'application/json' | 'application/x-www-form-urlencoded'
+  payload: string;               // serialized body
+  timeoutMs?: number;
+  maxBytes?: number;
+}
+
+/** Single hardened POST: assertPublicUrl (SSRF) → exact-host pin → net.request redirect:'error'.
+ *  Buffers the (small) response and resolves {status, body}; rejects on redirect/timeout/transport
+ *  error / oversize. The host pin runs SYNCHRONOUSLY before request.end(). */
+async function safePost(url: string, opts: SafePostOptions): Promise<SafePostResult> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_POST_TIMEOUT_MS;
+  const maxBytes = opts.maxBytes ?? DEFAULT_POST_MAX_BYTES;
+
+  // ① SSRF/IP gate (resolve-then-check, fail-closed). NOT a host allowlist — the exact-host pin is.
+  await assertPublicUrl(url);
+
+  let u: URL;
+  try { u = new URL(url); } catch { throw new Error('Invalid outbound URL'); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('Unsupported outbound protocol');
+  // ② Exact-host pin BEFORE the request is issued (and thus before any token header is attached).
+  assertExactHost(u.hostname, opts.allowedHost);
+
+  return new Promise<SafePostResult>((resolve, reject) => {
+    const request = net.request({ method: 'POST', url, redirect: 'error' });
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let settled = false;
+
+    const timer = setTimeout(() => fail(new Error('Outbound POST timed out')), timeoutMs);
+    const cleanup = () => clearTimeout(timer);
+    function fail(err: Error) {
+      if (settled) return; settled = true; cleanup();
+      try { request.abort(); } catch { /* already done */ }
+      reject(err);
+    }
+    function succeed(r: SafePostResult) { if (settled) return; settled = true; cleanup(); resolve(r); }
+
+    request.setHeader('content-type', opts.contentType);
+    for (const [k, v] of Object.entries(opts.headers ?? {})) request.setHeader(k, v);
+
+    // redirect:'error' makes electron emit 'error' on a redirect; we never followRedirect.
+    request.on('redirect', () => fail(new Error('Outbound POST redirect refused')));
+    request.on('response', (response: Electron.IncomingMessage) => {
+      if (settled) return;
+      const status = response.statusCode;
+      response.on('data', (chunk: Buffer) => {
+        if (settled) return;
+        received += chunk.length;
+        if (received > maxBytes) { fail(new Error('Outbound POST response too large')); return; }
+        chunks.push(chunk);
+      });
+      response.on('end', () => succeed({ status, body: Buffer.concat(chunks).toString('utf-8') }));
+      response.on('error', (err: Error) => fail(err instanceof Error ? err : new Error('Outbound POST stream error')));
+    });
+    request.on('error', (err: Error) => fail(err instanceof Error ? err : new Error('Outbound POST failed')));
+
+    request.write(opts.payload);
+    request.end();
+  });
+}
+
+/** Hardened JSON POST (Track B). Body is a plain object → JSON.stringify (zod-free). */
+export function safePostJson(
+  url: string, allowedHost: string, body: unknown, headers?: Record<string, string>,
+): Promise<SafePostResult> {
+  return safePost(url, { allowedHost, contentType: 'application/json', payload: JSON.stringify(body ?? {}), headers });
+}
+
+/** Hardened x-www-form-urlencoded POST (Track B token exchange). */
+export function safePostForm(
+  url: string, allowedHost: string, fields: Record<string, string>, headers?: Record<string, string>,
+): Promise<SafePostResult> {
+  const payload = Object.entries(fields)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+  return safePost(url, { allowedHost, contentType: 'application/x-www-form-urlencoded', payload, headers });
+}

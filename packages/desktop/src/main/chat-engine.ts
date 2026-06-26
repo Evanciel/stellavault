@@ -20,8 +20,10 @@
 //  - idle timer resets on EVERY data frame (ping + thinking_delta included), not only text.
 
 import { net } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
 import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
+import { assertExactHost } from './outbound-fetch.js';
 import { modelSupportsTools } from './ollama-manager.js';
 import type { ChatMessage, ChatCitation, ReflectionCandidate } from '../shared/ipc-types.js';
 
@@ -75,7 +77,12 @@ export function redactForLog(s: string): string {
     .replace(/(x-api-key|x-goog-api-key|authorization)\s*[:=]\s*[^\r\n]+/gi, '$1: [redacted]')
     // bare provider key shapes anywhere in free text (defense-in-depth)
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '[redacted]')
-    .replace(/\bAIza[A-Za-z0-9_-]{8,}/g, '[redacted]');
+    .replace(/\bAIza[A-Za-z0-9_-]{8,}/g, '[redacted]')
+    // Track B: a JWT (access_token / id_token) — header.payload.signature in base64url. The
+    // Responses streaming path reuses THIS function (not redactOAuth), so the eyJ scrub lives here.
+    .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[redacted-jwt]')
+    // Track B: bare OAuth / PKCE / device field values (JSON or query shapes) — scrub the value.
+    .replace(/("?(?:refresh_token|authorization_code|code_verifier|code_challenge|device_auth_id|user_code)"?\s*[:=]\s*"?)[^"&\s,}]+/gi, '$1[redacted]');
 }
 
 /** Endpoint identifier WITHOUT query string (so keys in ?key= never reach a log/Error). */
@@ -178,6 +185,36 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
           stream: true,
           ...(skipThinking ? { reasoning_effort: 'none' } : {}),
           messages: [{ role: 'system', content: system }, ...conv.map(openaiMessageContent)],
+        },
+      };
+    }
+    case 'openai-chatgpt': {
+      // Track B — Responses API on chatgpt.com, driven by the ChatGPT subscription via OAuth.
+      // Auth headers (Authorization: Bearer, ChatGPT-Account-ID) are RESOLVED by the handler and
+      // ride cfg.authHeaders — chat-engine never reads the token store. The other headers are the
+      // Codex client-identity masquerade (must stay codex_cli_rs-prefixed or 403, issue #1828).
+      const instructions = (system ?? '').trim();
+      return {
+        url: 'https://chatgpt.com/backend-api/codex/responses',
+        headers: {
+          ...(cfg.authHeaders ?? {}),
+          originator: 'codex_cli_rs',
+          'User-Agent': `codex_cli_rs/0.0.0 (${process.platform})`,
+          'OpenAI-Beta': 'responses=experimental',
+          session_id: randomUUID(),
+        },
+        body: {
+          model,
+          // system → top-level `instructions` (skip if empty), NOT an input item.
+          ...(instructions ? { instructions } : {}),
+          input: conv.map((m) => ({
+            type: 'message',
+            role: m.role,
+            content: [{ type: 'input_text', text: m.text }],
+          })),
+          store: false,   // HARDCODED
+          stream: true,   // HARDCODED — backend ignores stream:false anyway
+          include: [],
         },
       };
     }
@@ -314,6 +351,55 @@ export function parseGeminiSse(frame: string): FrameResult {
     }
   }
   return { deltas, done: false }; // gemini ends on socket end, not an explicit marker
+}
+
+/** OpenAI Responses SSE (Track B, ALWAYS streamed). Lines are `data: <json>` (event: lines ignored).
+ *  - response.output_text.delta → text delta ({delta})
+ *  - response.completed → done
+ *  - response.refusal.delta / response.refusal.done → refusal
+ *  - response.failed / error → categorized throw (read obj.error?.code AND obj.response?.error;
+ *    401→key-missing/account, 403→generic [region-or-WAF, distinct from auth-401], 429→rate-limited)
+ *  - response.created / unknown → ignored (idle reset only)
+ *  Malformed JSON in a data line is skipped, never thrown out of the loop (mirror parseAnthropicSse). */
+export function parseResponsesSse(frame: string): FrameResult {
+  const lines = frameLines(frame);
+  const deltas: string[] = [];
+  let done = false;
+  let refusal = false;
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue; // `event:` lines are advisory; `obj.type` is authoritative
+    const raw = line.slice('data:'.length).trim();
+    if (!raw || raw === '[DONE]') { if (raw === '[DONE]') done = true; continue; }
+    let obj: any;
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      continue; // malformed frame skipped
+    }
+    const type = String(obj?.type ?? '');
+    if (type === 'response.failed' || type === 'error') {
+      // Read both the top-level error and the nested response.error.
+      const errObj = obj?.error ?? obj?.response?.error ?? {};
+      const code = String(errObj?.code ?? errObj?.type ?? '');
+      const statusCode = Number(obj?.response?.status ?? errObj?.status ?? 0);
+      let cat: ErrorCategory = 'generic';
+      if (statusCode === 401 || /401|unauthor|invalid_token|account/i.test(code)) cat = 'key-missing';
+      else if (statusCode === 429 || /rate|quota|429/i.test(code)) cat = 'rate-limited';
+      // 403 (region-or-WAF) stays 'generic' — distinct from the auth-401 above; must NOT look like
+      // an auth failure (the caller's retry-once-on-401 wrapper keys on 'key-missing', not this).
+      throw new ChatStreamError(String(errObj?.message ?? code ?? 'responses stream error'), cat);
+    }
+    if (type === 'response.output_text.delta') {
+      const d = obj?.delta;
+      if (typeof d === 'string' && d.length > 0) deltas.push(d);
+    } else if (type === 'response.refusal.delta' || type === 'response.refusal.done') {
+      refusal = true;
+    } else if (type === 'response.completed') {
+      done = true;
+    }
+    // response.created / response.output_item.* / unknown → ignored (idle reset only).
+  }
+  return { deltas, done, refusal };
 }
 
 // ─── Native Ollama /api/chat (agent SP-A, Design Ref: §3, §7 SP-A) ────────────
@@ -460,7 +546,25 @@ function parserFor(provider: LlmConfig['provider']): (frame: string) => FrameRes
     case 'google': return parseGeminiSse;
     case 'openai':
     case 'openai-compatible': return parseOpenAiSse;
+    case 'openai-chatgpt': return parseResponsesSse;
     default: throw new Error('unsupported provider');
+  }
+}
+
+/** Provider → the exact host its token-bearing request is pinned to (synchronous, BEFORE any token
+ *  header is attached on the streaming net.request). chatgpt.com for Track B; each cloud provider's
+ *  own host otherwise; openai-compatible/local is intentionally NOT pinned (arbitrary user baseURL —
+ *  assertPublicUrl/SSRF still applies upstream, but a local host allowlist would be meaningless). */
+function allowedHostFor(spec: ChatRequestSpec, provider: LlmConfig['provider']): string | null {
+  switch (provider) {
+    case 'anthropic': return 'api.anthropic.com';
+    case 'google': return 'generativelanguage.googleapis.com';
+    case 'openai': return 'api.openai.com';
+    case 'openai-chatgpt': return 'chatgpt.com';
+    default: {
+      // openai-compatible (local/remote user-chosen) — no exact-host pin (host is by design dynamic).
+      try { return new URL(spec.url).hostname; } catch { return null; }
+    }
   }
 }
 
@@ -779,6 +883,16 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
   }
   const protocol: 'http:' | 'https:' = u.protocol;
 
+  // SYNCHRONOUS exact-host pin BEFORE any token header is attached (Track B invariant; applies to
+  // every token-bearing request, incl. the streaming Bearer path that carries it every chat turn).
+  // A mismatch hard-fails before a single byte is written. openai-compatible (dynamic user host) is
+  // pinned to its own host (no-op). NOT endsWith — chatgpt.com.evil.com / "chatgpt.com." are rejected.
+  const allowedHost = allowedHostFor(spec, cfg.provider);
+  if (allowedHost) {
+    try { assertExactHost(u.hostname, allowedHost); }
+    catch { fail('AI endpoint host not allowed', 'generic'); return; }
+  }
+
   const parse = parserFor(cfg.provider);
 
   await new Promise<void>((resolve) => {
@@ -788,6 +902,9 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined,
       path: u.pathname + u.search,
+      // No benign redirect exists on a Bearer/key-carrying request → hard-fail (redirect:'error')
+      // is strictly safer than re-issuing the credential to a re-validated host.
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
     request.setHeader('accept', 'text/event-stream');
@@ -999,6 +1116,9 @@ export function streamOnceNative(
     const request = net.request({
       method: 'POST', protocol, hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined, path: u.pathname + u.search,
+      // Hard-fail on redirect: this native /api/chat request can carry an Authorization header for
+      // a remote openai-compatible host; no benign redirect exists on a credential-carrying request.
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
 

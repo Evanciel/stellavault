@@ -2,12 +2,19 @@
 // process (llm-synthesizer) and the renderer (Settings AI tab). Single source of truth
 // for the provider enum + per-provider default model / base URL / UI hints.
 
-export type AiProvider = 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google';
+// Track B: 'openai-chatgpt' = "Sign in with ChatGPT" (Codex device-code OAuth against the
+// Responses API on chatgpt.com). EXPERIMENTAL, off-by-default — surfaced in the UI only when
+// STELLAVAULT_OAUTH_EXPERIMENTAL===1. Distinct from 'openai' (api.openai.com + api key): distinct
+// base URL, wire shape (Responses, SSE-only), and auth (OAuth bearer + ChatGPT-Account-ID, no key).
+export type AiProvider = 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google' | 'openai-chatgpt';
 
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-fable-5';
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 export const DEFAULT_OLLAMA_MODEL = 'llama3.1';
+// Track B default — the confirmed-safer 'gpt-5' until a live /responses 200 pins the codex slug.
+// (MODELS_BY_PROVIDER also offers 'gpt-5.1-codex'; a 400 on it surfaces "set ai.model".)
+export const DEFAULT_CHATGPT_MODEL = 'gpt-5';
 
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const OLLAMA_BASE_URL = 'http://localhost:11434/v1';
@@ -23,7 +30,14 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
   openai: DEFAULT_OPENAI_MODEL,
   'openai-compatible': DEFAULT_OLLAMA_MODEL,
   google: DEFAULT_GEMINI_MODEL,
+  'openai-chatgpt': DEFAULT_CHATGPT_MODEL,
 };
+
+// How a provider authenticates (drives the Settings AI tab's three auth variants):
+//  - 'apikey'  → a write-only API key field (anthropic/openai/google; 'none' is keyless but apikey-shaped)
+//  - 'baseurl' → a base URL field, key optional (openai-compatible / Ollama / LM Studio)
+//  - 'oauth-device' → "Sign in with ChatGPT" device-code flow (openai-chatgpt) — no key, consent-gated
+export type AuthMethod = 'apikey' | 'baseurl' | 'oauth-device';
 
 export interface ProviderMeta {
   label: string;
@@ -32,33 +46,42 @@ export interface ProviderMeta {
   keyPlaceholder: string;
   modelHint: string;
   keyHint: string;
+  authMethod: AuthMethod;
 }
 
 export const PROVIDER_META: Record<AiProvider, ProviderMeta> = {
   none: {
     label: 'None (extractive only)', needsKey: false, needsBaseURL: false,
-    keyPlaceholder: '', modelHint: '', keyHint: '',
+    keyPlaceholder: '', modelHint: '', keyHint: '', authMethod: 'apikey',
   },
   anthropic: {
     label: 'Anthropic (Claude)', needsKey: true, needsBaseURL: false,
     keyPlaceholder: 'sk-ant-…', modelHint: `Claude model id. Default ${DEFAULT_ANTHROPIC_MODEL}.`,
-    keyHint: 'Sent only to api.anthropic.com.',
+    keyHint: 'Sent only to api.anthropic.com.', authMethod: 'apikey',
   },
   openai: {
     label: 'OpenAI (GPT)', needsKey: true, needsBaseURL: false,
     keyPlaceholder: 'sk-…', modelHint: `OpenAI model id. Default ${DEFAULT_OPENAI_MODEL}.`,
-    keyHint: 'Sent only to api.openai.com.',
+    keyHint: 'Sent only to api.openai.com.', authMethod: 'apikey',
   },
   google: {
     label: 'Google (Gemini)', needsKey: true, needsBaseURL: false,
     keyPlaceholder: 'AIza…', modelHint: `Gemini model id. Default ${DEFAULT_GEMINI_MODEL}.`,
-    keyHint: 'Sent only to generativelanguage.googleapis.com.',
+    keyHint: 'Sent only to generativelanguage.googleapis.com.', authMethod: 'apikey',
   },
   'openai-compatible': {
     label: 'Local (Ollama / LM Studio)', needsKey: false, needsBaseURL: true,
     keyPlaceholder: '(often blank for local)',
     modelHint: `Model name as served (e.g. ${DEFAULT_OLLAMA_MODEL}, mistral, qwen2.5). Or click "Load" to list installed models.`,
     keyHint: 'Optional — local servers (Ollama, LM Studio) need no key. Required for Groq / OpenRouter / DeepSeek.',
+    authMethod: 'baseurl',
+  },
+  // Track B — "Sign in with ChatGPT". No API key (OAuth device flow); the model uses your
+  // ChatGPT Plus/Pro subscription via OpenAI's Codex client identity. Experimental.
+  'openai-chatgpt': {
+    label: 'OpenAI (Sign in with ChatGPT — experimental)', needsKey: false, needsBaseURL: false,
+    keyPlaceholder: '', modelHint: `Default ${DEFAULT_CHATGPT_MODEL}. Uses your ChatGPT Plus/Pro subscription via Codex device login.`,
+    keyHint: '', authMethod: 'oauth-device',
   },
 };
 
@@ -71,6 +94,7 @@ export const MODELS_BY_PROVIDER: Record<AiProvider, string[]> = {
   openai: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'o1', 'gpt-4.1', 'gpt-4.1-mini'],
   google: ['gemini-2.0-flash', 'gemini-2.0-pro-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
   'openai-compatible': ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
+  'openai-chatgpt': ['gpt-5', 'gpt-5.1-codex'],
 };
 
 /** True when `baseURL` (or the Ollama default when blank) targets a LOOPBACK host —
@@ -127,6 +151,9 @@ export function modelsListRequest(
     case 'google':
       if (!key) return null;
       return { url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`, headers: {} };
+    case 'openai-chatgpt':
+      // No key-based model listing for the ChatGPT-subscription path — rely on MODELS_BY_PROVIDER.
+      return null;
     default:
       return null;
   }

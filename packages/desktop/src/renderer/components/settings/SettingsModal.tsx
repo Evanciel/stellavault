@@ -342,11 +342,124 @@ function MediaKeyField({ provider, label, hint, placeholder }: { provider: strin
   );
 }
 
+// ─── Track B: Sign in with ChatGPT (oauth-device auth variant) ───
+// Third auth variant beside the api-key field + MediaKeyField. Tokens NEVER touch the renderer —
+// this only reflects {hasToken,accountId,plan} via oauth:status and drives the device-code dialog.
+// Consent + the device flow are MAIN-ONLY; the renderer just sends intent (consentAccepted).
+function OAuthSignInField() {
+  const t = useT();
+  const [status, setStatus] = useState<{ hasToken: boolean; accountId?: string; plan?: string } | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [progress, setProgress] = useState<{ user_code?: string; verification_url?: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [noKeychain, setNoKeychain] = useState(false);
+
+  const refreshStatus = useCallback(async () => {
+    try { setStatus(await ipc('oauth:status')); } catch { setStatus({ hasToken: false }); }
+  }, []);
+  useEffect(() => { void refreshStatus(); }, [refreshStatus]);
+
+  const signIn = useCallback(async () => {
+    if (!consent) return;
+    setSigningIn(true); setError(null); setProgress(null); setNoKeychain(false);
+    // The progress event carries ONLY {status,user_code,verification_url} — never tokens.
+    const off = onIpc('oauth:progress', (p: unknown) => {
+      const d = p as { status: string; user_code?: string; verification_url?: string };
+      if (d.status === 'pending') setProgress({ user_code: d.user_code, verification_url: d.verification_url });
+      else if (d.status === 'authorized') { setProgress(null); }
+    });
+    try {
+      const r = await ipc('oauth:start-device', { consentAccepted: true });
+      if (r.ok) { await refreshStatus(); }
+      else if (r.reason === 'no-keychain') setNoKeychain(true);
+      else if (r.reason === 'device-disabled') setError(t('settings.ai.oauth.deviceDisabled'));
+      else setError(t('settings.ai.oauth.error'));
+    } catch {
+      setError(t('settings.ai.oauth.error'));
+    } finally {
+      off(); setSigningIn(false); setProgress(null);
+    }
+  }, [consent, refreshStatus, t]);
+
+  const logout = useCallback(async () => {
+    try { await ipc('oauth:logout'); } catch { /* */ }
+    await refreshStatus();
+    setConsent(false);
+  }, [refreshStatus]);
+
+  // Signed in: show account + plan + Sign out.
+  if (status?.hasToken) {
+    return (
+      <Field label={t('settings.ai.oauth.label')} hint="">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#10b981', fontWeight: 600, padding: '4px 10px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 4 }}>
+            {t('settings.ai.oauth.signedInAs')} {status.accountId ?? '—'}{status.plan ? ` (${status.plan})` : ''}
+          </span>
+          <button onClick={() => void logout()} style={{ padding: '4px 10px', fontSize: 11, cursor: 'pointer', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--ink-dim)' }}>
+            {t('settings.ai.oauth.logout')}
+          </button>
+        </div>
+      </Field>
+    );
+  }
+
+  // Not signed in: consent banner (incl. client-identity disclosure) + Sign-in button (disabled until consent).
+  return (
+    <Field label={t('settings.ai.oauth.label')} hint="">
+      <div style={{
+        fontSize: 12, color: 'var(--ink-dim)', lineHeight: 1.5,
+        padding: '10px 12px', background: 'rgba(99,102,241,0.06)',
+        border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8,
+      }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t('settings.ai.oauth.consentTitle')}</div>
+        <div>{t('settings.ai.oauth.consentBody')}</div>
+        <div style={{ marginTop: 6, color: 'var(--ink-faint)' }}>{t('settings.ai.oauth.clientIdentity')}</div>
+        <div style={{ marginTop: 6, color: 'var(--ink-faint)' }}>{t('settings.ai.oauth.enableFirst')}</div>
+      </div>
+      {noKeychain ? (
+        <div style={{ fontSize: 11, color: '#f59e0b', padding: '6px 10px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4 }}>
+          {t('settings.ai.oauth.noKeychain')}
+        </div>
+      ) : (
+        <>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer', marginBottom: 8 }}>
+            <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ accentColor: 'var(--accent)', marginTop: 2 }} />
+            {t('settings.ai.oauth.consentCheckbox')}
+          </label>
+          {progress?.user_code ? (
+            <div style={{ fontSize: 13, color: 'var(--ink)', padding: '8px 12px', background: 'var(--hover)', border: '1px solid var(--border)', borderRadius: 6 }}>
+              <div>{t('settings.ai.oauth.codePrompt')} <a href={progress.verification_url} onClick={(e) => { e.preventDefault(); if (!progress.verification_url) return; try { if (new URL(progress.verification_url).hostname !== 'auth.openai.com') return; } catch { return; } void ipc('shell:open-external', progress.verification_url); }} style={{ color: 'var(--accent)' }}>{progress.verification_url}</a></div>
+              <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 2, margin: '6px 0' }}>{progress.user_code}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-faint)' }}>{t('settings.ai.oauth.waiting')}</div>
+            </div>
+          ) : (
+            <button
+              onClick={() => void signIn()}
+              disabled={!consent || signingIn}
+              style={{ padding: '7px 14px', fontSize: 12, cursor: (!consent || signingIn) ? 'default' : 'pointer', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#fff', opacity: (!consent || signingIn) ? 0.5 : 1, fontWeight: 600 }}
+            >
+              {signingIn ? t('settings.ai.oauth.signingIn') : t('settings.ai.oauth.signIn')}
+            </button>
+          )}
+          {error && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{error}</div>}
+        </>
+      )}
+    </Field>
+  );
+}
+
 function AITab() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const t = useT();
   const ai = settings.ai ?? { provider: 'none' as const, model: '', baseURL: '' };
+  // Track B: the openai-chatgpt dropdown option appears ONLY when the experimental env gate is on
+  // (oauthExperimental from oauth:status). Off → the provider is hidden entirely.
+  const [oauthExperimental, setOauthExperimental] = useState(false);
+  useEffect(() => {
+    void ipc('oauth:status').then((s) => setOauthExperimental(!!s.oauthExperimental)).catch(() => setOauthExperimental(false));
+  }, []);
 
   // T6: local key-state override — used when the provider dropdown changes (the
   // settings store's ai.hasKey only reflects the PERSISTED active provider, so we
@@ -546,7 +659,11 @@ function AITab() {
           onChange={(e) => onProvider(e.target.value as NonNullable<AppSettings['ai']>['provider'])}
           style={{ ...textInputStyle, width: 260, cursor: 'pointer' }}
         >
-          {(['none', 'anthropic', 'openai', 'google', 'openai-compatible'] as const).map((p) => (
+          {([
+            'none', 'anthropic', 'openai', 'google', 'openai-compatible',
+            // Track B: only offered when the experimental env gate is on.
+            ...(oauthExperimental ? ['openai-chatgpt' as const] : []),
+          ] as const).map((p) => (
             <option key={p} value={p}>{PROVIDER_META[p].label}</option>
           ))}
         </select>
@@ -554,6 +671,11 @@ function AITab() {
 
       {ai.provider !== 'none' && (
         <>
+          {/* Track B: third auth variant — "Sign in with ChatGPT" device flow (no key field). */}
+          {meta.authMethod === 'oauth-device' && <OAuthSignInField />}
+
+          {meta.authMethod !== 'oauth-device' && (
+          <>
           {meta.needsBaseURL && (
             <Field label={t('settings.ai.baseUrl.label')} hint={t('settings.ai.baseUrl.hint')}>
               <input
@@ -748,6 +870,8 @@ function AITab() {
               attachments — independent of the chat provider, enable the 🎤/🎬 buttons. */}
           <MediaKeyField provider="transcribeApiKey" label={t('settings.ai.transcribeKey.label')} hint={t('settings.ai.transcribeKey.hint')} placeholder="sk-…" />
           <MediaKeyField provider="videoApiKey" label={t('settings.ai.videoKey.label')} hint={t('settings.ai.videoKey.hint')} placeholder="AIza…" />
+          </>
+          )}
 
           <Field label={t('settings.ai.model.label')} hint={meta.modelHint}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

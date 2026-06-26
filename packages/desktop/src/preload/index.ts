@@ -57,6 +57,11 @@ const ALLOWED_CHANNELS = new Set<string>([
   'ai:set-secret',   // {provider, key} → void  (stores via SecretStore)
   'ai:has-secret',   // provider → boolean       (existence check only)
   'ai:clear-secret', // provider → void          (removes key)
+  // Track B (Sign in with ChatGPT) — device-code OAuth. Experimental, off-by-default; every
+  // handler double-gated on env + a main-only consent file. Tokens never cross to the renderer.
+  'oauth:start-device',
+  'oauth:status',
+  'oauth:logout',
   'vault:import-asset', // [editor-upgrade additive] local image → vault assets/
   // T3-7 Publish (read-only local server) + T3-4 web clipper endpoint
   'publish:start',
@@ -162,6 +167,8 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:vitals', // P1-4: context-fill bar frame (one-way main→renderer)
   'chat:skill-invoke', // P3: invoke_skill loaded a skill (one-way main→renderer)
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast (one-way)
+  // Track B device-flow progress (e.sender targeted) — {status,user_code,verification_url} only.
+  'oauth:progress',
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
 ]);

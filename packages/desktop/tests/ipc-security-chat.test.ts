@@ -344,6 +344,101 @@ describe('Daemon headless distill (daemon-keepalive §3/§4) — safety floor', 
   });
 })
 
+describe('Track B: Sign in with ChatGPT OAuth IPC — both-side trust boundary + invariants', () => {
+  const OAUTH_CHANNELS = ['oauth:start-device', 'oauth:status', 'oauth:logout'];
+
+  it('all 3 oauth channels are allowlisted (preload) + main-handled; not in events', () => {
+    for (const ch of OAUTH_CHANNELS) {
+      expect(allowedChannelsBody).toContain(`'${ch}'`);
+      expect(mainSrc).toContain(`ipcMain.handle('${ch}'`);
+      expect(allowedEventsBody).not.toContain(`'${ch}'`);
+    }
+  });
+
+  it('oauth:progress is an allowed EVENT (not a channel) and emitted by main', () => {
+    expect(allowedEventsBody).toContain("'oauth:progress'");
+    expect(allowedChannelsBody).not.toContain("'oauth:progress'");
+    expect(mainSrc).toContain("'oauth:progress'");
+  });
+
+  it('every oauth handler is DOUBLE-GATED: OAUTH_EXPERIMENTAL env + main-only consent (start-device)', () => {
+    // The env flag is read ONCE at startup (not per-call from a renderer-controllable source).
+    expect(mainSrc).toContain("const OAUTH_EXPERIMENTAL = process.env.STELLAVAULT_OAUTH_EXPERIMENTAL === '1'");
+    const start = mainSrc.match(/ipcMain\.handle\('oauth:start-device'[\s\S]*?\n  \}\);/);
+    expect(start).not.toBeNull();
+    expect(start![0]).toContain('OAUTH_EXPERIMENTAL');         // gate 1: env
+    expect(start![0]).toContain('oauthConsentGranted()');      // gate 2: main-only consent re-check
+    // status + logout also env-gate.
+    const status = mainSrc.match(/ipcMain\.handle\('oauth:status'[\s\S]*?\n  \}\);/);
+    expect(status![0]).toContain('OAUTH_EXPERIMENTAL');
+    const logout = mainSrc.match(/ipcMain\.handle\('oauth:logout'[\s\S]*?\n  \}\);/);
+    expect(logout![0]).toContain('OAUTH_EXPERIMENTAL');
+  });
+
+  it('consent is MAIN-ONLY: settings:set does NOT accept a consent field (cannot be spoofed)', () => {
+    // The settings:set safeAi whitelist accepts only non-secret oauth scalars — NEVER a consent flag.
+    const set = mainSrc.match(/ipcMain\.handle\('settings:set'[\s\S]*?\n  \}\);/);
+    expect(set).not.toBeNull();
+    // No consent field is ever ASSIGNED into the safeAi whitelist (a comment mentioning the word
+    // "consent" is fine — what matters is that `safeAi.<...>consent...` is never written).
+    expect(set![0]).not.toMatch(/safeAi\.\w*[Cc]onsent/);
+    expect(set![0]).not.toMatch(/consentAccepted/);
+    // and the whitelist carries ONLY the non-secret display scalars (no token fields).
+    expect(set![0]).toContain('oauthAccountId');
+    expect(set![0]).not.toMatch(/safeAi\.(refresh_token|access_token|id_token)/);
+  });
+
+  it('oauth:start-device records consent ONLY from the intentful dialog-driven arg', () => {
+    const start = mainSrc.match(/ipcMain\.handle\('oauth:start-device'[\s\S]*?\n  \}\);/);
+    expect(start![0]).toMatch(/consentAccepted === true/);
+    expect(start![0]).toContain('recordOauthConsent()');
+  });
+
+  it('the oauth:progress projection carries NO device_auth_id / tokens (allowlisted shape in ipc-types)', () => {
+    const idx = ipcTypesSrc.indexOf("'oauth:progress'");
+    expect(idx).toBeGreaterThan(-1);
+    const decl = ipcTypesSrc.slice(idx, idx + 240);
+    expect(decl).toContain('user_code');
+    expect(decl).toContain('verification_url');
+    expect(decl).not.toContain('device_auth_id');
+    expect(decl).not.toMatch(/access_token|refresh_token|id_token/);
+  });
+
+  it('a SEPARATE before-quit listener aborts in-flight oauth device flows (cancelAll)', () => {
+    const chatQuit = mainSrc.match(/app\.on\('before-quit'[\s\S]*?chatStreamRegistry[\s\S]*?cancelAll\(\)/);
+    expect(chatQuit).not.toBeNull();
+  });
+
+  it('closing a window aborts that wcId\'s in-flight device-flow poll (close + destroyed)', () => {
+    // Security invariant: a closed Settings window must not leave the device-flow poll
+    // POSTing to auth.openai.com every ~2s for up to 900s. The window-close path captures
+    // the wcId up-front (unreadable post-destroy) and cancels on both 'close' and the
+    // terminal 'destroyed', optional-chained against an uninitialised `oauth`.
+    expect(mainSrc).toMatch(/const wcId = win\.webContents\.id;/);
+    expect(mainSrc).toMatch(/win\.webContents\.on\('destroyed'[\s\S]*?oauth\?\.cancel\(wcId\)/);
+    const closeHandler = mainSrc.match(/win\.on\('close'[\s\S]*?\n  \}\);/);
+    expect(closeHandler).not.toBeNull();
+    expect(closeHandler![0]).toContain('oauth?.cancel(wcId)');
+  });
+
+  it('the buffered Ask/Wiki synthesizer retries once on a ChatGPT 401 (refresh + re-resolve headers)', () => {
+    // Spec step 8/9: a token expiring mid-Ask must trigger a single oauth.refresh() + fresh
+    // headers, scoped to openai-chatgpt. The wrapper lives in withChatGptRefresh and BOTH the
+    // Ask (core:ask) and Wiki (core:synthesize) handlers route their synthesizer through it.
+    expect(mainSrc).toContain('function withChatGptRefresh');
+    const wrap = mainSrc.match(/function withChatGptRefresh[\s\S]*?\n\}/);
+    expect(wrap).not.toBeNull();
+    expect(wrap![0]).toContain("cfg?.provider !== 'openai-chatgpt'"); // scoped to Track B only
+    expect(wrap![0]).toContain('getOauth().refresh()');               // single-flight refresh
+    expect(wrap![0]).toMatch(/getAuthHeaders\('openai-chatgpt'/);     // re-resolve fresh headers
+    // Both synthesizer sites go through the wrapper.
+    const ask = mainSrc.match(/ipcMain\.handle\('core:ask'[\s\S]*?\n  \}\);/);
+    const wiki = mainSrc.match(/ipcMain\.handle\('core:synthesize'[\s\S]*?\n  \}\);/);
+    expect(ask![0]).toContain('withChatGptRefresh(');
+    expect(wiki![0]).toContain('withChatGptRefresh(');
+  });
+});
+
 describe('Daemon Phase 0b lifecycle (daemon-keepalive §2) — quit/lock correctness', () => {
   it('window-all-closed is conditional (keep-alive only when daemon ON and not an intentional quit)', () => {
     const h = mainSrc.match(/app\.on\('window-all-closed'[\s\S]*?\n\}\);/);
