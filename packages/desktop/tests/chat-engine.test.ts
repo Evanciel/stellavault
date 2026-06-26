@@ -131,6 +131,17 @@ describe('pure SSE parsers', () => {
 
 // ── buildChatBody ───────────────────────────────────────────────────────────
 describe('buildChatBody', () => {
+  it('pins the per-provider credential host (pinHost)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    expect(buildChatBody(ANTHROPIC_CFG, 'SYS', userMsg('hi')).pinHost).toBe('api.anthropic.com');
+    expect(buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi')).pinHost).toBe('api.openai.com');
+    expect(buildChatBody(GEMINI_CFG, 'SYS', userMsg('hi')).pinHost).toBe('generativelanguage.googleapis.com');
+    const localCfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'x', baseURL: 'http://localhost:11434/v1' };
+    expect(buildChatBody(localCfg, 'SYS', userMsg('hi')).pinHost).toBe('localhost');
+    const remoteCfg = { provider: 'openai-compatible' as const, apiKey: 'k', model: 'x', baseURL: 'https://api.groq.com/openai/v1' };
+    expect(buildChatBody(remoteCfg, 'SYS', userMsg('hi')).pinHost).toBe('api.groq.com');
+  });
+
   it('anthropic: no sampling/thinking params; model from default; system top-level', async () => {
     const { buildChatBody, CHAT_MAX_TOKENS } = await import('../src/main/chat-engine.js');
     const spec = buildChatBody(ANTHROPIC_CFG, 'SYS', userMsg('hi'));
@@ -726,6 +737,29 @@ describe('chatStream', () => {
     await p;
     expect(deltas).toEqual(['Hel', 'lo']);
     expect(full).toBe('Hello');
+  });
+
+  it('sets redirect:error + pins the host on the key-bearing request (no key replay on a 3xx)', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const controller = new AbortController();
+    let err: { msg: string; cat?: string } | null = null;
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {}, onError: (m: string, c?: string) => { err = { msg: m, cat: c }; },
+    });
+    await tick();
+    const req = lastReq();
+    // The request that carries x-api-key hard-fails redirects + is host-pinned.
+    expect(req.opts.redirect).toBe('error');
+    expect(req.opts.hostname).toBe('api.anthropic.com');
+    expect(req.headers['x-api-key']).toBe(ANTHROPIC_CFG.apiKey);
+    // Electron emits 'error' on a 3xx under redirect:'error'. The key must NOT be replayed:
+    // only ONE request is ever made, and it only ever went to api.anthropic.com.
+    req.emit('error', new Error('net::ERR_UNEXPECTED_REDIRECT'));
+    await p;
+    expect(err).not.toBeNull();
+    expect(reqs.length).toBe(1);
+    expect(reqs.every((r) => r.opts.hostname === 'api.anthropic.com')).toBe(true);
   });
 
   it('anthropic: ping resets idle, emits no delta', async () => {
