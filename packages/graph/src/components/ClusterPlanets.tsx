@@ -147,14 +147,14 @@ function Planet({ position, radius, color, seed, type }: {
         <sphereGeometry args={[radius, 32, 32]} />
       </mesh>
       {/* soft outer atmosphere halo beyond the rim (kept tight so the planet stays small) */}
-      <mesh raycast={NOOP_RAYCAST} scale={1.25}>
+      <mesh raycast={NOOP_RAYCAST} scale={1.15}>
         <sphereGeometry args={[radius, 24, 24]} />
-        <meshBasicMaterial color={color} transparent opacity={0.1} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color={color} transparent opacity={0.07} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
       {hasRing && (
         <mesh raycast={NOOP_RAYCAST} rotation={[Math.PI / 2 + ringTilt, 0, ringTilt * 0.5]}>
-          <ringGeometry args={[radius * 1.5, radius * 2.3, 64]} />
-          <meshBasicMaterial color={color} transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
+          <ringGeometry args={[radius * 1.4, radius * 2.0, 64]} />
+          <meshBasicMaterial color={color} transparent opacity={0.22} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
         </mesh>
       )}
     </group>
@@ -174,9 +174,10 @@ export function ClusterPlanets() {
         <Planet
           key={n.id}
           position={n.position as [number, number, number]}
-          // Small but with a visible FLOOR — too-tiny outer planets just vanished, leaving the
-          // galaxy looking like a small central speck. Range ≈ 1.8 (small) .. 4.6 (largest).
-          radius={1.0 + (n.size ?? 3) * 0.26}
+          // Roughly HALVED from before — they read as small glowing orbs in a constellation, not
+          // a busy foreground of textured Jupiters. Visible floor so outer ones don't vanish.
+          // Range ≈ 1.0 (small) .. 2.4 (largest).
+          radius={0.7 + (n.size ?? 3) * 0.12}
           color={PALETTE_HEX[n.clusterId % PALETTE_HEX.length]}
           seed={n.clusterId}
           // spread the 5 types across clusters; +the cluster's own id so colour≠type lockstep

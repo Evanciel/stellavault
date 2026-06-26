@@ -38,10 +38,32 @@ export function ClusterLabels() {
   const maxMc = Math.max(...clusterNodes.map((n) => n.memberCount ?? 1), 1);
   // Only label the BIGGEST clusters always-on — 35 captions piled in the dense centre were
   // unreadable. The rest stay as planets; hovering any one shows its name in the tooltip.
-  const TOP_N = 12;
-  const shownNodes = [...clusterNodes]
-    .sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0))
-    .slice(0, TOP_N);
+  const TOP_N = 10;
+  // Spatial declutter: walking biggest→smallest, DROP any label whose planet sits too close
+  // (in world space) to one we already kept. Billboards face the camera, so world proximity at
+  // similar depth ≈ screen overlap — this is what kills the "all captions piled in the centre"
+  // mess far more than just trimming the count. minSep adapts to the layout's actual spread.
+  const xs = clusterNodes.map((n) => n.position![0]);
+  const ys = clusterNodes.map((n) => n.position![1]);
+  const zs = clusterNodes.map((n) => n.position![2]);
+  const diag = Math.hypot(
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+    Math.max(...zs) - Math.min(...zs),
+  );
+  const minSep = Math.max(diag * 0.14, 8);
+  const sorted = [...clusterNodes].sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
+  const shownNodes: typeof clusterNodes = [];
+  for (const n of sorted) {
+    const [x, y, z] = n.position!;
+    const tooClose = shownNodes.some((p) => {
+      const [px, py, pz] = p.position!;
+      return Math.hypot(px - x, py - y, pz - z) < minSep;
+    });
+    if (tooClose) continue;
+    shownNodes.push(n);
+    if (shownNodes.length >= TOP_N) break;
+  }
   // Outline contrasts against whichever canvas background is active (kept thin).
   const outlineColor = isLight ? '#ffffff' : '#05050f';
 
@@ -51,7 +73,9 @@ export function ClusterLabels() {
         const mc = n.memberCount ?? 1;
         const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
         // Deliberately small captions — even the biggest cluster stays a quiet label, not a banner.
-        const fontSize = 1.6 + 0.26 * Math.min(12, Math.sqrt(mc));
+        // Was up to ~4.7 (a billboard-sized headline); halved and barely scaled so labels read as
+        // faint constellation names, not banners. Range ≈ 1.4 .. 2.3.
+        const fontSize = 1.3 + 0.12 * Math.min(8, Math.sqrt(mc));
         // Tint to the cluster colour — keep it COLOURFUL: only a light lift toward white on the
         // dark canvas for legibility (the dark outline carries the contrast), saturated on light.
         const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
@@ -63,7 +87,7 @@ export function ClusterLabels() {
         // between every glyph, so a long label stacked into vertical text. Truncate instead.
         const shown = n.label.length > 16 ? `${n.label.slice(0, 15)}…` : n.label;
         return (
-          <Billboard key={n.id} position={[x, y + n.size * 0.35 + 2.5, z]}>
+          <Billboard key={n.id} position={[x, y + n.size * 0.2 + 1.4, z]}>
             <Text
               fontSize={fontSize}
               color={fillColor}
