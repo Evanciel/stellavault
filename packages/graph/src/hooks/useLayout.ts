@@ -54,10 +54,22 @@ export function useLayout() {
       if (type === 'done') worker.terminate();
     };
 
+    // Drilldown (cluster view with member nodes — super-nodes already returned above) lays the
+    // members out in a COMPACT ellipsoid, smaller than the cluster galaxy's body. Otherwise the
+    // members spread across the default ~250-radius volume, so fitView has to pull the camera way
+    // back to frame them → clicking a cluster read as a zoom-OUT. A small volume lets the camera
+    // dolly IN, so entering a cluster feels like flying into it. Raw view keeps the wide spread.
+    const isDrilldown = view === 'cluster';
     worker.postMessage({
       type: 'init',
       nodes: nodes.map(n => ({ id: n.id, clusterId: n.clusterId, size: n.size })),
       edges,
+      // Smaller ellipsoid AND lower repulsion: at full repulsion the members blow past the soft
+      // ellipsoid bound (radius crept back to ~100), so the camera still pulled back. A tighter
+      // pack keeps the framed radius small → the camera dollies IN on entry.
+      options: isDrilldown
+        ? { brainScale: [46, 34, 40] as [number, number, number], repulsion: 300 }
+        : undefined,
     });
 
     return () => worker.terminate();

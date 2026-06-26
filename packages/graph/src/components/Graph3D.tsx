@@ -234,7 +234,7 @@ export function Graph3D() {
       let margin: number;
       if (isDrilldown) {
         r = dists[Math.floor(dists.length * 0.97)] ?? dists[dists.length - 1] ?? 100;
-        margin = 1.5;
+        margin = 1.2;
       } else if (st.view === 'cluster') {
         r = median * 1.35;
         margin = 1.05;
@@ -243,9 +243,11 @@ export function Graph3D() {
         margin = 1.05;
       }
       // FLOOR it: if the fit fires while the set is small / half-settled (mid force-layout), a
-      // tiny radius would dolly the camera way too close → the galaxy overflows + planets look
-      // enormous (the reported over-zoom). 85 keeps a sane minimum distance.
-      r = Number.isFinite(r) ? Math.max(r, 85) : 120;
+      // tiny radius would dolly the camera way too close → overflow + enormous nodes. The galaxy
+      // keeps a sane 85 min; the drilldown lays members out in a small compact volume on purpose
+      // (so entering zooms IN), so it needs a lower floor or the floor would push the camera back.
+      const floor = isDrilldown ? 40 : 85;
+      r = Number.isFinite(r) ? Math.max(r, floor) : 120;
       const fov = ((cam.fov ?? 50) * Math.PI) / 180;
       // margin: drilldown pulls back (padding around the opened cluster so nodes+names aren't cut
       // off at the edges — the reported over-zoom); galaxy/raw fill the view (small planets).
