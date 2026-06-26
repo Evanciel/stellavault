@@ -176,6 +176,18 @@ export function GraphNodes() {
       let sz = 4 + node.size * 3;
       let gsz = 12 + node.size * 8;
 
+      // Super-node = a PLANET (lit sphere drawn by <ClusterPlanets/>), so the flat Points sprite
+      // shrinks to a tiny bright core hidden inside the sphere — it stays ONLY so the existing
+      // Points raycaster keeps hover/drilldown working (threshold-based, independent of size).
+      // A modest halo reads as the planet's atmosphere glow. Brightness lift keeps the core warm.
+      if (node.isCluster) {
+        r = Math.min(r * 0.55 + 0.45, 1);
+        g = Math.min(g * 0.55 + 0.45, 1);
+        b = Math.min(b * 0.55 + 0.45, 1);
+        sz *= 0.32;
+        gsz *= 0.45;
+      }
+
       // Design Ref: §2.3 — F06 히트맵 오버레이 (decay와 상호 배타)
       if (showHeatmap && heatmapColors && !hasPulse && !hasActive) {
         r = heatmapColors[i * 3];
@@ -376,11 +388,11 @@ export function GraphNodes() {
         <pointsMaterial
           vertexColors
           transparent
-          opacity={isLight ? 0.06 : 0.25}
+          opacity={isLight ? 0.06 : 0.2}
           depthWrite={false}
           blending={isLight ? THREE.NormalBlending : THREE.AdditiveBlending}
           sizeAttenuation
-          size={isLight ? 10 : 18}
+          size={isLight ? 10 : 13}
           map={circleTexture}
           alphaTest={0.05}
         />

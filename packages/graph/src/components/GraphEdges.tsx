@@ -1,6 +1,6 @@
 // 시냅스 엣지 — hover 강조 + pulse + 줌아웃 시 페이드
 
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
@@ -14,6 +14,8 @@ export function GraphEdges() {
 
   const theme = useGraphStore((s) => s.theme);
   const isLight = theme === 'light';
+  const view = useGraphStore((s) => s.view);
+  const isClusterView = view === 'cluster' && nodes.some((n) => n.isCluster);
   const activeId = hoveredNodeId || selectedNodeId;
   const hasPulse = highlightedNodeIds.size > 0;
 
@@ -53,6 +55,12 @@ export function GraphEdges() {
     return { litGeo: make(litPos), dimGeo: make(dimPos) };
   }, [nodes, edges, activeId, hasPulse, highlightedNodeIds]);
 
+  // Dispose the raw BufferGeometries from the PREVIOUS memo output. make() allocates new
+  // THREE.BufferGeometry imperatively and the deps include activeId/highlight, so this fires
+  // on HOVER (not just toggle) — without disposal the old GPU geometries leaked every churn,
+  // compounded by the full edge swap on every cluster↔raw toggle.
+  useEffect(() => () => { litGeo?.dispose(); dimGeo?.dispose(); }, [litGeo, dimGeo]);
+
   const hasInteraction = hasPulse || !!activeId;
 
   // 줌아웃 시 엣지 페이드아웃 (별자리 뷰와 충돌 방지)
@@ -60,12 +68,22 @@ export function GraphEdges() {
     if (!dimMatRef.current) return;
     const dist = camera.position.length();
     let fade = 1;
-    if (dist > 500) fade = 0;
-    else if (dist > 300) fade = 1 - (dist - 300) / 200;
+    if (isClusterView) {
+      // The cluster GALAXY is framed from ~600+, so the raw view's 300→500 fade would zero
+      // the meta-edges entirely (the "links invisible" report). The skeleton is only ~56
+      // aggregated edges — keep it visible far out, fading only when truly zoomed away.
+      if (dist > 1700) fade = 0;
+      else if (dist > 1300) fade = 1 - (dist - 1300) / 400;
+    } else {
+      if (dist > 500) fade = 0;
+      else if (dist > 300) fade = 1 - (dist - 300) / 200;
+    }
 
+    // Compromise: the meta-edges must be VISIBLE at the far cluster distance, but not so loud
+    // they bury the super-node dots. ~0.28 reads as a faint skeleton the nodes still sit above.
     const baseOpacity = isLight
-      ? (hasInteraction ? 0.03 : 0.35)
-      : (hasInteraction ? 0.005 : 0.1);
+      ? (hasInteraction ? 0.03 : (isClusterView ? 0.26 : 0.35))
+      : (hasInteraction ? 0.005 : (isClusterView ? 0.2 : 0.1));
     dimMatRef.current.opacity = baseOpacity * fade;
   });
 
@@ -75,7 +93,10 @@ export function GraphEdges() {
         <lineSegments geometry={dimGeo}>
           <lineBasicMaterial
             ref={dimMatRef}
-            color={isLight ? '#8890a0' : '#4466aa'}
+            // Cluster meta-edges: a muted indigo that blends with the dark galaxy mood (the
+            // bright #7da6e8 competed with the nodes). Kept visible via the distance-fade fix +
+            // base opacity, not by shouting in colour.
+            color={isLight ? '#8890a0' : (isClusterView ? '#5a6699' : '#4466aa')}
             transparent
             opacity={isLight ? 0.3 : 0.1}
             depthWrite={false}

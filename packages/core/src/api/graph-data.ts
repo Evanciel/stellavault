@@ -14,6 +14,22 @@ const CLUSTER_COLORS = [
   '#84cc16', '#e879f9', '#22d3ee', '#a3e635', '#fb923c',
 ];
 
+// Renderer-aligned palette. The web renderer derives a node's DOT color from
+// PALETTE[clusterId % PALETTE.length] (packages/graph GraphNodes.tsx:35) — and that
+// PALETTE differs from CLUSTER_COLORS above in BOTH order AND length (15 vs the
+// renderer's 15 but reordered: index 0 is #7c3aed here vs #6366f1 in CLUSTER_COLORS).
+// For the cluster view we deliberately synthesize clusters[].color from THIS array so
+// the ClusterFilter swatch matches the rendered super-node dot (color decision (a) per
+// the cluster-toggle design). `paletteHex(clusterId)` is the single shared source.
+const PALETTE_HEX = [
+  '#7c3aed', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
+  '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
+  '#14b8a6', '#e879f9', '#eab308', '#22d3ee', '#fb7185',
+];
+function paletteHex(clusterId: number): string {
+  return PALETTE_HEX[((clusterId % PALETTE_HEX.length) + PALETTE_HEX.length) % PALETTE_HEX.length];
+}
+
 export type GraphMode = 'semantic' | 'folder';
 
 export interface BuildGraphOptions {
@@ -52,6 +68,11 @@ export async function buildGraphData(
   // Bound the O(n²) edge loop + k-means. Rank by recency (importance proxy), cap to
   // nodeCap, and scoped-load ONLY those embeddings (not all 12k — that read dominated
   // the build and froze the Electron main process).
+  // GRAPH_NODE_CAP (default 1500) caps the raw/"All nodes" view. The edge loop below is
+  // an inline O(n²) all-pairs cosine (n·(n-1)/2 pairs × 384 dims) — raising this toward
+  // 8k–13k explodes to tens of millions of pairs and FREEZES the single-threaded Express
+  // handler for minutes. See README "Graph viewer scaling". Operators set GRAPH_NODE_CAP
+  // in the environment before launching `stellavault graph`.
   const NODE_CAP = Math.max(200, Math.floor(options.nodeCap ?? (Number(process.env.GRAPH_NODE_CAP) || 1500)));
   const ranked = [...docs].sort((a, b) => String(b.lastModified ?? '').localeCompare(String(a.lastModified ?? '')));
   if (docs.length > NODE_CAP) {
@@ -230,6 +251,61 @@ export async function buildGraphData(
   };
 }
 
+/**
+ * Flatten a galaxy ClusterLevelGraph into the same {nodes,edges,clusters,stats} GraphData
+ * shape the raw graph uses, so the web viewer renders cluster super-nodes through the SAME
+ * Points cloud + lineSegments path with zero renderer changes. Exported so the server route
+ * AND the unit test share ONE mapping.
+ *
+ * - super-node → GraphNode with id `cluster:${clusterId}` (namespace is disjoint from real
+ *   doc ids, so a drill-down merge never collides), isCluster/memberCount/representativeId
+ *   set, and sn.position/sn.size preserved verbatim (the baked Fibonacci+force-settle galaxy
+ *   layout — the viewer must NOT re-randomize these).
+ * - meta-edge → GraphEdge (me.count is dropped; GraphEdge is only {source,target,weight}).
+ * - clusters[].color uses paletteHex (renderer-aligned) so the ClusterFilter swatch matches
+ *   the rendered dot — see the PALETTE_HEX comment above (color decision (a)).
+ */
+export function flattenClusterLevel(level: ClusterLevelGraph): GraphData {
+  const nodes: GraphNode[] = level.superNodes.map((sn) => ({
+    id: `cluster:${sn.clusterId}`,
+    label: sn.label,
+    filePath: '',
+    tags: [],
+    clusterId: sn.clusterId,
+    position: sn.position,
+    size: sn.size,
+    source: 'cluster',
+    type: 'cluster',
+    isCluster: true,
+    memberCount: sn.memberCount,
+    representativeId: sn.representativeId,
+  }));
+
+  const edges: GraphEdge[] = level.metaEdges.map((me) => ({
+    source: `cluster:${me.sourceCluster}`,
+    target: `cluster:${me.targetCluster}`,
+    weight: me.weight,
+  }));
+
+  const clusters: Cluster[] = level.superNodes.map((sn) => ({
+    id: sn.clusterId,
+    label: sn.label,
+    color: paletteHex(sn.clusterId),
+    nodeCount: sn.memberCount,
+  }));
+
+  return {
+    nodes,
+    edges,
+    clusters,
+    stats: {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      clusterCount: clusters.length,
+    },
+  };
+}
+
 // ─── Wave 1: cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md) ───
 
 export interface BuildClusteredOptions {
@@ -259,6 +335,12 @@ export async function buildClusteredGraph(
   options: BuildClusteredOptions = {},
 ): Promise<ClusteredGraph> {
   const mode = options.mode ?? 'semantic';
+  // GRAPH_CLUSTER_CAP (default 3000) = # of notes folded into the galaxy before clustering.
+  // This feeds buildGraphData's nodeCap, so the same O(n²) cosine pass (graph-data.ts edge
+  // loop) runs at this cap. At 3000 ≈ 4.5M pairs — the multi-second cold build the 5-min
+  // server cache absorbs. NOTE this is cheap to RENDER (≤80 super-nodes) but NOT cheap to
+  // BUILD; the first uncached cluster fetch stalls the Express event loop for seconds.
+  // See README "Graph viewer scaling".
   const clusterCap = Math.max(200, Math.floor(options.clusterCap ?? (Number(process.env.GRAPH_CLUSTER_CAP) || 3000)));
   const clusterCount = Math.max(1, Math.floor(
     options.clusterCount ?? Math.min(80, Math.max(6, Math.round(Math.sqrt(clusterCap / 2.5)))),
