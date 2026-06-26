@@ -274,13 +274,26 @@ export interface AppSettings {
   // SecretStore/safeStorage). model defaults to the latest Claude model id for the
   // anthropic provider (see settings-store getDefaults).
   ai?: {
-    provider: 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google';
+    provider: 'none' | 'anthropic' | 'openai' | 'openai-compatible' | 'google' | 'openai-chatgpt';
     model: string;
     baseURL?: string; // only for provider 'openai-compatible' (e.g. http://localhost:11434/v1)
     /** True when SecretStore has a key for this provider (renderer display only). */
     hasKey?: boolean;
     /** True when safeStorage (OS keychain) backed the key (renderer display only). */
     keychainAvailable?: boolean;
+    // ─── Track B (Sign in with ChatGPT) — NON-SECRET OAuth status mirror (renderer display only) ───
+    // Tokens (access/refresh/id) + device_auth_id are MAIN-ONLY and NEVER appear here. These are the
+    // positive-allowlist projection redactSecrets builds from the stored token blob's metadata.
+    /** True when an OAuth token blob exists for openai-chatgpt (display only). */
+    hasToken?: boolean;
+    /** chatgpt_account_id routing hint from the (unverified) id_token claims (display only). */
+    oauthAccountId?: string;
+    /** access_token exp*1000 — when the session expires (display only). */
+    oauthExpiresAt?: number;
+    /** chatgpt_plan_type claim, e.g. 'plus' | 'pro' (display only). */
+    oauthPlan?: string;
+    /** True when STELLAVAULT_OAUTH_EXPERIMENTAL===1 — gates the openai-chatgpt dropdown option. */
+    oauthExperimental?: boolean;
   };
   // T3-3: auto-start the embedded MCP server ("Agent Memory") on app launch.
   // Optional; defaults false in both main getDefaults + renderer DEFAULT.
@@ -538,6 +551,17 @@ export interface IpcChannelMap {
   'ai:has-secret':   { args: [provider: string]; result: boolean };
   'ai:clear-secret': { args: [provider: string]; result: void };
 
+  // ─── Track B: Sign in with ChatGPT (Codex device-code OAuth) — EXPERIMENTAL, off-by-default ───
+  // Every handler is double-gated: STELLAVAULT_OAUTH_EXPERIMENTAL===1 (env, read once at startup)
+  // AND a main-only consent file re-checked before every device call. Tokens + device_auth_id are
+  // MAIN-ONLY; the renderer receives only the non-secret status projection below.
+  // 'oauth:start-device' records consent (from the dialog-driven arg) then starts the device flow;
+  // progress streams back via the 'oauth:progress' EVENT (user_code + verification_url only).
+  'oauth:start-device': { args: [req: { consentAccepted: boolean }]; result: { ok: boolean; reason?: string } };
+  // Non-secret status — NEVER returns tokens. disabled (hasToken:false, oauthExperimental:false) when env off.
+  'oauth:status':       { args: []; result: { hasToken: boolean; accountId?: string; expiresAt?: number; plan?: string; oauthExperimental: boolean } };
+  'oauth:logout':       { args: []; result: { ok: boolean } };
+
   // [editor-upgrade additive] Local image import — copies image bytes (base64)
   // into <vault>/assets/, returns the VAULT-RELATIVE path. (The legacy srcPath
   // arbitrary-file-read branch was removed in T1-1; the renderer only sends bytes.)
@@ -730,6 +754,10 @@ export interface IpcEventMap {
   // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
   // shows a non-blocking "🧠 remembered: … (undo)" toast (undo → memory:delete by id).
   'chat:memory-written': { streamId: string; id: string; text: string };
+  // ─── Track B: device-flow progress (main → renderer, e.sender targeted) ───
+  // ALLOWLISTED PROJECTION — carries ONLY {status, user_code, verification_url, expiresIn}. The
+  // device_auth_id + tokens live in a separate MAIN-ONLY object and are NEVER sent here.
+  'oauth:progress': { status: 'pending' | 'authorized' | 'error'; user_code?: string; verification_url?: string; expiresIn?: number; message?: string };
 }
 
 // Helper types for typed invoke/on

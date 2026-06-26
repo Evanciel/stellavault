@@ -127,6 +127,76 @@ describe('pure SSE parsers', () => {
     expect(() => parseAnthropicSse('event: x\ndata: {bad')).not.toThrow();
     expect(() => parseGeminiSse('data: {bad')).not.toThrow();
   });
+
+  // ─── Track B: parseResponsesSse (OpenAI Responses API) ───
+  it('parseResponsesSse: output_text.delta accumulation', async () => {
+    const { parseResponsesSse } = await import('../src/main/chat-engine.js');
+    const r = parseResponsesSse(
+      'data: {"type":"response.output_text.delta","delta":"Hel"}\n' +
+      'data: {"type":"response.output_text.delta","delta":"lo"}',
+    );
+    expect(r.deltas).toEqual(['Hel', 'lo']);
+    expect(r.done).toBe(false);
+  });
+
+  it('parseResponsesSse: response.completed → done; response.created → ignored', async () => {
+    const { parseResponsesSse } = await import('../src/main/chat-engine.js');
+    expect(parseResponsesSse('data: {"type":"response.created"}').done).toBe(false);
+    expect(parseResponsesSse('data: {"type":"response.completed","response":{}}').done).toBe(true);
+  });
+
+  it('parseResponsesSse: refusal.delta / refusal.done → refusal', async () => {
+    const { parseResponsesSse } = await import('../src/main/chat-engine.js');
+    expect(parseResponsesSse('data: {"type":"response.refusal.delta","delta":"no"}').refusal).toBe(true);
+    expect(parseResponsesSse('data: {"type":"response.refusal.done"}').refusal).toBe(true);
+  });
+
+  it('parseResponsesSse: failed/error throws categorized (401 account, 403 distinct, 429 rate)', async () => {
+    const { parseResponsesSse } = await import('../src/main/chat-engine.js');
+    // 401 → key-missing (account)
+    try { parseResponsesSse('data: {"type":"response.failed","response":{"status":401,"error":{"message":"x"}}}'); expect.fail('should throw'); }
+    catch (e: any) { expect(e.category).toBe('key-missing'); }
+    // 429 → rate-limited
+    try { parseResponsesSse('data: {"type":"error","error":{"code":"rate_limit","message":"slow"}}'); expect.fail('should throw'); }
+    catch (e: any) { expect(e.category).toBe('rate-limited'); }
+    // 403 (region/WAF) → generic, NOT key-missing (must not be mistaken for an auth-401)
+    try { parseResponsesSse('data: {"type":"response.failed","response":{"status":403,"error":{"message":"blocked"}}}'); expect.fail('should throw'); }
+    catch (e: any) { expect(e.category).toBe('generic'); }
+  });
+
+  it('parseResponsesSse: malformed JSON line skipped (no throw)', async () => {
+    const { parseResponsesSse } = await import('../src/main/chat-engine.js');
+    expect(() => parseResponsesSse('data: {not json')).not.toThrow();
+    expect(parseResponsesSse('data: {not json').deltas).toEqual([]);
+  });
+});
+
+// ── Track B: redactForLog regression (eyJ JWT + PKCE + token fields) ───
+describe('redactForLog — Track B secret scrub', () => {
+  it('scrubs a JWT (eyJ…), bare refresh_token, and PKCE / device fields', async () => {
+    const { redactForLog } = await import('../src/main/chat-engine.js');
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4';
+    expect(redactForLog(`Authorization: Bearer ${jwt}`)).not.toContain(jwt);
+    expect(redactForLog(`token=${jwt}`)).not.toContain('eyJzdWI');
+    expect(redactForLog('{"refresh_token":"rt-SECRET-123"}')).not.toContain('rt-SECRET-123');
+    expect(redactForLog('code_verifier=VERIFIER-SECRET')).not.toContain('VERIFIER-SECRET');
+    expect(redactForLog('"authorization_code":"AC-SECRET"')).not.toContain('AC-SECRET');
+    expect(redactForLog('device_auth_id=DAID-SECRET')).not.toContain('DAID-SECRET');
+    expect(redactForLog('"user_code":"WXYZ-1234"')).not.toContain('WXYZ-1234');
+  });
+});
+
+// ── Track B: assertExactHost (outbound-fetch) ───
+describe('assertExactHost — exact-host pin (NOT endsWith)', () => {
+  it('accepts the exact host, rejects subdomain-suffix spoofs and trailing dots', async () => {
+    const { assertExactHost } = await import('../src/main/outbound-fetch.js');
+    expect(() => assertExactHost('chatgpt.com', 'chatgpt.com')).not.toThrow();
+    expect(() => assertExactHost('CHATGPT.COM', 'chatgpt.com')).not.toThrow(); // case-fold
+    expect(() => assertExactHost('chatgpt.com.', 'chatgpt.com')).not.toThrow(); // trailing-dot strip
+    expect(() => assertExactHost('chatgpt.com.evil.com', 'chatgpt.com')).toThrow(); // suffix spoof
+    expect(() => assertExactHost('evilchatgpt.com', 'chatgpt.com')).toThrow();
+    expect(() => assertExactHost('auth.openai.com', 'chatgpt.com')).toThrow();
+  });
 });
 
 // ── buildChatBody ───────────────────────────────────────────────────────────
@@ -186,6 +256,34 @@ describe('buildChatBody', () => {
     const { buildChatBody } = await import('../src/main/chat-engine.js');
     const b: any = buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi')).body;
     expect(b.messages[1]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('openai-chatgpt: Responses body shape (input_text parts, instructions top-level, store:false stream:true)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-chatgpt' as const, apiKey: '', model: 'gpt-5', baseURL: '', authHeaders: { Authorization: 'Bearer tok', 'ChatGPT-Account-ID': 'acct-1' } };
+    const spec = buildChatBody(cfg, 'SYS', userMsg('hi'));
+    const b: any = spec.body;
+    expect(spec.url).toBe('https://chatgpt.com/backend-api/codex/responses');
+    // Auth headers ride from cfg; the codex client-identity headers are present.
+    expect(spec.headers.Authorization).toBe('Bearer tok');
+    expect(spec.headers['ChatGPT-Account-ID']).toBe('acct-1');
+    expect(spec.headers.originator).toBe('codex_cli_rs');
+    expect(String(spec.headers['User-Agent']).startsWith('codex_cli_rs/')).toBe(true);
+    expect(spec.headers['OpenAI-Beta']).toBe('responses=experimental');
+    expect(spec.headers.session_id).toBeTruthy();
+    // system → top-level instructions (NOT an input item); input parts are input_text.
+    expect(b.instructions).toBe('SYS');
+    expect(b.input).toEqual([{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }]);
+    expect(b.store).toBe(false);
+    expect(b.stream).toBe(true);
+    expect(b.include).toEqual([]);
+  });
+
+  it('openai-chatgpt: empty system → no instructions field', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-chatgpt' as const, apiKey: '', model: 'gpt-5', baseURL: '', authHeaders: {} };
+    const b: any = buildChatBody(cfg, '', userMsg('hi')).body;
+    expect('instructions' in b).toBe(false);
   });
 
   it('looksLikeNoImageReply: flags gemma4 "no image" misses, accepts real descriptions (SP3)', async () => {
@@ -704,6 +802,29 @@ describe('chatStream', () => {
       setErr: (e: any) => { err = e; },
     };
   }
+
+  it('Track B: the openai-chatgpt streaming net.request is redirect:"error" + host-pinned (no Bearer to a redirect host)', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const cfg = { provider: 'openai-chatgpt' as const, apiKey: '', model: 'gpt-5', baseURL: '', authHeaders: { Authorization: 'Bearer SECRET-TOK', 'ChatGPT-Account-ID': 'acct-1' } };
+    let errored = false;
+    const controller = new AbortController();
+    const p = chatStream({
+      cfg, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {}, onError: () => { errored = true; },
+    });
+    await tick();
+    const req = lastReq();
+    // The token-bearing request hard-fails any redirect (no benign redirect on a Bearer request).
+    expect(req.opts.redirect).toBe('error');
+    // It targets chatgpt.com (the synchronous exact-host pin passed).
+    expect(req.opts.hostname).toBe('chatgpt.com');
+    // Simulate electron emitting 'error' for a refused redirect on a token-bearing request: only ONE
+    // request was ever issued — the Bearer is never re-sent to a redirect host.
+    req.emit('error', new Error('ERR_UNEXPECTED_REDIRECT'));
+    await p;
+    expect(errored).toBe(true);
+    expect(reqs.length).toBe(1); // no second request carrying the Bearer
+  });
 
   it('anthropic: accumulates text_delta then message_stop → done', async () => {
     const { chatStream } = await import('../src/main/chat-engine.js');

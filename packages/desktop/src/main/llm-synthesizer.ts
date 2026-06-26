@@ -14,10 +14,12 @@
 // never returned to the renderer.
 
 import { net } from 'electron';
+import { randomUUID } from 'node:crypto';
 import type { Synthesizer, SynthesisSource } from '@stellavault/core';
 import {
-  ANTHROPIC_VERSION, DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, OPENAI_BASE_URL, type AiProvider,
+  ANTHROPIC_VERSION, DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, DEFAULT_CHATGPT_MODEL, OPENAI_BASE_URL, type AiProvider,
 } from '../shared/ai-providers.js';
+import { assertExactHost } from './outbound-fetch.js';
 
 // Re-export for back-compat (older imports referenced this from here).
 export { DEFAULT_ANTHROPIC_MODEL };
@@ -27,6 +29,9 @@ export interface LlmConfig {
   apiKey: string;
   model: string;
   baseURL?: string; // only used when provider === 'openai-compatible'
+  // Track B (openai-chatgpt): pre-resolved OAuth auth headers (Authorization, ChatGPT-Account-ID)
+  // injected by the handler. chat-engine/synthesizer never read the token store directly.
+  authHeaders?: Record<string, string>;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -173,21 +178,110 @@ function callGemini(cfg: LlmConfig, prompt: string): Promise<string> {
   });
 }
 
+// Track B — buffered Ask/Wiki against the Responses API. stream:true is HARDCODED (the backend
+// ignores stream:false), so a postJson().json() would HANG. We OPEN the SSE stream, accumulate
+// response.output_text.delta until response.completed, and return the assembled text. Hardened the
+// SAME way as chat-engine's streaming path: redirect:'error' + synchronous exact-host pin
+// (chatgpt.com) BEFORE any token header. `authHeaders` (Authorization + ChatGPT-Account-ID) are
+// pre-resolved by the handler — this function never reads the token store.
+const CHATGPT_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
+function callOpenAiChatGpt(cfg: LlmConfig, prompt: string, authHeaders: Record<string, string>): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let u: URL;
+    try { u = new URL(CHATGPT_RESPONSES_URL); } catch { reject(new Error('Invalid Responses endpoint URL')); return; }
+    try { assertExactHost(u.hostname, 'chatgpt.com'); } catch { reject(new Error('Responses host not allowed')); return; }
+
+    const body = {
+      model: cfg.model || DEFAULT_CHATGPT_MODEL,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] }],
+      store: false,
+      stream: true,
+      include: [],
+    };
+    const request = net.request({
+      method: 'POST', protocol: u.protocol as 'https:', hostname: u.hostname,
+      path: u.pathname + u.search, redirect: 'error',
+    });
+    request.setHeader('content-type', 'application/json');
+    request.setHeader('accept', 'text/event-stream');
+    for (const [k, v] of Object.entries(authHeaders)) request.setHeader(k, v);
+    request.setHeader('originator', 'codex_cli_rs');
+    request.setHeader('User-Agent', `codex_cli_rs/0.0.0 (${process.platform})`);
+    request.setHeader('OpenAI-Beta', 'responses=experimental');
+    request.setHeader('session_id', randomUUID());
+
+    let settled = false;
+    let acc = '';
+    let buffer = '';
+    const timer = setTimeout(() => fail(new Error('Responses request timed out')), REQUEST_TIMEOUT_MS);
+    function fail(err: Error) { if (settled) return; settled = true; clearTimeout(timer); try { request.abort(); } catch { /* */ } reject(err); }
+    function done() { if (settled) return; settled = true; clearTimeout(timer); if (!acc.trim()) { reject(new Error('Empty LLM response')); return; } resolve(acc.trim()); }
+
+    request.on('redirect', () => fail(new Error('Responses redirect refused')));
+    request.on('response', (response) => {
+      const status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        response.on('data', () => { /* drain — never logged */ });
+        response.on('end', () => fail(new Error(`ChatGPT Responses API error ${status}`)));
+        response.on('error', () => fail(new Error(`ChatGPT Responses API error ${status}`)));
+        return;
+      }
+      response.on('data', (chunk: Buffer) => {
+        if (settled) return;
+        buffer += chunk.toString('utf-8');
+        let sep = buffer.indexOf('\n\n');
+        while (sep !== -1) {
+          const frame = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          for (const line of frame.split('\n')) {
+            const l = line.replace(/\r$/, '');
+            if (!l.startsWith('data:')) continue;
+            const raw = l.slice('data:'.length).trim();
+            if (!raw || raw === '[DONE]') continue;
+            let obj: any;
+            try { obj = JSON.parse(raw); } catch { continue; }
+            const type = String(obj?.type ?? '');
+            if (type === 'response.output_text.delta' && typeof obj?.delta === 'string') acc += obj.delta;
+            else if (type === 'response.refusal.delta' || type === 'response.refusal.done') { fail(new Error('LLM declined to answer')); return; }
+            else if (type === 'response.failed' || type === 'error') { fail(new Error('ChatGPT Responses stream error')); return; }
+            else if (type === 'response.completed') { done(); return; }
+          }
+          sep = buffer.indexOf('\n\n');
+        }
+      });
+      response.on('end', () => done());
+      response.on('error', (err: Error) => fail(err instanceof Error ? err : new Error('Responses stream error')));
+    });
+    request.on('error', (err: Error) => fail(err instanceof Error ? err : new Error('Responses request failed')));
+    request.write(JSON.stringify(body));
+    request.end();
+  });
+}
+
 /** Build a core Synthesizer from the desktop AI settings, or null when no usable
- *  provider is configured (caller then uses the extractive fallback). Signature
- *  unchanged → Ask + Wiki Synthesis handlers need no edits. */
-export function makeSynthesizer(ai: LlmConfig | undefined | null): Synthesizer | null {
+ *  provider is configured (caller then uses the extractive fallback). `authHeaders` carries the
+ *  pre-resolved auth map: existing providers pass their sync-built headers byte-identically; Track B
+ *  (openai-chatgpt) passes the resolved OAuth headers. Ask + Wiki handlers await getAuthHeaders. */
+export function makeSynthesizer(
+  ai: LlmConfig | undefined | null,
+  authHeaders?: Record<string, string>,
+): Synthesizer | null {
   if (!ai || ai.provider === 'none') return null;
   const provider = ai.provider;
   const apiKey = (ai.apiKey ?? '').trim();
   const baseURL = (ai.baseURL ?? '').trim();
 
-  // Local openai-compatible servers may run keyless; everything else needs a key.
-  if (!apiKey && provider !== 'openai-compatible') return null;
-  if (provider === 'openai-compatible' && !baseURL) return null;
+  // Local openai-compatible servers may run keyless; openai-chatgpt uses OAuth (no key, gated on the
+  // resolved authHeaders); everything else needs a key.
+  if (provider === 'openai-chatgpt') {
+    if (!authHeaders || !authHeaders.Authorization) return null;
+  } else {
+    if (!apiKey && provider !== 'openai-compatible') return null;
+    if (provider === 'openai-compatible' && !baseURL) return null;
+  }
 
   const model = (ai.model || DEFAULT_MODELS[provider] || '').trim();
-  const cfg: LlmConfig = { provider, apiKey, model, baseURL };
+  const cfg: LlmConfig = { provider, apiKey, model, baseURL, authHeaders };
 
   return {
     async synthesize({ question, sources, mode }) {
@@ -197,6 +291,7 @@ export function makeSynthesizer(ai: LlmConfig | undefined | null): Synthesizer |
         case 'openai':            return callOpenAiCompatible(cfg, prompt, OPENAI_BASE_URL);
         case 'openai-compatible': return callOpenAiCompatible(cfg, prompt, baseURL);
         case 'google':            return callGemini(cfg, prompt);
+        case 'openai-chatgpt':    return callOpenAiChatGpt(cfg, prompt, authHeaders ?? {});
         default:                  throw new Error(`Unknown AI provider: ${String(provider)}`);
       }
     },

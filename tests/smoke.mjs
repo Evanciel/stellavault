@@ -247,6 +247,30 @@ await test('chat: preload allowlists chat:send (channel) + chat:chunk (event)', 
   const ipcTypes = readFileSync(join(DESKTOP_SRC, 'shared', 'ipc-types.ts'), 'utf-8');
   assert(ipcTypes.includes("'chat:steer'"), "'chat:steer' missing from ipc-types");
   assert(ipcTypes.includes("'chat:vitals'"), "'chat:vitals' missing from ipc-types");
+
+  // Track B (Sign in with ChatGPT): the 3 oauth channels + progress event are both-side wired.
+  assert(setBlock('ALLOWED_CHANNELS').includes("'oauth:start-device'"), "'oauth:start-device' missing from ALLOWED_CHANNELS");
+  assert(setBlock('ALLOWED_EVENTS').includes("'oauth:progress'"), "'oauth:progress' missing from ALLOWED_EVENTS");
+  assert(ipcTypes.includes("'oauth:start-device'"), "'oauth:start-device' missing from ipc-types");
+});
+
+await test('Track B: Sign in with ChatGPT is OFF by default (double-gated + experimental const)', () => {
+  // The provider must be experimental + off-by-default: every oauth handler is gated on a single
+  // startup env const (un-spoofable by a renderer) AND a main-only consent file.
+  const main = readFileSync(join(DESKTOP_SRC, 'main', 'index.ts'), 'utf-8');
+  assert(
+    main.includes("const OAUTH_EXPERIMENTAL = process.env.STELLAVAULT_OAUTH_EXPERIMENTAL === '1'"),
+    'OAUTH_EXPERIMENTAL env gate const missing (off-by-default)',
+  );
+  // start-device double-gates: env + main-only consent re-check.
+  const start = main.match(/ipcMain\.handle\('oauth:start-device'[\s\S]*?\n {2}\}\);/);
+  assert(start, 'oauth:start-device handler not found');
+  assert(start[0].includes('OAUTH_EXPERIMENTAL'), 'oauth:start-device missing env gate');
+  assert(start[0].includes('oauthConsentGranted()'), 'oauth:start-device missing main-only consent gate');
+  // consent is NOT spoofable via settings:set (no consent field ASSIGNED into the safeAi whitelist;
+  // an explanatory comment mentioning "consent" is fine — what matters is no safeAi.<…>consent write).
+  const set = main.match(/ipcMain\.handle\('settings:set'[\s\S]*?\n {2}\}\);/);
+  assert(set && !/safeAi\.\w*[Cc]onsent/.test(set[0]) && !/consentAccepted/.test(set[0]), 'settings:set must NOT accept a consent field');
 });
 
 await test('chat: SSE parser is pure (parses a static frame, issues no network call)', () => {
@@ -309,6 +333,23 @@ await test('chat: SSE parser is pure (parses a static frame, issues no network c
 
   const stopFrame = 'event: message_stop\ndata: {"type":"message_stop"}';
   assert(parseAnthropicSse(stopFrame).done === true, 'message_stop did not mark done');
+
+  // Track B: parseResponsesSse must ALSO be pure (no network) and accumulate output_text.delta.
+  const responsesSrc = grab('parseResponsesSse');
+  for (const banned of ['net.request', 'fetch(', 'https.request', 'http.request', "require('electron')"]) {
+    assert(!responsesSrc.includes(banned), `parseResponsesSse is not pure — found "${banned}"`);
+  }
+  const responsesFactory = new Function(
+    'ChatStreamError',
+    `${frameLinesSrc}\n${toJs(responsesSrc)}\nreturn parseResponsesSse;`,
+  );
+  const parseResponsesSse = responsesFactory(StubErr);
+  const rOut = parseResponsesSse(
+    'data: {"type":"response.output_text.delta","delta":"Hi"}\n' +
+    'data: {"type":"response.completed","response":{}}',
+  );
+  assert(rOut.deltas.join('') === 'Hi', `parseResponsesSse delta expected "Hi", got "${rOut.deltas.join('')}"`);
+  assert(rOut.done === true, 'parseResponsesSse: response.completed did not mark done');
 });
 
 await test('chat: sanitize schema strips onerror + blocks javascript:', () => {
