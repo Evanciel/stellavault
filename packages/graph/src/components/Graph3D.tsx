@@ -226,7 +226,9 @@ export function Graph3D() {
       // enormous (the reported over-zoom). 85 keeps a sane minimum distance.
       r = Number.isFinite(r) ? Math.max(r, 85) : 120;
       const fov = ((cam.fov ?? 50) * Math.PI) / 180;
-      const dist = Math.min(1900, (r * 1.35) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      // margin 1.05 = fill the view (planets are small now, so a tight frame reads as a full
+      // galaxy of little planets rather than a sparse distant speck).
+      const dist = Math.min(1900, (r * 1.05) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
       const center = new THREE.Vector3(cen[0], cen[1], cen[2]);
       const dir = controls.object.position.clone().sub(controls.target).normalize();
       const endPos = center.clone().add(dir.multiplyScalar(dist));
@@ -339,7 +341,7 @@ export function Graph3D() {
   return (
     <>
     <Canvas
-      camera={{ position: [0, 70, 360], fov: 55, near: 1, far: 5000 }}
+      camera={{ position: [0, 55, 270], fov: 55, near: 1, far: 5000 }}
       raycaster={{ params: { Points: { threshold: 15 } } } as any}
       style={{ background: bgStyle }}
       gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}

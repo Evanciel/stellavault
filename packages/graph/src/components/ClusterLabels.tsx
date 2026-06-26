@@ -50,8 +50,8 @@ export function ClusterLabels() {
       {shownNodes.map((n) => {
         const mc = n.memberCount ?? 1;
         const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
-        // Smaller than the dot's size, so even the top-12 don't pile into all-caps soup.
-        const fontSize = 2.5 + 0.42 * Math.min(12, Math.sqrt(mc));
+        // Deliberately small captions — even the biggest cluster stays a quiet label, not a banner.
+        const fontSize = 1.6 + 0.26 * Math.min(12, Math.sqrt(mc));
         // Tint to the cluster colour — keep it COLOURFUL: only a light lift toward white on the
         // dark canvas for legibility (the dark outline carries the contrast), saturated on light.
         const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
@@ -63,7 +63,7 @@ export function ClusterLabels() {
         // between every glyph, so a long label stacked into vertical text. Truncate instead.
         const shown = n.label.length > 16 ? `${n.label.slice(0, 15)}…` : n.label;
         return (
-          <Billboard key={n.id} position={[x, y + n.size * 1.5 + 6, z]}>
+          <Billboard key={n.id} position={[x, y + n.size * 0.35 + 2.5, z]}>
             <Text
               fontSize={fontSize}
               color={fillColor}

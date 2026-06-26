@@ -146,10 +146,10 @@ function Planet({ position, radius, color, seed, type }: {
       <mesh raycast={NOOP_RAYCAST} material={material}>
         <sphereGeometry args={[radius, 32, 32]} />
       </mesh>
-      {/* soft outer atmosphere halo beyond the rim */}
-      <mesh raycast={NOOP_RAYCAST} scale={1.35}>
+      {/* soft outer atmosphere halo beyond the rim (kept tight so the planet stays small) */}
+      <mesh raycast={NOOP_RAYCAST} scale={1.25}>
         <sphereGeometry args={[radius, 24, 24]} />
-        <meshBasicMaterial color={color} transparent opacity={0.11} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color={color} transparent opacity={0.1} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
       {hasRing && (
         <mesh raycast={NOOP_RAYCAST} rotation={[Math.PI / 2 + ringTilt, 0, ringTilt * 0.5]}>
@@ -174,9 +174,9 @@ export function ClusterPlanets() {
         <Planet
           key={n.id}
           position={n.position as [number, number, number]}
-          // Smaller than the old flat-dot size — as actual spheres in a ~125-radius galaxy the
-          // big-cluster planets otherwise touch/overlap. Range ≈ 1.5 (small) .. 6 (largest).
-          radius={0.7 + (n.size ?? 3) * 0.4}
+          // Small but with a visible FLOOR — too-tiny outer planets just vanished, leaving the
+          // galaxy looking like a small central speck. Range ≈ 1.8 (small) .. 4.6 (largest).
+          radius={1.0 + (n.size ?? 3) * 0.26}
           color={PALETTE_HEX[n.clusterId % PALETTE_HEX.length]}
           seed={n.clusterId}
           // spread the 5 types across clusters; +the cluster's own id so colour≠type lockstep

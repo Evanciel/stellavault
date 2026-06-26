@@ -185,7 +185,7 @@ export function GraphNodes() {
         g = Math.min(g * 0.55 + 0.45, 1);
         b = Math.min(b * 0.55 + 0.45, 1);
         sz *= 0.32;
-        gsz *= 0.9;
+        gsz *= 0.45;
       }
 
       // Design Ref: §2.3 — F06 히트맵 오버레이 (decay와 상호 배타)
