@@ -79,9 +79,11 @@ export function GraphEdges() {
       else if (dist > 300) fade = 1 - (dist - 300) / 200;
     }
 
+    // Compromise: the meta-edges must be VISIBLE at the far cluster distance, but not so loud
+    // they bury the super-node dots. ~0.28 reads as a faint skeleton the nodes still sit above.
     const baseOpacity = isLight
-      ? (hasInteraction ? 0.03 : (isClusterView ? 0.5 : 0.35))
-      : (hasInteraction ? 0.005 : (isClusterView ? 0.5 : 0.1));
+      ? (hasInteraction ? 0.03 : (isClusterView ? 0.3 : 0.35))
+      : (hasInteraction ? 0.005 : (isClusterView ? 0.28 : 0.1));
     dimMatRef.current.opacity = baseOpacity * fade;
   });
 

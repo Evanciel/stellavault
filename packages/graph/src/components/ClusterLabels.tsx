@@ -56,6 +56,9 @@ export function ClusterLabels() {
         // Small clusters recede; the few large ones carry the eye. Range ~0.45..0.95.
         const fillOpacity = 0.45 + 0.5 * rel;
         const [x, y, z] = n.position!;
+        // Keep it ONE horizontal line: drei <Text> maxWidth wraps, and CJK (Korean) breaks
+        // between every glyph, so a long label stacked into vertical text. Truncate instead.
+        const shown = n.label.length > 20 ? `${n.label.slice(0, 19)}…` : n.label;
         return (
           <Billboard key={n.id} position={[x, y + n.size * 1.5 + 6, z]}>
             <Text
@@ -67,9 +70,8 @@ export function ClusterLabels() {
               outlineOpacity={fillOpacity * 0.8}
               anchorX="center"
               anchorY="middle"
-              maxWidth={160}
             >
-              {`${n.label} (${mc})`}
+              {`${shown} (${mc})`}
             </Text>
           </Billboard>
         );
