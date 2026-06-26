@@ -32,23 +32,26 @@ export function ClusterLabels() {
   const theme = useGraphStore((s) => s.theme);
   const isLight = theme === 'light';
 
-  const clusterNodes = nodes.filter((n) => n.isCluster && n.position);
+  const clusterNodes = nodes.filter((n) => n.isCluster && n.position && !hiddenClusters.has(n.clusterId));
   if (clusterNodes.length === 0) return null;
 
-  // The biggest cluster anchors the relative scale so opacity/size de-emphasise the long tail
-  // of small clusters (the source of the "too many equally-white captions" clutter).
   const maxMc = Math.max(...clusterNodes.map((n) => n.memberCount ?? 1), 1);
+  // Only label the BIGGEST clusters always-on — 35 captions piled in the dense centre were
+  // unreadable. The rest stay as planets; hovering any one shows its name in the tooltip.
+  const TOP_N = 12;
+  const shownNodes = [...clusterNodes]
+    .sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0))
+    .slice(0, TOP_N);
   // Outline contrasts against whichever canvas background is active (kept thin).
   const outlineColor = isLight ? '#ffffff' : '#05050f';
 
   return (
     <group>
-      {clusterNodes.map((n) => {
-        if (hiddenClusters.has(n.clusterId)) return null;
+      {shownNodes.map((n) => {
         const mc = n.memberCount ?? 1;
         const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
-        // Mirror the dot's clamped sizing but a touch smaller, so the galaxy isn't all-caps soup.
-        const fontSize = 3 + 0.5 * Math.min(12, Math.sqrt(mc));
+        // Smaller than the dot's size, so even the top-12 don't pile into all-caps soup.
+        const fontSize = 2.5 + 0.42 * Math.min(12, Math.sqrt(mc));
         // Tint to the cluster colour — keep it COLOURFUL: only a light lift toward white on the
         // dark canvas for legibility (the dark outline carries the contrast), saturated on light.
         const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
@@ -58,7 +61,7 @@ export function ClusterLabels() {
         const [x, y, z] = n.position!;
         // Keep it ONE horizontal line: drei <Text> maxWidth wraps, and CJK (Korean) breaks
         // between every glyph, so a long label stacked into vertical text. Truncate instead.
-        const shown = n.label.length > 20 ? `${n.label.slice(0, 19)}…` : n.label;
+        const shown = n.label.length > 16 ? `${n.label.slice(0, 15)}…` : n.label;
         return (
           <Billboard key={n.id} position={[x, y + n.size * 1.5 + 6, z]}>
             <Text
