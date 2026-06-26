@@ -248,3 +248,31 @@ describe('safeFetch — SSRF + caps', () => {
     expect(out.contentType).toBe('application/octet-stream');
   });
 });
+
+// ── assertExactHost (credential host-pin) ─────────────────────────────────────
+// The key/Bearer may ONLY reach the pinned provider host. Exact, case-folded,
+// trailing-dot-stripped equality — NOT endsWith (the classic suffix-bypass).
+describe('assertExactHost', () => {
+  let assertExactHost: typeof import('../src/main/outbound-fetch.js').assertExactHost;
+  beforeAll(async () => {
+    ({ assertExactHost } = await import('../src/main/outbound-fetch.js'));
+  }, 30000);
+
+  it('accepts the exact host, case-insensitively, with a trailing dot stripped', () => {
+    expect(() => assertExactHost('api.openai.com', 'api.openai.com')).not.toThrow();
+    expect(() => assertExactHost('API.OpenAI.COM', 'api.openai.com')).not.toThrow();
+    expect(() => assertExactHost('api.openai.com.', 'api.openai.com')).not.toThrow(); // FQDN dot = same host
+  });
+
+  it('rejects a suffix-bypass host (NOT endsWith)', () => {
+    expect(() => assertExactHost('api.openai.com.evil.com', 'api.openai.com')).toThrow(/host pin/i);
+    expect(() => assertExactHost('evil-api.openai.com', 'api.openai.com')).toThrow(/host pin/i);
+    expect(() => assertExactHost('chatgpt.com.evil.com', 'chatgpt.com')).toThrow(/host pin/i);
+  });
+
+  it('rejects an unrelated host and empty inputs', () => {
+    expect(() => assertExactHost('evil.com', 'api.openai.com')).toThrow(/host pin/i);
+    expect(() => assertExactHost('', 'api.openai.com')).toThrow(/host pin/i);
+    expect(() => assertExactHost('api.openai.com', '')).toThrow(/host pin/i);
+  });
+});

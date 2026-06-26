@@ -20,6 +20,7 @@
 //  - idle timer resets on EVERY data frame (ping + thinking_delta included), not only text.
 
 import { net } from 'electron';
+import { assertExactHost } from './outbound-fetch.js';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
 import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
 import { modelSupportsTools } from './ollama-manager.js';
@@ -93,6 +94,9 @@ export interface ChatRequestSpec {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  /** The provider host the key/Bearer may EVER reach — pinned (exact, case-folded) on the
+   *  net.request before any auth header is set, so a redirect/DNS swap can't exfiltrate it. */
+  pinHost: string;
 }
 
 // ── SP2 image attachments ─────────────────────────────────────────────────────
@@ -147,6 +151,7 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
     case 'anthropic':
       return {
         url: 'https://api.anthropic.com/v1/messages',
+        pinHost: 'api.anthropic.com',
         headers: { 'anthropic-version': ANTHROPIC_VERSION, 'x-api-key': cfg.apiKey },
         // NO temperature/top_p/top_k/budget_tokens/thinking — all 400 on fable-5/opus-4.8.
         body: {
@@ -171,6 +176,9 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
       const skipThinking = cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL || '');
       return {
         url: `${base}/chat/completions`,
+        // pin to the host of the configured base (api.openai.com for 'openai'; the user's
+        // host for 'openai-compatible'). new URL throws on a malformed base → caught upstream.
+        pinHost: new URL(base).hostname,
         headers: key ? { authorization: `Bearer ${key}` } : {},
         body: {
           model,
@@ -185,6 +193,7 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
       return {
         // key in HEADER (x-goog-api-key), never the URL.
         url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+        pinHost: 'generativelanguage.googleapis.com',
         headers: { 'x-goog-api-key': cfg.apiKey },
         body: {
           systemInstruction: { parts: [{ text: system }] },
@@ -777,6 +786,13 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     fail('unsupported AI endpoint protocol', 'generic');
     return;
   }
+  // Host PIN before any key/Bearer header: the credential may ONLY reach the provider host.
+  try {
+    assertExactHost(u.hostname, spec.pinHost);
+  } catch {
+    fail('AI endpoint host mismatch', 'generic');
+    return;
+  }
   const protocol: 'http:' | 'https:' = u.protocol;
 
   const parse = parserFor(cfg.provider);
@@ -788,6 +804,9 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined,
       path: u.pathname + u.search,
+      // redirect:'error' — a 3xx hard-fails instead of replaying the x-api-key/Bearer/
+      // x-goog-api-key to the redirect host (Electron's default 'follow' would exfiltrate it).
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
     request.setHeader('accept', 'text/event-stream');
@@ -999,6 +1018,9 @@ export function streamOnceNative(
     const request = net.request({
       method: 'POST', protocol, hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined, path: u.pathname + u.search,
+      // redirect:'error' — never follow a 3xx (this native path is local/keyless today, but a
+      // redirect must never be auto-followed off the configured host).
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
 
