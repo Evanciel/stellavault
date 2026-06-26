@@ -388,11 +388,11 @@ export function GraphNodes() {
         <pointsMaterial
           vertexColors
           transparent
-          opacity={isLight ? 0.06 : 0.25}
+          opacity={isLight ? 0.06 : 0.2}
           depthWrite={false}
           blending={isLight ? THREE.NormalBlending : THREE.AdditiveBlending}
           sizeAttenuation
-          size={isLight ? 10 : 18}
+          size={isLight ? 10 : 13}
           map={circleTexture}
           alphaTest={0.05}
         />

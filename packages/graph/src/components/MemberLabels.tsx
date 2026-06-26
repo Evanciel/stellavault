@@ -26,6 +26,7 @@ export function MemberLabels() {
   const isLight = theme === 'light';
 
   const labelRefs = useRef<Map<string, { t: any; pos: [number, number, number]; rel: number; op: number }>>(new Map());
+  const frame = useRef(0);
 
   // Drilled member view only: cluster view but the nodes are members, not super-nodes.
   const isDrilldown = view === 'cluster' && nodes.length > 0 && !nodes[0]?.isCluster;
@@ -41,6 +42,11 @@ export function MemberLabels() {
   const maxSize = useMemo(() => Math.max(...shown.map((n) => n.size ?? 1), 1), [shown]);
 
   useFrame(({ camera }) => {
+    // Throttle: troika .sync() per label is costly; running it every frame for ~45 labels while
+    // the camera tweens starves the main thread and makes the zoom crawl. Every 4th frame is
+    // smooth enough for a fade.
+    frame.current = (frame.current + 1) % 4;
+    if (frame.current !== 0) return;
     const entries = [...labelRefs.current.values()].filter((e) => e.t);
     if (entries.length === 0) return;
     let dmin = Infinity, dmax = -Infinity;

@@ -64,11 +64,16 @@ export function useLayout() {
       type: 'init',
       nodes: nodes.map(n => ({ id: n.id, clusterId: n.clusterId, size: n.size })),
       edges,
-      // Smaller ellipsoid AND lower repulsion: at full repulsion the members blow past the soft
-      // ellipsoid bound (radius crept back to ~100), so the camera still pulled back. A tighter
-      // pack keeps the framed radius small → the camera dollies IN on entry.
+      // Drilldown: a COMPACT ellipsoid at the DEFAULT (stable) repulsion. Compact so the member
+      // framing ends up CLOSER than the galaxy → entering a cluster is a real zoom-IN (single
+      // clean dolly, no fragile multi-stage cinematic). Default repulsion keeps the nodes evenly
+      // spread (no clumping → no "mould" of overlapping glow halos); higher repulsion blew the sim
+      // up (NaN / nodes flung to infinity).
+      // [58,43,50] is about the smallest STABLE ellipsoid: smaller and the default repulsion makes
+      // near-coincident members explode (NaN / nodes flung off). This gives r≈75 → a framing closer
+      // than the galaxy (a real zoom-in) while staying numerically safe and evenly spread (no mould).
       options: isDrilldown
-        ? { brainScale: [46, 34, 40] as [number, number, number], repulsion: 300 }
+        ? { brainScale: [58, 43, 50] as [number, number, number] }
         : undefined,
     });
 

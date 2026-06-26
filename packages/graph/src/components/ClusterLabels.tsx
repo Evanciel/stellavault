@@ -44,6 +44,7 @@ export function ClusterLabels() {
   // troika <Text> refs keyed by cluster id, plus each one's world position — the per-frame fade
   // pass reads these without going through React state (no re-render per frame).
   const labelRefs = useRef<Map<string, { t: any; pos: [number, number, number]; rel: number; op: number }>>(new Map());
+  const frame = useRef(0);
 
   const clusterNodes = useMemo(
     () => nodes.filter((n) => n.isCluster && n.position && !hiddenClusters.has(n.clusterId)),
@@ -59,6 +60,10 @@ export function ClusterLabels() {
   // map each label front→back into bright→faint. Adapts to any zoom/orbit. Throttled: only push a
   // new opacity (and the troika .sync() it needs) when it actually moved, so a still camera is free.
   useFrame(({ camera }) => {
+    // Throttle troika .sync() to every 4th frame — running it for every label each frame while the
+    // camera tweens starves the main thread (made the drilldown zoom crawl). Smooth enough to fade.
+    frame.current = (frame.current + 1) % 4;
+    if (frame.current !== 0) return;
     const entries = [...labelRefs.current.values()].filter((e) => e.t);
     if (entries.length === 0) return;
     let dmin = Infinity, dmax = -Infinity;

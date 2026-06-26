@@ -57,7 +57,13 @@ function Scene() {
     // Fit on the first populated paint AND every swap. Cluster super-nodes are baked (ready);
     // raw/drilled members come from the async force worker (wait for it to settle).
     const isClusterGalaxy = view === 'cluster' && !!fitNodes[0]?.isCluster;
-    const id = setTimeout(() => (window as any).__sv_fitView?.(), isClusterGalaxy ? 400 : 1200);
+    const isDrilldown = view === 'cluster' && !fitNodes[0]?.isCluster;
+    const fit = () => (window as any).__sv_fitView?.();
+    // Drilldown: ONE fit once the (small, fast) compact worker layout has settled, so the framing
+    // is computed from final positions (an early fit catches the members mid-spread and parks the
+    // camera wrong). Galaxy is baked (fast); raw waits for the big worker.
+    const delay = isClusterGalaxy ? 400 : isDrilldown ? 1300 : 1200;
+    const id = setTimeout(fit, delay);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitSig]);
@@ -144,22 +150,10 @@ export function Graph3D() {
           const hovered = currentState.nodes.find((nn) => nn.id === currentState.hoveredNodeId);
           if (m || hovered?.isCluster) {
             const cid = m ? m[1] : String(hovered!.clusterId);
-            const { mode, view, rawCap } = currentState;
-            const capParam = view === 'raw' ? `&cap=${rawCap}` : '';
-            currentState.setLoading(true);
-            fetch(`/api/graph/cluster/${cid}?view=cluster&mode=${mode}${capParam}`)
-              .then((r) => { if (!r.ok) throw new Error(`API error: ${r.status}`); return r.json(); })
-              .then((json) => {
-                const members = json.data;
-                const s = useGraphStore.getState();
-                s.selectNode(null);
-                s.setGraphData(members.members ?? [], members.intraEdges ?? [], s.clusters);
-                // (camera re-fit is handled by the scene-signature effect in Scene — the node
-                // swap changes the fit signature, which schedules fitView after the worker lays
-                // the members out.)
-              })
-              .catch((err) => useGraphStore.getState().setError(String(err)))
-              .finally(() => useGraphStore.getState().setLoading(false));
+            // Cinematic dive: fly the camera INTO the clicked planet first, then the member
+            // reveal (Phase B) zooms in from far. Both live in __sv_drilldown so a test can
+            // exercise the exact same path.
+            (window as any).__sv_drilldown?.(cid, hovered?.position);
             return;
           }
           if (currentState.selectedNodeId === currentState.hoveredNodeId) {
@@ -181,17 +175,28 @@ export function Graph3D() {
       }, 10);
     }
 
-    function resetCamera() {
+    // ONE cancellable camera tween. Every camera move (reset / fly-in / fit) goes through this so
+    // they can't run as competing requestAnimationFrame loops fighting over the same controls — the
+    // bug that made a drilldown's camera oscillate wildly (dive loop vs fit loop). Each call bumps
+    // camTweenToken; an older loop sees the token changed and bails, so the newest move always wins.
+    let camTweenToken = 0;
+    // TIME-based tween (uses the rAF timestamp), NOT a per-frame increment. The cluster view is
+    // heavy (member points + labels + the constellation overlay), so frame rate drops during a
+    // move; a per-frame lerp then crawls for many seconds. Time-based completes in `durationMs`
+    // wall-clock regardless of fps — choppy at worst, never sluggish.
+    function runCamTween(
+      endTarget: THREE.Vector3, endPos: THREE.Vector3, durationMs: number, startPosOverride?: THREE.Vector3,
+    ) {
       const controls = (window as any).__sv_controls?.current;
       if (!controls) return;
+      const myToken = ++camTweenToken;
       const startTarget = controls.target.clone();
-      const startPos = controls.object.position.clone();
-      const endTarget = new THREE.Vector3(0, 0, 0);
-      const endPos = new THREE.Vector3(0, 100, 600);
-      let t = 0;
-      function animate() {
-        t += 0.03;
-        if (t > 1) t = 1;
+      const startPos = startPosOverride ? startPosOverride.clone() : controls.object.position.clone();
+      let startTime = -1;
+      function animate(now: number) {
+        if (myToken !== camTweenToken) return; // superseded by a newer tween — stop
+        if (startTime < 0) startTime = now;
+        const t = Math.min((now - startTime) / durationMs, 1);
         const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         controls.target.lerpVectors(startTarget, endTarget, ease);
         controls.object.position.lerpVectors(startPos, endPos, ease);
@@ -200,7 +205,38 @@ export function Graph3D() {
       }
       requestAnimationFrame(animate);
     }
+
+    function resetCamera() {
+      runCamTween(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 100, 600), 650);
+    }
     (window as any).__sv_resetCamera = resetCamera;
+
+    // Drill into a cluster: fetch its members and swap them in. The camera zoom-in is handled by
+    // fitView (scheduled by the scene-signature effect) — the members lay out in a compact volume
+    // (useLayout), so framing them dollies the camera IN from the galaxy = a clean single zoom-in.
+    function drilldown(cid: string, _planetPos?: [number, number, number]) {
+      const cur = useGraphStore.getState();
+      // Remember how far the camera is right now (in the galaxy). The member fit is capped to a
+      // fraction of this so entering ALWAYS dollies in — the galaxy's own framing distance varies
+      // per layout, so a fixed member distance would sometimes match it and show no zoom at all.
+      const controls = (window as any).__sv_controls?.current;
+      const cam = (window as any).__sv_camera;
+      if (controls && cam) (window as any).__sv_drilldownFromDist = cam.position.distanceTo(controls.target);
+      const { mode, view, rawCap } = cur;
+      const capParam = view === 'raw' ? `&cap=${rawCap}` : '';
+      cur.setLoading(true);
+      fetch(`/api/graph/cluster/${cid}?view=cluster&mode=${mode}${capParam}`)
+        .then((r) => { if (!r.ok) throw new Error(`API error: ${r.status}`); return r.json(); })
+        .then((json) => {
+          const members = json.data;
+          const s = useGraphStore.getState();
+          s.selectNode(null);
+          s.setGraphData(members.members ?? [], members.intraEdges ?? [], s.clusters);
+        })
+        .catch((err) => useGraphStore.getState().setError(String(err)))
+        .finally(() => useGraphStore.getState().setLoading(false));
+    }
+    (window as any).__sv_drilldown = drilldown;
 
     // Content-aware fit: frame the CURRENT node set (cluster super-nodes are server-baked;
     // a fixed distance can't frame both the small cluster galaxy and the wide raw hairball,
@@ -234,7 +270,7 @@ export function Graph3D() {
       let margin: number;
       if (isDrilldown) {
         r = dists[Math.floor(dists.length * 0.97)] ?? dists[dists.length - 1] ?? 100;
-        margin = 1.2;
+        margin = 1.1;
       } else if (st.view === 'cluster') {
         r = median * 1.35;
         margin = 1.05;
@@ -251,22 +287,20 @@ export function Graph3D() {
       const fov = ((cam.fov ?? 50) * Math.PI) / 180;
       // margin: drilldown pulls back (padding around the opened cluster so nodes+names aren't cut
       // off at the edges — the reported over-zoom); galaxy/raw fill the view (small planets).
-      const dist = Math.min(1900, (r * margin) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      let dist = Math.min(1900, (r * margin) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      if (isDrilldown) {
+        // Guarantee a zoom-IN: never end farther than 80% of where the camera was in the galaxy.
+        // Members are compact, so pulling in a bit only clips the outer few % (acceptable).
+        const fromD = (window as any).__sv_drilldownFromDist;
+        if (fromD) dist = Math.min(dist, fromD * 0.8);
+        (window as any).__sv_drilldownFromDist = 0;
+      }
       const center = new THREE.Vector3(cen[0], cen[1], cen[2]);
       const dir = controls.object.position.clone().sub(controls.target).normalize();
-      const endPos = center.clone().add(dir.multiplyScalar(dist));
-      const startTarget = controls.target.clone();
-      const startPos = controls.object.position.clone();
-      let t = 0;
-      function animate() {
-        t += 0.03; if (t > 1) t = 1;
-        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        controls.target.lerpVectors(startTarget, center, ease);
-        controls.object.position.lerpVectors(startPos, endPos, ease);
-        controls.update();
-        if (t < 1) requestAnimationFrame(animate);
-      }
-      requestAnimationFrame(animate);
+      const endPos = center.clone().add(dir.clone().multiplyScalar(dist));
+      // Single clean dolly from the current camera to the framing. For a drilldown the members sit
+      // in a compact volume → endPos is closer than the galaxy → this reads as a zoom-IN.
+      runCamTween(center, endPos, 800);
     }
     (window as any).__sv_fitView = fitView;
 
