@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { GraphNodes } from './GraphNodes.js';
 import { GraphEdges } from './GraphEdges.js';
 import { ClusterLabels } from './ClusterLabels.js';
+import { MemberLabels } from './MemberLabels.js';
 import { ClusterPlanets } from './ClusterPlanets.js';
 import { StarField } from './StarField.js';
 import { Tooltip } from './Tooltip.js';
@@ -88,6 +89,7 @@ function Scene() {
       <GraphNodes />
       <ClusterPlanets />
       <ClusterLabels />
+      <MemberLabels />
       <ConstellationView />
       <PulseAnimator />
       <Tooltip />
@@ -207,28 +209,47 @@ export function Graph3D() {
       const controls = (window as any).__sv_controls?.current;
       const cam = (window as any).__sv_camera as THREE.PerspectiveCamera | undefined;
       if (!controls || !cam) return;
-      const pts = useGraphStore.getState().nodes
+      const st = useGraphStore.getState();
+      const pts = st.nodes
         .map((n: any) => n.position)
         .filter((p: any) => Array.isArray(p) && p.length === 3 && p.every((v: number) => Number.isFinite(v)));
       if (pts.length === 0) return;
       const cen = [0, 0, 0];
       for (const p of pts) { cen[0] += p[0]; cen[1] += p[1]; cen[2] += p[2]; }
       cen[0] /= pts.length; cen[1] /= pts.length; cen[2] /= pts.length;
-      // Use a PERCENTILE radius, not the absolute max: the force-settled galaxy is dense in the
-      // middle with a few far outliers, so framing to the true max leaves the bulk tiny. The 88th
-      // percentile frames the body (a couple of outliers may sit just past the edge — fine).
       const dists = pts
         .map((p) => Math.hypot(p[0] - cen[0], p[1] - cen[1], p[2] - cen[2]))
         .sort((a, b) => a - b);
-      let r = dists[Math.floor(dists.length * 0.88)] ?? dists[dists.length - 1] ?? 100;
+      // Pick the framing radius per context:
+      //  - drilldown (cluster view, member nodes): frame nearly ALL of it (97th pct) + generous
+      //    margin so every member node + its name is on-screen with breathing room.
+      //  - cluster galaxy: MEDIAN-based radius (×1.35), not a high percentile. The baked galaxy
+      //    often has a tight body + a long tail of far clusters; an 88th pct caught the tail and
+      //    shrank the body to a speck. The median tracks the body and ignores outliers (a few
+      //    sparse clusters may sit near the edge — fine).
+      //  - raw hairball: 88th pct fill (unchanged).
+      const isDrilldown = st.view === 'cluster' && !st.nodes[0]?.isCluster;
+      const median = dists[Math.floor(dists.length * 0.5)] ?? 100;
+      let r: number;
+      let margin: number;
+      if (isDrilldown) {
+        r = dists[Math.floor(dists.length * 0.97)] ?? dists[dists.length - 1] ?? 100;
+        margin = 1.5;
+      } else if (st.view === 'cluster') {
+        r = median * 1.35;
+        margin = 1.05;
+      } else {
+        r = dists[Math.floor(dists.length * 0.88)] ?? dists[dists.length - 1] ?? 100;
+        margin = 1.05;
+      }
       // FLOOR it: if the fit fires while the set is small / half-settled (mid force-layout), a
       // tiny radius would dolly the camera way too close → the galaxy overflows + planets look
       // enormous (the reported over-zoom). 85 keeps a sane minimum distance.
       r = Number.isFinite(r) ? Math.max(r, 85) : 120;
       const fov = ((cam.fov ?? 50) * Math.PI) / 180;
-      // margin 1.05 = fill the view (planets are small now, so a tight frame reads as a full
-      // galaxy of little planets rather than a sparse distant speck).
-      const dist = Math.min(1900, (r * 1.05) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
+      // margin: drilldown pulls back (padding around the opened cluster so nodes+names aren't cut
+      // off at the edges — the reported over-zoom); galaxy/raw fill the view (small planets).
+      const dist = Math.min(1900, (r * margin) / Math.tan(fov / 2)); // clamp < OrbitControls maxDistance
       const center = new THREE.Vector3(cen[0], cen[1], cen[2]);
       const dir = controls.object.position.clone().sub(controls.target).normalize();
       const endPos = center.clone().add(dir.multiplyScalar(dist));
