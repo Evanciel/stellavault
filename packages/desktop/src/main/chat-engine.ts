@@ -734,6 +734,9 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
           '- Never call the same tool with the same arguments twice.',
           '- Before your FINAL answer, silently confirm every plan step is addressed; if one is not, do that step first. Then give the final answer.',
           '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
+          // Proactive review (Stella-vs-hermes §3.3): a vault-native edge a generic agent + plain
+          // Obsidian cannot do. Scoped tight so it never nags: only on an OPEN/vague opener, once.
+          "- PROACTIVE: if the user opens with a vague/open prompt (a greeting, \"what should I do/review?\", or no concrete task), you MAY call learning_path (notes they're forgetting) or detect_gaps (weak links) ONCE and offer 1-2 specific things to revisit or connect — surfacing what they'd otherwise forget. SKIP this entirely when the user has a concrete task, and NEVER repeat it within a conversation.",
         ].join('\n');
     await runAgentLoop({
       turns: messages,
