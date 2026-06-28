@@ -32,7 +32,7 @@
 | 능력 | hermes | 현 스텔라 | 갭 → 조치 |
 |---|---|---|---|
 | 볼트 시맨틱검색·연결·감쇠·그래프 | ✗(obsidian 단순파일) | ✅ 1급 툴 | **우위 — 더 부각** |
-| 안전 쓰기(confirm·undo·비파괴·injection-scan) | 약(command approval) | ✅ | **우위 — 단 write-approval 정책 노브 비어있음(audit)** → 메움 |
+| 안전 쓰기(confirm·undo·비파괴·injection-scan) | 약(command approval) | ✅ | **우위 — write-approval 노브 이미 구현됨**(`confirmWrites` 설정+토글, audit P0-1 닫힘). 🤖 정직화는 미머지 PR#14. |
 | 로컬/오프라인/프라이버시 | ✗(클라우드 기본) | ✅ | **우위** |
 | 에이전트 메모리(절차적·core memory) | ✅ Honcho/FTS5 | ✅ recall/core_memory | parity |
 | frontier 추론 | ✅ | △ PR#14 미검증 | **라이브 E2E + 기본 경로화** |
@@ -48,7 +48,7 @@
 1. **frontier 기본 경로화 + 라이브 E2E** (PR#14 마감): 로컬=프라이버시 기본, frontier=품질 부스트 토글. "멍청한 에이전트" 탈출.
 2. **plan-act-reflect 깊이**: 단일 루프 → 계획·실행·**자기점검(reflect)** 모듈 1스텝. (멀티에이전트 아님 — 과투자 금지)
 3. **프로액티브 지식**: 감쇠(R<0.4)·갭을 에이전트가 **먼저 제안**("이거 잊는 중, 다시 볼래?"). hermes+obsidian이 구조적으로 못 하는 것.
-4. **write-approval 정책 노브** (audit 1순위 구멍): 쓰기 승인 모드(항상확인/세션허용/읽기전용) + 🤖 토글 정직화.
+4. ~~write-approval 정책 노브~~ **이미 구현됨**(`confirmWrites` 설정+토글, audit P0-1 닫힘 — 2026-06-28 확인). 잔여=🤖 정직화(미머지 PR#14에 있음) + (선택·저가치) readonly deny-all 모드.
 5. **제로셋업 온보딩**: 앱 깔면 인덱싱→에이전트 즉시. 조합 대비 마찰 0.
 
 **KEEP (이미 강점 — 부각)**: 볼트 21툴 깊이, 비파괴·undo·steer·검사가능 메모리, 로컬/오프라인.
