@@ -100,6 +100,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:load-session',
   'chat:rename-session',
   'chat:delete-session',
+  'chat:proactive-brief', // ③ v2: read-only review-brief for the empty-state chips (invoke only)
   // Agent (SP-D): approve/deny a write tool the MAIN model requested (renderer can ONLY
   // approve/deny — it can never name a tool to run).
   'chat:tool-approve',

@@ -7,7 +7,7 @@ import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
-import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
+import type { AppSettings, FileTreeNode, SearchResult, SearchQueryOpts, AskResponse, VaultStats, DecayItem, ProactiveBrief, CoachGaps, CoachLearningPath, PublishStatus, VaultRegistryEntry, CrossVaultResult, SynthesisResult, ContradictionNudge, DuplicateNudge, DecisionInput, DecisionEntry, EvolutionEntry, AutoLinkResult, LinkSuggestion, McpStatus } from '../shared/ipc-types.js';
 import type { Server as HttpServer } from 'node:http';
 import { SettingsStore } from './settings-store.js';
 import { SecretStore } from './secret-store.js';
@@ -29,6 +29,7 @@ import { modelsListRequest, parseModelsResponse, isValidProvider, type AiProvide
 import { chatStream, describeImages, foldAttachmentsIntoText, parseReflectionCandidates, MAX_CONCURRENT, type ErrorCategory } from './chat-engine.js';
 import { transcribeAudio, describeVideo } from './media-transcribe.js';
 import { buildAgentToolset, buildExecuteAgentTool, isAgentForceConfirmTool } from './agent-tools.js';
+import { buildProactiveBrief, type GapsLike } from './proactive-brief.js';
 import {
   buildCoreMemoryBlock, recallMemory, coreMemoryAppend, coreMemoryReplace,
   listBlocks, getBlock, deleteBlock, describeMemoryWrite, looksLikeSecret, type MemoryBlockMeta,
@@ -408,6 +409,11 @@ const graphBuildInflight = new Map<string, Promise<{ nodes: unknown[]; edges: un
 // Wave 1 cluster-first LOD: cache the tiered ClusteredGraph per (mode, version).
 const clusteredCache = new Map<string, ClusteredGraph>();
 const clusteredInflight = new Map<string, Promise<ClusteredGraph | null>>();
+// ③ v2 — proactive review brief cache. Keyed off graphCacheVersion (same self-invalidation as
+// the graph caches: bumped on reindex/watcher change), so the empty-state chips never recompute
+// the heavy decay/gap pass on rapid session-switch remounts. In-flight coalescing dedupes bursts.
+let proactiveBriefCache: { version: number; brief: ProactiveBrief } | null = null;
+let proactiveBriefInflight: Promise<ProactiveBrief> | null = null;
 function bumpGraphCacheVersion(): void {
   graphCacheVersion++;
   graphBuildCache.clear();
@@ -1175,6 +1181,33 @@ function registerIpcHandlers(config: AppConfig) {
       console.error('[main] core:decay-top failed:', err);
       return [];
     }
+  });
+
+  // ③ v2 — read-only proactive review brief for the chat empty-state chips. Reuses the LIGHT
+  // ranked decay query (getDecayItems → getDecaying, NOT computeAll) + the gap pipeline, and
+  // returns a COMPACT payload: titles / cluster names ONLY (no documentId/filePath/retrievability/
+  // severity — no-secret invariant). Cached by graphCacheVersion + in-flight coalescing so rapid
+  // empty-state remounts (session switches) never re-run the heavy gap build. Fail-closed to empty.
+  ipcMain.handle('chat:proactive-brief', async (): Promise<ProactiveBrief> => {
+    if (!coreReady || !store || !decayEngine) return { decaying: [], weakLinks: [] };
+    if (proactiveBriefCache && proactiveBriefCache.version === graphCacheVersion) return proactiveBriefCache.brief;
+    if (proactiveBriefInflight) return proactiveBriefInflight;
+    const version = graphCacheVersion;
+    proactiveBriefInflight = (async (): Promise<ProactiveBrief> => {
+      try {
+        const decay = await getDecayItems(vp, 3);                       // light getDecaying(0.9,3)
+        const gapsRaw = (await agentDetectGaps()) as GapsLike;
+        const brief = buildProactiveBrief(decay, gapsRaw);              // pure: title/cluster-names only
+        proactiveBriefCache = { version, brief };
+        return brief;
+      } catch (err) {
+        console.error('[main] chat:proactive-brief failed:', err);
+        return { decaying: [], weakLinks: [] };
+      } finally {
+        proactiveBriefInflight = null;
+      }
+    })();
+    return proactiveBriefInflight;
   });
 
   // W1-14: generalized decay list for the Memory review queue (decay-top kept above).

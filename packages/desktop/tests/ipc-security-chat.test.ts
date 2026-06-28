@@ -56,6 +56,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
   'chat:pick-media',   // SP4: pick audio/video → cloud transcript attachment
   'chat:export-note',  // part5: save the conversation verbatim as a vault note
+  'chat:proactive-brief', // ③ v2: read-only review brief for the empty-state chips (invoke only)
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',

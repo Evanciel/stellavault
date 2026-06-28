@@ -34,6 +34,14 @@ export interface DecayItem {
   filePath: string;
 }
 
+// Proactive review brief (③ v2) — the COMPACT, read-only payload behind the chat
+// empty-state "review" chips. Titles / cluster names ONLY: never a documentId,
+// filePath, retrievability, or severity (no-secret invariant — see chat:proactive-brief).
+export interface ProactiveBrief {
+  decaying: { title: string }[];
+  weakLinks: { a: string; b: string }[];
+}
+
 // Search panel (W1-4) — options for 'search:query'.
 // mode 'keyword' disables the semantic signal (BM25 + entity only);
 // pathPrefix is a vault-relative folder prefix (forward slashes), filtered post-hoc.
@@ -460,6 +468,8 @@ export interface IpcChannelMap {
   'core:get-stats':     { args: []; result: VaultStats };
   'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
+  // ③ v2 — read-only proactive review brief (titles/cluster-names only) for the chat empty-state.
+  'chat:proactive-brief': { args: []; result: ProactiveBrief };
 
   // Search panel (W1-4) — full hybrid/keyword search with tag + path filters.
   'search:query':       { args: [query: string, opts?: SearchQueryOpts]; result: SearchResult[] };
