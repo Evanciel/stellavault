@@ -21,7 +21,7 @@
 
 import { net } from 'electron';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
-import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl } from '../shared/ai-providers.js';
+import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl, modelSupportsToolsStatic } from '../shared/ai-providers.js';
 import { modelSupportsTools } from './ollama-manager.js';
 import type { ChatMessage, ChatCitation, ReflectionCandidate } from '../shared/ipc-types.js';
 
@@ -691,17 +691,12 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
   // already injection-scanned at source (memory-store), so it rides the trusted system role.
   const system = buildSystemPrompt(ragOn ? ragBlock : '', opts.coreMemory ?? '');
 
-  // ── Agent branch (SP-B, Design Ref §2.1, §3) ──
-  // Only when explicitly enabled AND the provider is a LOCAL ollama whose model advertises
-  // 'tools' (gemma2 → false → 400 avoided). Anything else falls through to single-shot →
-  // fable-5/openai/gemini/non-agent-local are untouched.
-  if (
-    opts.agentOn && opts.executeTool && opts.toolset &&
-    isLocalProviderUrl(cfg.baseURL ?? '') &&
-    await modelSupportsTools(cfg.baseURL ?? '', cfg.model || DEFAULT_MODELS[cfg.provider])
-  ) {
-    if (signal.aborted) { fail('aborted', 'aborted'); return; }
-    const nativeUrl = nativeChatUrl(cfg.baseURL ?? '');
+  // ── Agent branch (SP-B, Design Ref §2.1, §3; frontier transport §6.6) ──
+  // The agent loop runs on a LOCAL ollama tools-model OR a FRONTIER provider (anthropic/openai) with
+  // a key + tools-capable model — selectTransport picks the transport; anything else (no key, gemini,
+  // non-tools model, agentOn off) returns null → falls through to single-shot UNTOUCHED. agentSystem
+  // is built BEFORE the gate so it can be passed in as a frozen snapshot (same for every transport).
+  if (opts.agentOn && opts.executeTool && opts.toolset) {
     const toolset = opts.toolset;
     const executeTool = opts.executeTool;
     // Agent-specific system prompt (E2E finding): without these rules gemma4:e4b sometimes
@@ -738,26 +733,31 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
           // Obsidian cannot do. Scoped tight so it never nags: only on an OPEN/vague opener, once.
           "- PROACTIVE: if the user opens with a vague/open prompt (a greeting, \"what should I do/review?\", or no concrete task), you MAY call learning_path (notes they're forgetting) or detect_gaps (weak links) ONCE and offer 1-2 specific things to revisit or connect — surfacing what they'd otherwise forget. SKIP this entirely when the user has a concrete task, and NEVER repeat it within a conversation.",
         ].join('\n');
-    await runAgentLoop({
-      turns: messages,
-      toolset,
-      executeTool,
-      streamStep: (msgs) =>
-        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, false), signal, onDelta),
-      signal,
-      onDelta,
-      onToolCall: opts.onToolCall,
-      onToolResult: opts.onToolResult,
-      onMemoryWrite: opts.onMemoryWrite,
-      onPlan: opts.onPlan,
-      onSkill: opts.onSkill,
-      onToolConfirm: opts.onToolConfirm,
-      drainSteer: opts.drainSteer,
-      succeed,
-      fail,
-      preloopCitations: citations,
-    });
-    return;
+    // §6.6 auto-switch: native (local Ollama) OR frontier (anthropic/openai + key + tools-model).
+    const transport = await selectTransport(cfg, opts, agentSystem, signal, onDelta);
+    if (transport) {
+      if (signal.aborted) { fail('aborted', 'aborted'); return; }
+      await runAgentLoop({
+        turns: messages,
+        toolset,
+        executeTool,
+        streamStep: (msgs) => transport.streamStep(msgs), // arity-1; signal/onDelta closure-bound in the factory
+        signal,
+        onDelta,
+        onToolCall: opts.onToolCall,
+        onToolResult: opts.onToolResult,
+        onMemoryWrite: opts.onMemoryWrite,
+        onPlan: opts.onPlan,
+        onSkill: opts.onSkill,
+        onToolConfirm: opts.onToolConfirm,
+        drainSteer: opts.drainSteer,
+        succeed,
+        fail,
+        preloopCitations: citations,
+      });
+      return;
+    }
+    // transport === null (no key / non-tools model / unsupported provider) → fall through to single-shot.
   }
 
   let spec: ChatRequestSpec;
@@ -1125,6 +1125,356 @@ export function streamOnceNative(
     request.write(JSON.stringify(body));
     request.end();
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Frontier agent transport (transport-adapter §6.6 — docs/02-design/frontier-agent-transport-spec)
+// Runs the SAME runAgentLoop on Anthropic (tool_use) / OpenAI (chat-completions tools) via API key.
+// Only PARSING + FRAMING + message-shape switch; EVERY security invariant (confirm gate, dispatcher,
+// single-settle, injection-scan, caps, drainSteer, renderer-opacity) stays UNCONDITIONAL in the loop.
+// An adapter only produces StreamOnceResult and NEVER calls the outer succeed/fail.
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface AgentTransport {
+  // 1 step = 1 model turn. RESOLVES the assistant turn; NEVER calls the outer succeed/fail.
+  streamStep(messages: OllamaMsg[]): Promise<StreamOnceResult>;
+}
+
+// §6.6 truncation-refuse: a tool-call whose argument JSON never terminated / won't parse is OMITTED
+// (return null), NEVER coerced to {} — a truncated core_memory_replace/create_note at arguments:{}
+// would fire an EMPTY-ARGS write under auto-apply. '' is a legit no-arg call ONLY when the tool has
+// no required args (else a name-only-then-truncated stream is indistinguishable → REFUSE).
+export function finalizeToolCall(name: string, argStr: string, hasRequiredArgs: boolean): OllamaToolCall | null {
+  const s = argStr.trim();
+  if (s === '') return hasRequiredArgs ? null : { function: { name, arguments: {} } };
+  const last = s[s.length - 1];
+  if (last !== '}' && last !== ']') return null;               // not terminated → REFUSE
+  let parsed: unknown;
+  try { parsed = JSON.parse(s); } catch { return null; }       // parse fail → REFUSE
+  // typeof []==='object' in JS — Array.isArray reject is REQUIRED; never {} for a non-object/array.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return { function: { name, arguments: parsed as Record<string, unknown> } };
+}
+
+interface FrontierBlock { name: string; argStr: string; }
+export interface FrontierState { blocks: Map<number, FrontierBlock>; toolCalls: OllamaToolCall[]; refusedNames: string[]; refusal: boolean; }
+export function newFrontierState(): FrontierState { return { blocks: new Map(), toolCalls: [], refusedNames: [], refusal: false }; }
+
+// Move one open block (Anthropic content_block_stop) into toolCalls (or refusedNames).
+function finalizeBlock(state: FrontierState, index: number, hasRequiredArgs: (n: string) => boolean): void {
+  const b = state.blocks.get(index);
+  if (!b) return;
+  state.blocks.delete(index);
+  const tc = finalizeToolCall(b.name, b.argStr, hasRequiredArgs(b.name));
+  if (tc) state.toolCalls.push(tc); else state.refusedNames.push(b.name);
+}
+// Finalize ALL still-open blocks (OpenAI finish_reason; the scaffold's connection-drop guard).
+function finalizeOpenBlocks(state: FrontierState, hasRequiredArgs: (n: string) => boolean): void {
+  for (const index of [...state.blocks.keys()]) finalizeBlock(state, index, hasRequiredArgs);
+}
+
+// Anthropic Messages SSE → accumulate tool_use blocks by index; text via deltas. Stateful across
+// frames (one StreamOnceResult per request). Mirrors parseAnthropicSse error/refusal categorization.
+export function parseAnthropicAgentFrame(frame: string, state: FrontierState, hasRequiredArgs: (n: string) => boolean): { deltas: string[]; done: boolean } {
+  const lines = frameLines(frame);
+  const deltas: string[] = [];
+  let done = false;
+  let eventType = '';
+  for (const line of lines) {
+    if (line.startsWith('event:')) { eventType = line.slice('event:'.length).trim(); continue; }
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice('data:'.length).trim();
+    if (!raw) continue;
+    let obj: any;
+    try { obj = JSON.parse(raw); } catch { continue; }
+    const type = obj?.type ?? eventType;
+    if (type === 'error') {
+      const etype = String(obj?.error?.type ?? '');
+      const cat: ErrorCategory =
+        etype === 'overloaded_error' || etype === 'rate_limit_error' ? 'rate-limited'
+        : etype === 'authentication_error' || etype === 'permission_error' ? 'key-missing' : 'generic';
+      throw new ChatStreamError(String(obj?.error?.message ?? 'anthropic stream error'), cat);
+    }
+    if (type === 'content_block_start' && obj?.content_block?.type === 'tool_use' && typeof obj.index === 'number') {
+      state.blocks.set(obj.index, { name: String(obj.content_block.name ?? ''), argStr: '' });
+    } else if (type === 'content_block_delta' && typeof obj?.index === 'number') {
+      const d = obj.delta;
+      if (d?.type === 'input_json_delta' && typeof d.partial_json === 'string') {
+        const b = state.blocks.get(obj.index); if (b) b.argStr += d.partial_json;
+      } else if (d?.type === 'text_delta' && typeof d.text === 'string') {
+        deltas.push(d.text);
+      }
+    } else if (type === 'content_block_stop' && typeof obj?.index === 'number') {
+      finalizeBlock(state, obj.index, hasRequiredArgs);
+    } else if (type === 'message_delta') {
+      // §4d mutual-exclusion: refusal ONLY on a terminal turn with no tool calls (a tool_use turn
+      // — even all-refused — is best-effort terminal, NOT a refusal).
+      if (obj?.delta?.stop_reason === 'refusal' && state.toolCalls.length === 0) state.refusal = true;
+    } else if (type === 'message_stop') {
+      done = true;
+    }
+  }
+  return { deltas, done };
+}
+
+// OpenAI chat-completions SSE → accumulate delta.tool_calls[] arg fragments by index; finalize at
+// finish_reason. No native refusal. `data: [DONE]` → done.
+export function parseOpenAiAgentFrame(frame: string, state: FrontierState, hasRequiredArgs: (n: string) => boolean): { deltas: string[]; done: boolean } {
+  const lines = frameLines(frame);
+  const deltas: string[] = [];
+  let done = false;
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice('data:'.length).trim();
+    if (!raw) continue;
+    if (raw === '[DONE]') { done = true; continue; }
+    let obj: any;
+    try { obj = JSON.parse(raw); } catch { continue; }
+    const choice = obj?.choices?.[0];
+    if (!choice) continue;
+    const delta = choice.delta;
+    if (typeof delta?.content === 'string' && delta.content.length > 0) deltas.push(delta.content);
+    if (Array.isArray(delta?.tool_calls)) {
+      for (const tc of delta.tool_calls) {
+        const index = typeof tc?.index === 'number' ? tc.index : 0;
+        let b = state.blocks.get(index);
+        if (!b) { b = { name: '', argStr: '' }; state.blocks.set(index, b); }
+        if (tc?.function?.name) b.name = String(tc.function.name);
+        if (typeof tc?.function?.arguments === 'string') b.argStr += tc.function.arguments;
+      }
+    }
+    // finish_reason 'tool_calls' / 'stop' / 'length'(truncation) / 'content_filter' all TERMINATE
+    // the turn — finalizeOpenBlocks REFUSES any unterminated argStr (the truncation attack surface).
+    if (choice.finish_reason) { finalizeOpenBlocks(state, hasRequiredArgs); done = true; }
+  }
+  return { deltas, done };
+}
+
+// Translate the loop's OllamaMsg[] → Anthropic Messages. agentSystem is top-level `system`, never a
+// message. ids are synthesized per (turn,call) so tool_use.id === the following tool_result.tool_use_id
+// (Anthropic 400s on a mismatch). The loop emits EXACTLY ONE role:'tool' per tool_call in order
+// (runAgentLoop invariant), so order-correlation is sound. Empty assistant text alongside tool_use is
+// OMITTED (Anthropic 400s on a whitespace-only text block beside tool_use).
+export function translateToAnthropic(msgs: OllamaMsg[]): Array<{ role: string; content: unknown }> {
+  const out: Array<{ role: string; content: unknown }> = [];
+  let toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
+  let idQueue: string[] = [];
+  let turn = 0;
+  const flush = () => { if (toolResults.length) { out.push({ role: 'user', content: toolResults }); toolResults = []; } };
+  for (const m of msgs) {
+    if (m.role === 'tool') {
+      const id = idQueue.shift() ?? `tu_${turn}_x`;
+      toolResults.push({ type: 'tool_result', tool_use_id: id, content: m.content });
+      continue;
+    }
+    flush();
+    if (m.role === 'assistant') {
+      const blocks: unknown[] = [];
+      if (m.content) blocks.push({ type: 'text', text: m.content });
+      idQueue = [];
+      (m.tool_calls ?? []).forEach((tc, i) => {
+        const id = `tu_${turn}_${i}`; idQueue.push(id);
+        blocks.push({ type: 'tool_use', id, name: tc.function.name, input: tc.function.arguments });
+      });
+      out.push({ role: 'assistant', content: blocks });
+    } else {
+      out.push({ role: 'user', content: m.content });
+    }
+    turn++;
+  }
+  flush();
+  return out;
+}
+
+// Translate OllamaMsg[] → OpenAI chat-completions messages (leading system). content MUST be null
+// (not '') when only tool_calls. One {role:'tool'} per result, correlated BY ORDER to the matching
+// assistant tool_call id (synthesized; mismatch 400s OpenAI).
+export function translateToOpenAi(agentSystem: string, msgs: OllamaMsg[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [{ role: 'system', content: agentSystem }];
+  let idQueue: string[] = [];
+  let turn = 0;
+  for (const m of msgs) {
+    if (m.role === 'tool') {
+      const id = idQueue.shift() ?? `tc_${turn}_x`;
+      out.push({ role: 'tool', tool_call_id: id, content: m.content });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      idQueue = [];
+      const tool_calls = (m.tool_calls ?? []).map((tc, i) => {
+        const id = `tc_${turn}_${i}`; idQueue.push(id);
+        return { id, type: 'function', function: { name: tc.function.name, arguments: JSON.stringify(tc.function.arguments) } };
+      });
+      const msg: Record<string, unknown> = { role: 'assistant', content: m.content || null };
+      if (tool_calls.length) msg.tool_calls = tool_calls;
+      out.push(msg);
+    } else {
+      out.push({ role: 'user', content: m.content });
+    }
+    turn++;
+  }
+  return out;
+}
+
+function buildAnthropicAgentBody(cfg: LlmConfig, agentSystem: string, msgs: OllamaMsg[], schemas: unknown[]): { url: string; headers: Record<string, string>; body: unknown } {
+  // Remap AGENT_TOOL_SCHEMAS (OpenAI {type:function,function:{name,description,parameters}}) →
+  // Anthropic {name,description,input_schema}. Keep buildChatBody's L151 omissions (no temperature/thinking).
+  const tools = (schemas as any[]).map((s) => ({ name: s.function.name, description: s.function.description, input_schema: s.function.parameters }));
+  return {
+    url: 'https://api.anthropic.com/v1/messages',
+    headers: { 'anthropic-version': ANTHROPIC_VERSION, 'x-api-key': (cfg.apiKey ?? '').trim() },
+    body: { model: cfg.model || DEFAULT_MODELS.anthropic, max_tokens: CHAT_MAX_TOKENS, stream: true, system: agentSystem, messages: translateToAnthropic(msgs), tools },
+  };
+}
+function buildOpenAiAgentBody(cfg: LlmConfig, agentSystem: string, msgs: OllamaMsg[], schemas: unknown[]): { url: string; headers: Record<string, string>; body: unknown } {
+  // FIXED OPENAI_BASE_URL (not cfg.baseURL) for the 'openai' provider; tools pass through AS-IS
+  // (already OpenAI function-format). NO reasoning_effort (real OpenAI rejects it).
+  return {
+    url: `${OPENAI_BASE_URL}/chat/completions`,
+    headers: { authorization: `Bearer ${(cfg.apiKey ?? '').trim()}` },
+    body: { model: cfg.model || DEFAULT_MODELS.openai, max_tokens: CHAT_MAX_TOKENS, stream: true, messages: translateToOpenAi(agentSystem, msgs), tools: schemas },
+  };
+}
+
+// ONE frontier /messages|/chat/completions request. SSE-framed ('\n\n') clone of streamOnceNative's
+// net.request lifecycle (connect/idle/abort/single-settle), with the stateful tool-call parser.
+// redirect:'error' so a 3xx (key-exfil vector) aborts BEFORE the key replays to a redirect host.
+function streamOnceFrontier(
+  url: string, headers: Record<string, string>, body: unknown,
+  signal: AbortSignal, onDelta: (d: string) => void,
+  parseFrame: (frame: string, state: FrontierState, hasReq: (n: string) => boolean) => { deltas: string[]; done: boolean },
+  hasRequiredArgs: (name: string) => boolean,
+): Promise<StreamOnceResult> {
+  return new Promise<StreamOnceResult>((resolve, reject) => {
+    if (signal.aborted) { resolve({ text: '', toolCalls: [], aborted: true, refusal: false }); return; }
+    let u: URL;
+    try { u = new URL(url); } catch { reject(new ChatStreamError('invalid AI endpoint URL', 'generic')); return; }
+    if (u.protocol !== 'https:') { reject(new ChatStreamError('frontier endpoint must be https', 'generic')); return; }
+
+    const request = net.request({
+      method: 'POST', protocol: 'https:', hostname: u.hostname,
+      port: u.port ? Number(u.port) : undefined, path: u.pathname + u.search,
+      redirect: 'error', // a redirect aborts with an error — the key header never replays to the new host
+    });
+    request.setHeader('content-type', 'application/json');
+    for (const [k, v] of Object.entries(headers)) request.setHeader(k, v);
+
+    let connectTimer: NodeJS.Timeout | null = null;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let buffer = '';
+    let fullText = '';
+    const state = newFrontierState();
+    let finished = false;
+    // FLAW-1: an aborted/timed-out turn DROPS all open buffers (toolCalls:[]) — never the raw accumulator.
+    const result = (aborted: boolean): StreamOnceResult => ({
+      text: fullText, toolCalls: aborted ? [] : state.toolCalls, aborted,
+      refusal: !aborted && state.refusal && state.toolCalls.length === 0,
+    });
+
+    const cleanup = () => { if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; } if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } signal.removeEventListener('abort', onAbort); };
+    const ok = (r: StreamOnceResult) => { if (finished) return; finished = true; cleanup(); resolve(r); };
+    const bad = (e: ChatStreamError) => { if (finished) return; finished = true; cleanup(); reject(e); };
+    function onAbort() { try { request.abort(); } catch { /* */ } ok(result(true)); }
+    signal.addEventListener('abort', onAbort);
+
+    const resetIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => { try { request.abort(); } catch { /* */ } bad(new ChatStreamError('stream idle timeout', 'generic')); }, IDLE_TIMEOUT_MS); };
+    connectTimer = setTimeout(() => { try { request.abort(); } catch { /* */ } bad(new ChatStreamError('connection timeout', 'generic')); }, CONNECT_TIMEOUT_MS);
+
+    // SSE framing: frames are separated by a blank line (\n\n).
+    const drain = (): boolean => {
+      let bnd = buffer.indexOf('\n\n');
+      while (bnd !== -1) {
+        const frame = buffer.slice(0, bnd);
+        buffer = buffer.slice(bnd + 2);
+        if (frame.trim().length > 0) {
+          let r: { deltas: string[]; done: boolean };
+          try { r = parseFrame(frame, state, hasRequiredArgs); }
+          catch (err) {
+            const cat = err instanceof ChatStreamError ? err.category : 'generic';
+            try { request.abort(); } catch { /* */ }
+            bad(new ChatStreamError(redactForLog(String((err as Error)?.message ?? 'stream error')), cat));
+            return true;
+          }
+          for (const d of r.deltas) { fullText += d; onDelta(d); }
+          if (r.done) { finalizeOpenBlocks(state, hasRequiredArgs); ok(result(false)); return true; }
+        }
+        bnd = buffer.indexOf('\n\n');
+      }
+      return false;
+    };
+
+    request.on('response', (response) => {
+      if (finished) return;
+      if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+      const status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        const cat = cat0(status);
+        resetIdle();
+        response.on('data', () => { if (!finished) resetIdle(); });
+        response.on('end', () => { if (finished) return; console.error(`[chat-engine] ${endpointId(url)} HTTP ${status}`); bad(new ChatStreamError(`provider HTTP ${status}`, cat)); });
+        response.on('error', () => { if (finished) return; bad(new ChatStreamError(`provider HTTP ${status}`, cat)); });
+        return;
+      }
+      resetIdle();
+      response.on('data', (chunk: Buffer) => { if (finished) return; resetIdle(); buffer += chunk.toString('utf-8'); drain(); });
+      response.on('end', () => {
+        if (finished) return;
+        drain();
+        if (finished) return;
+        // DEFECT-3 connection-drop guard: terminal frame absent → REFUSE any still-open buffer
+        // (never surface a raw {name,argStr}); resolve best-effort text + finalized tool-calls.
+        finalizeOpenBlocks(state, hasRequiredArgs);
+        ok(result(false));
+      });
+      response.on('error', (err: Error) => { if (finished) return; console.error(`[chat-engine] ${endpointId(url)} response error`, redactForLog(err.message)); bad(new ChatStreamError('stream connection error', 'generic')); });
+    });
+    request.on('error', (err: Error) => { if (finished) return; console.error(`[chat-engine] ${endpointId(url)} request error`, redactForLog(err.message)); bad(new ChatStreamError('request failed', isUnreachableErr(err.message) ? 'unreachable' : 'generic')); });
+
+    if (signal.aborted) { onAbort(); return; }
+    request.write(JSON.stringify(body));
+    request.end();
+  });
+}
+
+// makeNativeAdapter wraps the current native thunk with ZERO behavior change.
+const makeNativeAdapter = (cfg: LlmConfig, toolset: AgentToolset, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void): AgentTransport => ({
+  streamStep: (msgs) => streamOnceNative(nativeChatUrl(cfg.baseURL ?? ''), buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, false), signal, onDelta),
+});
+
+function makeFrontierAdapter(provider: 'anthropic' | 'openai', cfg: LlmConfig, toolset: AgentToolset, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void): AgentTransport {
+  // A tool has required args iff its schema declares a non-empty `required` (drives the §6.6 guard).
+  const requiredArgTools = new Set<string>(
+    (toolset.schemas as any[])
+      .filter((s) => Array.isArray(s?.function?.parameters?.required) && s.function.parameters.required.length > 0)
+      .map((s) => String(s.function.name)),
+  );
+  const hasRequiredArgs = (name: string): boolean => requiredArgTools.has(name);
+  return {
+    streamStep: (msgs) => {
+      const spec = provider === 'anthropic'
+        ? buildAnthropicAgentBody(cfg, agentSystem, msgs, toolset.schemas)
+        : buildOpenAiAgentBody(cfg, agentSystem, msgs, toolset.schemas);
+      const parseFrame = provider === 'anthropic' ? parseAnthropicAgentFrame : parseOpenAiAgentFrame;
+      return streamOnceFrontier(spec.url, spec.headers, spec.body, signal, onDelta, parseFrame, hasRequiredArgs);
+    },
+  };
+}
+
+// selectTransport — the SINGLE auto-switch (anti-sprawl). Clause order is load-bearing: injected-dep
+// guard FIRST (non-agent calls never probe), native (local + async tools probe, behind the local &&
+// so a frontier call adds ZERO latency) SECOND, frontier (provider + key + STATIC table) THIRD,
+// null LAST → falls through to the existing single-shot SSE streamer.
+export async function selectTransport(cfg: LlmConfig, opts: ChatStreamOptions, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void): Promise<AgentTransport | null> {
+  if (!(opts.agentOn && opts.executeTool && opts.toolset)) return null;
+  const model = cfg.model || DEFAULT_MODELS[cfg.provider];
+  // Native (Ollama /api/chat) ONLY for a LOCAL openai-compatible server. The provider guard is
+  // load-bearing: isLocalProviderUrl('') is TRUE (defaults to the Ollama URL), so without it an
+  // anthropic/openai cfg (baseURL='') would spuriously probe localhost before reaching frontier.
+  if (cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL ?? '') && await modelSupportsTools(cfg.baseURL ?? '', model))
+    return makeNativeAdapter(cfg, opts.toolset, agentSystem, signal, onDelta);
+  if ((cfg.provider === 'anthropic' || cfg.provider === 'openai') && (cfg.apiKey ?? '').trim() && modelSupportsToolsStatic(cfg.provider, model))
+    return makeFrontierAdapter(cfg.provider, cfg, opts.toolset, agentSystem, signal, onDelta);
+  return null;
 }
 
 // Small helpers for the loop.

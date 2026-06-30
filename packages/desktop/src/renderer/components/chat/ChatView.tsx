@@ -34,7 +34,7 @@ import { useT } from '../../lib/i18n.js';
 import { useStickToBottom } from '../../lib/use-stick-to-bottom.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { useAppStore } from '../../stores/app-store.js';
-import { isLocalProviderUrl } from '../../../shared/ai-providers.js';
+import { isLocalProviderUrl, modelSupportsToolsStatic, DEFAULT_MODELS } from '../../../shared/ai-providers.js';
 
 import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { applyTemplate, type SlashCommand } from './commands.js';
@@ -159,9 +159,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     ai?.provider === 'openai-compatible' && isLocalProviderUrl(ai?.baseURL ?? '');
   // P0-1 (hermes-port-audit §4): opt-in review-every-write gate, sent on chat:send. Default OFF.
   const confirmWrites = useSettingsStore((s) => s.settings.confirmWrites);
-  // P0-2: the agent loop only fires on a LOCAL tools-capable model (chat-engine gate) — mirror that
-  // here so the 🤖 pill disables + annotates on cloud providers instead of silently no-op'ing.
-  const agentCapable = canStartOllama;
+  // Agent loop fires on a LOCAL tools-model OR a FRONTIER provider (anthropic/openai) with a key +
+  // tools-capable model (§6.6 selectTransport) — mirror that gate EXACTLY (same static table + same
+  // default-model resolution as main) so the 🤖 pill enables for a configured frontier and disables
+  // (with annotation) on a keyless/unsupported one. The renderer sees only provider/hasKey/model.
+  const agentCapable =
+    canStartOllama ||
+    ((ai?.provider === 'anthropic' || ai?.provider === 'openai') &&
+      !!ai?.hasKey &&
+      modelSupportsToolsStatic(ai.provider, ai?.model || DEFAULT_MODELS[ai.provider]));
   // SP2: show the 📎 attach affordance only for a local vision-capable setup (gemma4:e4b).
   // Same local-provider gate as Start-Ollama — local models we ship are vision-capable.
   const visionOn = canStartOllama;

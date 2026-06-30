@@ -1440,3 +1440,131 @@ describe('parseReflectionCandidates (§A2 — append-only, fail-closed)', () => 
     expect(KARPATHY_REFLECT_PROMPT).not.toContain('set_plan');     // no agent plan rule
   });
 });
+
+// ── Frontier agent transport (§6.6) ───────────────────────────────────────────
+describe('frontier transport — finalizeToolCall (§6.6 truncation-refuse)', () => {
+  it('valid object args → tool call; never coerces unterminated/array/parse-fail to {}', async () => {
+    const { finalizeToolCall } = await import('../src/main/chat-engine.js');
+    expect(finalizeToolCall('x', '{"a":1}', true)).toEqual({ function: { name: 'x', arguments: { a: 1 } } });
+    expect(finalizeToolCall('x', '{"a":1', true)).toBeNull();   // unterminated → REFUSE (the attack surface)
+    expect(finalizeToolCall('x', '[1,2]', true)).toBeNull();    // DEFECT-4: typeof []==='object' — Array.isArray reject
+    expect(finalizeToolCall('x', '{bad', true)).toBeNull();     // parse fail → REFUSE
+  });
+  it('empty args: {} ONLY for a no-required-args tool; REFUSE for a required-args tool (DEFECT-2)', async () => {
+    const { finalizeToolCall } = await import('../src/main/chat-engine.js');
+    expect(finalizeToolCall('list_topics', '', false)).toEqual({ function: { name: 'list_topics', arguments: {} } });
+    // a truncated core_memory_replace (name only, no args) must NEVER fire arguments:{} under auto-apply
+    expect(finalizeToolCall('core_memory_replace', '', true)).toBeNull();
+  });
+});
+
+describe('frontier transport — SSE tool-call parsers', () => {
+  it('parseAnthropicAgentFrame accumulates a tool_use across frames → object args', async () => {
+    const CE = await import('../src/main/chat-engine.js');
+    const st = CE.newFrontierState();
+    const req = () => true;
+    const d = (o: any) => 'event: ' + o.type + '\ndata: ' + JSON.stringify(o);
+    CE.parseAnthropicAgentFrame(d({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu1', name: 'search_vault' } }), st, req);
+    CE.parseAnthropicAgentFrame(d({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":' } }), st, req);
+    CE.parseAnthropicAgentFrame(d({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '"k8s"}' } }), st, req);
+    CE.parseAnthropicAgentFrame(d({ type: 'content_block_stop', index: 0 }), st, req);
+    expect(st.toolCalls).toEqual([{ function: { name: 'search_vault', arguments: { query: 'k8s' } } }]);
+  });
+  it('parseAnthropicAgentFrame streams text_delta + refusal mutual-exclusion (§4d)', async () => {
+    const CE = await import('../src/main/chat-engine.js');
+    const st = CE.newFrontierState();
+    const r = CE.parseAnthropicAgentFrame('event: content_block_delta\ndata: ' + JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } }), st, () => true);
+    expect(r.deltas).toEqual(['hi']);
+    CE.parseAnthropicAgentFrame('event: message_delta\ndata: ' + JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'refusal' } }), st, () => true);
+    expect(st.refusal).toBe(true); // no tool calls accumulated → refusal stands
+  });
+  it('parseOpenAiAgentFrame accumulates tool_calls by index; finalizes at finish_reason', async () => {
+    const CE = await import('../src/main/chat-engine.js');
+    const st = CE.newFrontierState();
+    const d = (o: any) => 'data: ' + JSON.stringify(o);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'read_note' } }] } }] }), st, () => true);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"filePath":' } }] } }] }), st, () => true);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"a.md"}' } }] } }] }), st, () => true);
+    const r = CE.parseOpenAiAgentFrame(d({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }), st, () => true);
+    expect(r.done).toBe(true);
+    expect(st.toolCalls).toEqual([{ function: { name: 'read_note', arguments: { filePath: 'a.md' } } }]);
+  });
+  it('parseOpenAiAgentFrame: finish_reason=length mid-args → REFUSE (no partial write)', async () => {
+    const CE = await import('../src/main/chat-engine.js');
+    const st = CE.newFrontierState();
+    const d = (o: any) => 'data: ' + JSON.stringify(o);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'create_note' } }] } }] }), st, () => true);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"title":"x"' } }] } }] }), st, () => true);
+    CE.parseOpenAiAgentFrame(d({ choices: [{ delta: {}, finish_reason: 'length' }] }), st, () => true);
+    expect(st.toolCalls).toEqual([]);              // truncated → not executed
+    expect(st.refusedNames).toContain('create_note');
+  });
+});
+
+describe('frontier transport — OllamaMsg ↔ provider message translation', () => {
+  it('translateToAnthropic: tool_use id === following tool_result.tool_use_id; empty text omitted', async () => {
+    const { translateToAnthropic } = await import('../src/main/chat-engine.js');
+    const out: any[] = translateToAnthropic([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'search_vault', arguments: { query: 'k' } } }] },
+      { role: 'tool', content: 'res1', tool_name: 'search_vault' },
+    ] as any);
+    expect(out[0]).toEqual({ role: 'user', content: 'hi' });
+    expect(out[1].content.some((b: any) => b.type === 'text')).toBe(false); // empty text omitted (400-guard)
+    const tu = out[1].content.find((b: any) => b.type === 'tool_use');
+    expect(out[2].content[0].tool_use_id).toBe(tu.id); // order-correlated id
+    expect(out[2].content[0].content).toBe('res1');
+  });
+  it('translateToOpenAi: assistant content null + tool_call_id order-correlation + leading system', async () => {
+    const { translateToOpenAi } = await import('../src/main/chat-engine.js');
+    const out: any[] = translateToOpenAi('SYS', [
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read_note', arguments: { filePath: 'a.md' } } }] },
+      { role: 'tool', content: 'note body', tool_name: 'read_note' },
+    ] as any);
+    expect(out[0]).toEqual({ role: 'system', content: 'SYS' });
+    expect(out[1].content).toBeNull();
+    expect(out[2].tool_call_id).toBe((out[1].tool_calls as any[])[0].id);
+  });
+});
+
+describe('frontier transport — selectTransport clause order', () => {
+  const toolset: any = { schemas: [{ type: 'function', function: { name: 'x', description: '', parameters: { type: 'object', properties: {}, required: [] } } }] };
+  const baseOpts: any = { agentOn: true, executeTool: async () => ({}), toolset };
+  const sig = new AbortController().signal;
+  const sel = async (cfg: any, opts: any = baseOpts) => {
+    const { selectTransport } = await import('../src/main/chat-engine.js');
+    return selectTransport(cfg, opts, 'sys', sig, () => {});
+  };
+  it('agentOn=false → null (never probes)', async () => {
+    expect(await sel({ provider: 'anthropic', model: 'claude-fable-5', apiKey: 'sk' }, { ...baseOpts, agentOn: false })).toBeNull();
+  });
+  it('anthropic + key + supported model → a transport (no localhost probe)', async () => {
+    expect(await sel({ provider: 'anthropic', model: 'claude-fable-5', apiKey: 'sk' })).not.toBeNull();
+  });
+  it('frontier WITHOUT key → null', async () => {
+    expect(await sel({ provider: 'openai', model: 'gpt-4o', apiKey: '' })).toBeNull();
+  });
+  it('frontier + key + UNSUPPORTED model → null', async () => {
+    expect(await sel({ provider: 'openai', model: 'gpt-3.5-turbo', apiKey: 'sk' })).toBeNull();
+  });
+  it('google + key → null (out of scope)', async () => {
+    expect(await sel({ provider: 'google', model: 'gemini-2.0-flash', apiKey: 'k' })).toBeNull();
+  });
+  it('anthropic + key + EMPTY model → a transport (default resolves to claude-fable-5)', async () => {
+    expect(await sel({ provider: 'anthropic', model: '', apiKey: 'sk' })).not.toBeNull();
+  });
+});
+
+describe('modelSupportsToolsStatic', () => {
+  it('matches current frontier ids; rejects gemini/legacy/empty', async () => {
+    const { modelSupportsToolsStatic } = await import('../src/shared/ai-providers.js');
+    expect(modelSupportsToolsStatic('anthropic', 'claude-fable-5')).toBe(true);
+    expect(modelSupportsToolsStatic('anthropic', 'claude-opus-4-8')).toBe(true);
+    expect(modelSupportsToolsStatic('openai', 'gpt-4o')).toBe(true);
+    expect(modelSupportsToolsStatic('openai', 'gpt-4.1')).toBe(true);
+    expect(modelSupportsToolsStatic('openai', 'o3')).toBe(true);
+    expect(modelSupportsToolsStatic('openai', 'gpt-3.5-turbo')).toBe(false);
+    expect(modelSupportsToolsStatic('google', 'gemini-2.0-flash')).toBe(false);
+    expect(modelSupportsToolsStatic('anthropic', '')).toBe(false);
+  });
+});

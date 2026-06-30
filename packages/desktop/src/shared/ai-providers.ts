@@ -96,6 +96,20 @@ export function isLocalProviderUrl(baseURL: string): boolean {
   );
 }
 
+// Frontier agent (transport-adapter §6.6): STATIC "does this model support tool-calling" check —
+// the cloud analogue of the local Ollama `modelSupportsTools` /api/tags probe, but with ZERO
+// network latency. ONE source of truth for BOTH main `selectTransport` AND the renderer's
+// `agentCapable` (electron-free file → renderer-safe). Regex-drift is fail-soft: too-narrow →
+// silent single-shot (agent no-ops, not unsafe); too-broad → tools[] to a non-tool model → a
+// provider 400 (annoying, not unsafe). Neither breaches a security invariant. Matches the
+// MODELS_BY_PROVIDER ids. Gemini (google) is out of scope; openai-compatible uses the live probe.
+export function modelSupportsToolsStatic(provider: AiProvider, model: string): boolean {
+  const m = (model || '').toLowerCase();
+  if (provider === 'anthropic') return /claude-(3-5|3\.5|fable|opus|sonnet|haiku)/.test(m);
+  if (provider === 'openai') return /^(gpt-4o|gpt-4\.1|o1|o3)/.test(m);
+  return false;
+}
+
 // Valid key-accepting providers (excludes 'none', which never stores a key).
 export const KEY_PROVIDERS: ReadonlySet<string> = new Set<string>([
   'anthropic', 'openai', 'openai-compatible', 'google',

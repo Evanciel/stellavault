@@ -282,10 +282,10 @@ export const messages = {
   "panel.ai.chatMainTitle": { en: "Chat with your second brain", ko: "내 세컨드 브레인과 대화하기" },
   "panel.ai.agentLabel": { en: "Agent", ko: "에이전트" },
   "panel.ai.agentHint": { en: "Let the AI search/read your vault and file edits automatically. Turn on “Confirm every vault write” in Settings → AI to approve each write.", ko: "AI가 볼트를 검색·읽고 편집을 자동으로 저장합니다. 설정 → AI에서 “볼트 쓰기마다 확인”을 켜면 매 쓰기를 승인합니다." },
-  // P0-2 (hermes-port-audit §4): the 🤖 pill is disabled on non-local providers (the agent loop
-  // only fires on a local tools-capable model) — this annotates WHY instead of silently no-op'ing.
-  "panel.ai.agentLocalOnly": { en: "Agent mode needs a local tools-capable model (e.g. Ollama gemma4). Set the provider to local Ollama in Settings → AI.", ko: "에이전트 모드는 로컬 도구 지원 모델이 필요합니다 (예: Ollama gemma4). 설정 → AI에서 공급자를 로컬 Ollama로 설정하세요." },
-  "panel.ai.agentLocalOnlyShort": { en: "(local model only)", ko: "(로컬 모델 전용)" },
+  // §6.6: the 🤖 pill is disabled when no tools-capable model is configured — agent mode runs on a
+  // LOCAL Ollama tools-model OR a frontier provider (Claude / GPT) WITH an API key. This annotates WHY.
+  "panel.ai.agentLocalOnly": { en: "Agent mode needs a tools-capable model — local Ollama (e.g. gemma4), or Claude / GPT with an API key set in Settings → AI.", ko: "에이전트 모드는 도구 지원 모델이 필요합니다 — 로컬 Ollama(예: gemma4) 또는 설정 → AI에 API 키가 등록된 Claude / GPT." },
+  "panel.ai.agentLocalOnlyShort": { en: "(needs a tools model)", ko: "(도구 모델 필요)" },
   // Steer-after-tool (P1-3): the input shown while the agent runs — inject a note for its next turn.
   "panel.ai.steerHint": { en: "Steer the agent — add a note for its next step (Enter)…", ko: "에이전트에 지시 추가 — 다음 단계에 반영 (Enter)…" },
   "panel.ai.agentWriteConfirm": { en: "The agent wants to write to your vault:", ko: "에이전트가 볼트에 쓰려고 합니다:" },
