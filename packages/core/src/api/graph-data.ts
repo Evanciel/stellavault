@@ -7,24 +7,38 @@ import type {
   ClusterSuperNode, MetaEdge, ClusterLevelGraph, ClusterMembersGraph,
 } from '../types/graph.js';
 import { createHash } from 'node:crypto';
+import { shouldParallelize, allocPackedVectors, computeTopKEdgesParallel } from '../parallel/pool.js';
 
-const CLUSTER_COLORS = [
-  '#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
-  '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#06b6d4',
-  '#84cc16', '#e879f9', '#22d3ee', '#a3e635', '#fb923c',
-];
-
-// Renderer-aligned palette. The web renderer derives a node's DOT color from
-// PALETTE[clusterId % PALETTE.length] (packages/graph GraphNodes.tsx:35) — and that
-// PALETTE differs from CLUSTER_COLORS above in BOTH order AND length (15 vs the
-// renderer's 15 but reordered: index 0 is #7c3aed here vs #6366f1 in CLUSTER_COLORS).
-// For the cluster view we deliberately synthesize clusters[].color from THIS array so
-// the ClusterFilter swatch matches the rendered super-node dot (color decision (a) per
-// the cluster-toggle design). `paletteHex(clusterId)` is the single shared source.
+// Renderer-aligned cluster palette — the SINGLE source for every `color` this module emits.
+// The web renderer derives a node's DOT color from PALETTE[clusterId % PALETTE.length]
+// (packages/graph/src/components/GraphNodes.tsx), which is this same literal parsed to RGB.
+// Keep the two byte-identical; `npm run check:palette` fails if they drift.
+//
+// There used to be a SECOND array (CLUSTER_COLORS) in a DIFFERENT order feeding
+// clusters[].color and superNodes[].color, while the renderer drew dots from PALETTE_HEX →
+// in the raw view every ClusterFilter swatch showed a different color than the dots it
+// filtered. One array, one `paletteHex()`, no divergence.
+//
+// 80 entries = the cluster ceiling in buildClusteredGraph (`Math.min(80, …)`). At the old 15
+// the default ~35-cluster galaxy wrapped, so ~2.3 unrelated planets shared each color and
+// "same color = same group" — the entire point of the view — was false.
 const PALETTE_HEX = [
   '#7c3aed', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
   '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
   '#14b8a6', '#e879f9', '#eab308', '#22d3ee', '#fb7185',
+  '#e19647', '#90dfd0', '#d411c1', '#a5e147', '#90a9df',
+  '#d41116', '#47e170', '#bc90df', '#d4b711', '#47cbe1',
+  '#df90bd', '#47d411', '#4a47e1', '#dfa990', '#11d487',
+  '#d147e1', '#d0df90', '#1177d4', '#e1476a', '#90df95',
+  '#5611d4', '#e1aa47', '#90dfda', '#d411a8', '#91e147',
+  '#909fdf', '#d42511', '#47e184', '#c690df', '#d4d011',
+  '#47b7e1', '#df90b3', '#2ed411', '#5d47e1', '#dfb390',
+  '#11d4a0', '#e147de', '#c6df90', '#115ed4', '#e14757',
+  '#90df9f', '#6f11d4', '#e1be47', '#90dadf', '#d4118f',
+  '#7de147', '#9095df', '#d43e11', '#47e197', '#d090df',
+  '#bfd411', '#47a4e1', '#df90a9', '#15d411', '#7147e1',
+  '#dfbd90', '#11d4b8', '#e147ca', '#bcdf90', '#1145d4',
+  '#e14b47', '#90dfa9', '#8811d4', '#e1d247', '#90d0df',
 ];
 function paletteHex(clusterId: number): string {
   return PALETTE_HEX[((clusterId % PALETTE_HEX.length) + PALETTE_HEX.length) % PALETTE_HEX.length];
@@ -32,12 +46,41 @@ function paletteHex(clusterId: number): string {
 
 export type GraphMode = 'semantic' | 'folder';
 
+/** Bucket for notes sitting directly in the vault root (no folder above them). */
+const ROOT_FOLDER = '(root)';
+/** Bucket the long tail of small folders folds into once the cluster cap is hit. */
+const OTHER_FOLDER = '(other)';
+
+/**
+ * Vault-relative path → its top-level folder name.
+ *
+ * The old inline form was `filePath.split('/')[0] ?? 'root'`, whose `??` is DEAD — split()
+ * always yields at least one element. A root-level note therefore returned its own FILE NAME
+ * as the folder, so every root note became a one-note "planet" labelled e.g. "Projects.md".
+ */
+function topFolderOf(filePath: string): string {
+  const i = filePath.indexOf('/');
+  return i > 0 ? filePath.slice(0, i) : ROOT_FOLDER;
+}
+
+/**
+ * Coarse build progress. Emitted from the phases that actually take wall-clock time, so a
+ * caller (the /api/graph/status route) can answer "is it stuck or is it working?" while the
+ * edge pass runs in worker threads and the event loop is free.
+ */
+export interface GraphBuildProgress {
+  phase: 'loading' | 'edges' | 'clustering' | 'assembling' | 'done';
+  done: number;
+  total: number;
+}
+
 export interface BuildGraphOptions {
   mode?: GraphMode;            // default: 'semantic'
   edgeThreshold?: number;      // default: 0.15
   maxEdgesPerNode?: number;    // default: 5
   clusterCount?: number;       // 0 = auto (Elbow)
   nodeCap?: number;            // max notes fed into the O(n²) edge/cluster pass (default 2000)
+  onProgress?: (p: GraphBuildProgress) => void;
 }
 
 export async function buildGraphData(
@@ -49,7 +92,9 @@ export async function buildGraphData(
     // 중간 neighbor 배열이 수백만 객체로 폭증(빌드 지연) + 시각적으로 과밀한 엣지 거미줄.
     edgeThreshold = 0.35,
     maxEdgesPerNode = 5,
+    onProgress,
   } = options;
+  onProgress?.({ phase: 'loading', done: 0, total: 0 });
 
   // 1. 문서 메타(content-free) + 임베딩 로드.
   //   ★2026-06-10 1M 대비: getAllDocuments() 는 전 문서 *본문*을 힙에 적재 → 대규모 OOM 의
@@ -68,12 +113,17 @@ export async function buildGraphData(
   // Bound the O(n²) edge loop + k-means. Rank by recency (importance proxy), cap to
   // nodeCap, and scoped-load ONLY those embeddings (not all 12k — that read dominated
   // the build and froze the Electron main process).
-  // GRAPH_NODE_CAP (default 1500) caps the raw/"All nodes" view. The edge loop below is
-  // an inline O(n²) all-pairs cosine (n·(n-1)/2 pairs × 384 dims) — raising this toward
-  // 8k–13k explodes to tens of millions of pairs and FREEZES the single-threaded Express
-  // handler for minutes. See README "Graph viewer scaling". Operators set GRAPH_NODE_CAP
-  // in the environment before launching `stellavault graph`.
-  const NODE_CAP = Math.max(200, Math.floor(options.nodeCap ?? (Number(process.env.GRAPH_NODE_CAP) || 1500)));
+  // GRAPH_NODE_CAP 은 raw/"All nodes" 뷰의 상한이다.
+  //
+  // 예전 기본값 1500 은 CPU 때문이었다: 아래 all-pairs 코사인이 Express 이벤트 루프를 통째로
+  // 물고 있어서, 전량(17,303)은 실측 101.5초 동안 서버가 아무 요청도 못 받았다. 그 제약이
+  // 사라졌다 — 엣지 패스는 worker_threads 로 나갔고(parallel/pool.ts) 메인 스레드는 놀고 있다.
+  //
+  // 실볼트 실측(17,339 노드): 직렬 78.9s → 병렬 27.6s, 엣지 72,710개가 바이트 단위로 동일
+  // (근사 없음). 힙 130MB. 그래서 기본값을 전량으로 올린다 — 볼트의 83%가 안 보이던 쪽이
+  // 27초 콜드 빌드(5분 캐시 + /api/graph/status 진행률)보다 나쁜 기본값이었다.
+  // 느린 장비에서 되돌리려면 GRAPH_NODE_CAP 으로 낮춘다.
+  const NODE_CAP = Math.max(200, Math.floor(options.nodeCap ?? (Number(process.env.GRAPH_NODE_CAP) || 20000)));
   const ranked = [...docs].sort((a, b) => String(b.lastModified ?? '').localeCompare(String(a.lastModified ?? '')));
   if (docs.length > NODE_CAP) {
     console.warn(`[graph] capped to ${NODE_CAP} most-recent notes (of ${docs.length}) — raise GRAPH_NODE_CAP to include more.`);
@@ -86,7 +136,11 @@ export async function buildGraphData(
   const docIds = docsWithVecs.map((d) => d.id);
   const n = docIds.length;
   const dim = n > 0 ? embeddings.get(docIds[0])!.length : 0;
-  const flat = new Float32Array(n * dim);
+  // Decided BEFORE packing: the worker pool can only SHARE (rather than deep-copy per worker)
+  // a SharedArrayBuffer-backed array, and a SAB is pointless when we are going to run serially.
+  // Every downstream reader (edge loop, kMeans) treats the two backings identically.
+  const wantParallel = shouldParallelize(n);
+  const flat = allocPackedVectors(n * dim, wantParallel);
   for (let i = 0; i < n; i++) {
     const v = embeddings.get(docIds[i])!;
     let mag = 0;
@@ -96,66 +150,226 @@ export async function buildGraphData(
     for (let d = 0; d < dim; d++) flat[off + d] = v[d] / mag;
   }
 
-  const neighbors: Array<Array<{ peer: number; sim: number }>> = Array.from({ length: n }, () => []);
-  for (let i = 0; i < n; i++) {
-    const oi = i * dim;
-    for (let j = i + 1; j < n; j++) {
-      const oj = j * dim;
-      let sim = 0;
-      for (let d = 0; d < dim; d++) sim += flat[oi + d] * flat[oj + d];
-      if (sim >= edgeThreshold) {
-        neighbors[i].push({ peer: j, sim });
-        neighbors[j].push({ peer: i, sim });
-      }
+  // Bounded top-K per node, in FIXED typed-array slots.
+  //
+  // This loop used to push a {peer, sim} object for EVERY pair over the threshold into a
+  // per-node array, then sort and slice to maxEdgesPerNode. Only K survived, but all of them
+  // were built and held first — so peak memory grew with the PAIR count, i.e. O(n²):
+  //
+  //     n=3,000  →   3.18M pairs →  234 MB      (measured)
+  //     n=6,000  →  13.1M  pairs →  937 MB      (measured)
+  //     n=17,303 → ~109M   pairs → ~7.8 GB      (extrapolated → OOM)
+  //
+  // That is what GRAPH_NODE_CAP was really protecting against — not CPU. Keeping only each
+  // node's current top-K makes memory O(n·k) (~84 MB at the full 17k vault, measured linear),
+  // and drops the giant per-node sorts (~20% faster as a side effect).
+  //
+  // The resulting edge set is defined exactly as before — "each node's K strongest neighbours
+  // above the threshold" — so this is a memory fix, not a behaviour change. Only the tie-break
+  // order among equal similarities can differ.
+  const K = Math.max(1, maxEdgesPerNode);
+  const bestSim = new Float32Array(n * K).fill(-1);
+  const bestPeer = new Int32Array(n * K).fill(-1);
+
+  // Replace the node's weakest kept neighbour if this one beats it. K is small (default 5),
+  // so the linear scan for the weakest slot is cheaper than maintaining a heap.
+  const offer = (node: number, peer: number, sim: number): void => {
+    const base = node * K;
+    let worst = 0;
+    for (let t = 1; t < K; t++) if (bestSim[base + t] < bestSim[base + worst]) worst = t;
+    if (sim > bestSim[base + worst]) {
+      bestSim[base + worst] = sim;
+      bestPeer[base + worst] = peer;
+    }
+  };
+
+  // Try the worker pool first. It computes the SAME slots — see parallel/worker-source.ts for
+  // why row-range × full-j scan reproduces the serial offer order exactly (bit-for-bit, not
+  // just "equivalent"), which is what lets us keep the byte-identical-edge-set property the
+  // serial top-K rewrite was validated against at n=999 and n=2999 on real vault data.
+  //
+  // Measured serial cost at the full 17,303-doc vault: 101,527 ms. That number, not memory,
+  // is what GRAPH_NODE_CAP is now protecting against.
+  //
+  // It returns false instead of throwing on ANY failure (kill switch, small n, spawn refused,
+  // worker death, watchdog) — a graph build must never fail because thread spawning did — so
+  // the slots are reset and the serial loop below runs unchanged.
+  let parallelDone = false;
+  if (wantParallel) {
+    onProgress?.({ phase: 'edges', done: 0, total: n });
+    parallelDone = await computeTopKEdgesParallel({
+      flat, n, dim, K, threshold: edgeThreshold, bestSim, bestPeer,
+      onProgress: (rowsDone) => onProgress?.({ phase: 'edges', done: rowsDone, total: n }),
+    });
+    if (!parallelDone) {
+      // A failed run can have merged some blocks already; the serial loop only ever REPLACES
+      // a weaker slot, so leftover values would survive and corrupt the result.
+      bestSim.fill(-1);
+      bestPeer.fill(-1);
     }
   }
 
+  if (!parallelDone) {
+    onProgress?.({ phase: 'edges', done: 0, total: n });
+    for (let i = 0; i < n; i++) {
+      const oi = i * dim;
+      for (let j = i + 1; j < n; j++) {
+        const oj = j * dim;
+        let sim = 0;
+        for (let d = 0; d < dim; d++) sim += flat[oi + d] * flat[oj + d];
+        if (sim >= edgeThreshold) {
+          offer(i, j, sim);
+          offer(j, i, sim);
+        }
+      }
+    }
+    onProgress?.({ phase: 'edges', done: n, total: n });
+  }
+
+  const edgeIndexByKey = new Map<string, number>();
   for (let i = 0; i < n; i++) {
-    neighbors[i].sort((a, b) => b.sim - a.sim);
-    for (const { peer: j, sim } of neighbors[i].slice(0, maxEdgesPerNode)) {
+    const base = i * K;
+    for (let t = 0; t < K; t++) {
+      const j = bestPeer[base + t];
+      if (j < 0) continue;
       const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
       if (!edgeCounts.has(edgeKey)) {
-        edges.push({ source: docIds[i], target: docIds[j], weight: sim });
+        edgeIndexByKey.set(edgeKey, edges.length);
+        edges.push({ source: docIds[i], target: docIds[j], weight: bestSim[base + t] });
         edgeCounts.set(edgeKey, 1);
       }
     }
   }
 
+  // 2b. 사용자가 직접 쓴 [[위키링크]] 를 엣지로 합친다.
+  //
+  // 위의 k-NN 엣지는 "모델이 비슷하다고 본" 추론이고, 이건 "사람이 직접 그은" 사실이다.
+  // 두 계층을 한 화면에서 구분해 보여주는 것이 이 그래프가 Obsidian 그래프뷰와 다른 지점이라
+  // 링크는 별도 kind 로 실어 보낸다(렌더러가 색/알파/방향 테이퍼로 구분).
+  //
+  // 실측(사용자 볼트 17,642 노트): 위키링크는 505 파일에 2,622개뿐이다 — 97%의 노트에는
+  // 손으로 그은 연결이 하나도 없다. 그래서 "링크만" 그리면 거의 빈 화면이 되고, 링크만
+  // 빼면 사람이 남긴 유일한 명시적 구조를 버리게 된다. 둘 다 필요하다.
+  onProgress?.({ phase: 'edges', done: n, total: n });
+  try {
+    const indexOfDoc = new Map<string, number>();
+    for (let i = 0; i < n; i++) indexOfDoc.set(docIds[i], i);
+
+    // 링크는 maxEdgesPerNode 를 받지 않는다 — 그 상한은 O(n²) 코사인이 만드는 거미줄을
+    // 묶어두려고 있는 것이지, 사실을 버리라는 뜻이 아니다. 대신 병적인 볼트(자동생성 MOC 가
+    // 수만 링크를 뿜는 경우)에 대비해 전체 상한만 둔다. 문서당 상한은 파서 쪽(1000)에 이미 있다.
+    const LINK_EDGE_CAP = 50_000;
+    let linkEdges = 0;
+    let droppedByCap = 0;
+
+    for (const pair of await store.getLinkPairs()) {
+      const i = indexOfDoc.get(pair.sourceDocId);
+      const j = indexOfDoc.get(pair.targetDocId);
+      // 캡(nodeCap) 때문에 렌더 대상이 아닌 노트로 가는 링크는 그릴 자리가 없다.
+      if (i === undefined || j === undefined || i === j) continue;
+      if (linkEdges >= LINK_EDGE_CAP) { droppedByCap++; continue; }
+
+      const edgeKey = i < j ? `${i}:${j}` : `${j}:${i}`;
+      const existing = edgeIndexByKey.get(edgeKey);
+      if (existing !== undefined) {
+        // 같은 쌍이 이미 시맨틱 엣지로 있으면 링크가 이긴다: 사실이 추론을 덮는다.
+        // 방향도 링크 쪽(source→target)으로 맞춘다 — 시맨틱은 무방향이라 잃을 것이 없다.
+        const e = edges[existing];
+        if (e.kind !== 'link') {
+          e.source = pair.sourceDocId;
+          e.target = pair.targetDocId;
+          e.kind = 'link';
+          e.weight = 1; // 승격된 엣지도 링크다 — 아래 신규 링크와 같은 weight 규약을 따른다
+          linkEdges++;
+        }
+        continue;
+      }
+      edgeIndexByKey.set(edgeKey, edges.length);
+      edgeCounts.set(edgeKey, 1);
+      // weight 는 렌더러에서 시맨틱 엣지의 알파 감쇠에만 쓰인다. 링크는 유사도가 아니라
+      // 사실이므로 1(최대)로 둔다 — 감쇠 대상이 아니다. (위 승격 경로도 동일하게 1로 덮는다:
+      // 코사인 값을 남겨두면 kind='link' 엣지끼리 weight 가 제각각이 된다.)
+      edges.push({ source: pair.sourceDocId, target: pair.targetDocId, weight: 1, kind: 'link' });
+      linkEdges++;
+    }
+    if (droppedByCap > 0) {
+      console.warn(`[graph] link edges capped at ${LINK_EDGE_CAP}; ${droppedByCap} dropped`);
+    }
+  } catch (err) {
+    // links 테이블이 없는 예전 DB이거나 해석이 실패해도 그래프 자체는 나와야 한다.
+    // 시맨틱 엣지만으로도 화면은 성립한다.
+    console.warn('[graph] link edges unavailable, semantic edges only:', (err as Error)?.message ?? err);
+  }
+
   // 3. 클러스터링 — 모드에 따라 분기
+  onProgress?.({ phase: 'clustering', done: 0, total: n });
   const mode = options.mode ?? 'semantic';
   let assignmentMap: Map<string, number>;
   let clusters: Cluster[];
 
   if (mode === 'folder') {
-    // 폴더 기반: 최상위 폴더를 클러스터로 사용
-    const folderMap = new Map<string, number>();
-    const folderNames: string[] = [];
+    // 폴더 기반: 최상위 폴더를 클러스터로 사용.
+    //
+    // 집계 대상은 반드시 docsWithVecs — 실제로 노드가 되는, 캡이 적용된 집합이다. 예전에는
+    // docs(볼트 전체)를 훑어서 두 가지가 어긋났다: (a) 화면에 노드가 0개인 폴더까지
+    // clusters[] 에 남아 raw 뷰 ClusterFilter 에 유령 항목이 뜨고, (b) nodeCount 가 렌더된
+    // 노드 수가 아니라 볼트 전체 노트 수를 세어 UI 숫자가 실제 화면과 달랐다.
+    const folderIds = new Map<string, number>();
+    let names: string[] = [];
+    let counts: number[] = [];
+    const perDoc: Array<{ id: string; cId: number }> = [];
 
-    for (const doc of docs) {
-      const topFolder = doc.filePath.split('/')[0] ?? 'root';
-      if (!folderMap.has(topFolder)) {
-        folderMap.set(topFolder, folderNames.length);
-        folderNames.push(topFolder);
+    for (const doc of docsWithVecs) {
+      const folder = topFolderOf(doc.filePath);
+      let cId = folderIds.get(folder);
+      if (cId === undefined) {
+        cId = names.length;
+        folderIds.set(folder, cId);
+        names.push(folder);
+        counts.push(0);
       }
+      counts[cId]++;
+      perDoc.push({ id: doc.id, cId });
+    }
+
+    // 폴더 수 상한. semantic 분기는 clusterCount 를 지키는데 folder 분기는 통째로 무시해서,
+    // 최상위 폴더가 많은 볼트는 은하가 폴더 개수만큼 행성으로 터졌다(팔레트 소진 · 라벨 뭉개짐
+    // · layoutSuperNodes 비용 증가). 큰 폴더 상위 (k-1) 개만 남기고 롱테일은 '(other)' 하나로
+    // 접는다. clusterCount 미지정(raw 뷰)이면 상한 없음 — 종전 동작 그대로.
+    const k = options.clusterCount && options.clusterCount > 0 ? Math.floor(options.clusterCount) : 0;
+    let remap: number[] | null = null;
+    if (k > 0 && names.length > k) {
+      const order = names.map((_, i) => i).sort((a, b) => counts[b] - counts[a]);
+      remap = new Array<number>(names.length);
+      const keptNames: string[] = [];
+      const keptCounts: number[] = [];
+      for (const oldId of order.slice(0, k - 1)) {
+        remap[oldId] = keptNames.length;
+        keptNames.push(names[oldId]);
+        keptCounts.push(counts[oldId]);
+      }
+      const otherId = keptNames.length;
+      let otherCount = 0;
+      let folded = 0;
+      for (const oldId of order.slice(k - 1)) {
+        remap[oldId] = otherId;
+        otherCount += counts[oldId];
+        folded++;
+      }
+      keptNames.push(`${OTHER_FOLDER} (${folded})`);
+      keptCounts.push(otherCount);
+      names = keptNames;
+      counts = keptCounts;
     }
 
     assignmentMap = new Map<string, number>();
-    for (const doc of docs) {
-      const topFolder = doc.filePath.split('/')[0] ?? 'root';
-      assignmentMap.set(doc.id, folderMap.get(topFolder)!);
-    }
+    for (const { id, cId } of perDoc) assignmentMap.set(id, remap ? remap[cId] : cId);
 
-    // 폴더별 클러스터
-    const folderCounts = new Map<number, number>();
-    for (const [, cId] of assignmentMap) {
-      folderCounts.set(cId, (folderCounts.get(cId) ?? 0) + 1);
-    }
-
-    clusters = folderNames.map((name, i) => ({
+    clusters = names.map((name, i) => ({
       id: i,
       label: name.replace(/^\d+_/, ''),  // "04_Projects" → "Projects"
-      color: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
-      nodeCount: folderCounts.get(i) ?? 0,
+      color: paletteHex(i),
+      nodeCount: counts[i] ?? 0,
     }));
   } else {
     // 시맨틱 기반: K-means over the SAME capped, recency-ranked set as the edge loop
@@ -195,7 +409,7 @@ export async function buildGraphData(
       clusters.push({
         id: cId,
         label: `${representative} (${docInfos.length})`,
-        color: CLUSTER_COLORS[cId % CLUSTER_COLORS.length],
+        color: paletteHex(cId),
         nodeCount: docInfos.length,
       });
     }
@@ -207,13 +421,17 @@ export async function buildGraphData(
   }
 
   // 4. 노드 생성
+  onProgress?.({ phase: 'assembling', done: 0, total: n });
 
   const connectionCounts = new Map<string, number>();
   for (const edge of edges) {
     connectionCounts.set(edge.source, (connectionCounts.get(edge.source) ?? 0) + 1);
     connectionCounts.set(edge.target, (connectionCounts.get(edge.target) ?? 0) + 1);
   }
-  const maxConnections = Math.max(1, ...connectionCounts.values());
+  // Reduce, don't spread: `Math.max(1, ...values)` passes one ARGUMENT per node, which throws
+  // RangeError once GRAPH_NODE_CAP is raised past the engine's argument limit (~65k).
+  let maxConnections = 1;
+  for (const c of connectionCounts.values()) if (c > maxConnections) maxConnections = c;
 
   const nodes: GraphNode[] = docsWithVecs.map(doc => {
     const conns = connectionCounts.get(doc.id) ?? 0;
@@ -238,6 +456,8 @@ export async function buildGraphData(
     .update(JSON.stringify({ nodeCount: nodes.length, edgeCount: edges.length }))
     .digest('hex')
     .slice(0, 8);
+
+  onProgress?.({ phase: 'done', done: n, total: n });
 
   return {
     nodes,
@@ -316,6 +536,7 @@ export interface BuildClusteredOptions {
   clusterCount?: number;
   edgeThreshold?: number;
   maxEdgesPerNode?: number;
+  onProgress?: (p: GraphBuildProgress) => void;
 }
 
 export interface ClusteredGraph {
@@ -335,13 +556,14 @@ export async function buildClusteredGraph(
   options: BuildClusteredOptions = {},
 ): Promise<ClusteredGraph> {
   const mode = options.mode ?? 'semantic';
-  // GRAPH_CLUSTER_CAP (default 3000) = # of notes folded into the galaxy before clustering.
-  // This feeds buildGraphData's nodeCap, so the same O(n²) cosine pass (graph-data.ts edge
-  // loop) runs at this cap. At 3000 ≈ 4.5M pairs — the multi-second cold build the 5-min
-  // server cache absorbs. NOTE this is cheap to RENDER (≤80 super-nodes) but NOT cheap to
-  // BUILD; the first uncached cluster fetch stalls the Express event loop for seconds.
-  // See README "Graph viewer scaling".
-  const clusterCap = Math.max(200, Math.floor(options.clusterCap ?? (Number(process.env.GRAPH_CLUSTER_CAP) || 3000)));
+  // GRAPH_CLUSTER_CAP = 갤럭시로 접기 전에 클러스터링에 넣는 노트 수. buildGraphData 의
+  // nodeCap 으로 그대로 내려가므로 같은 O(n²) 코사인 패스가 이 캡에서 돈다.
+  //
+  // 기본 3000 이었다 = 17,303 노트 볼트에서 14,303개가 갤럭시에 아예 없었다는 뜻이다. 화면은
+  // "전체 지식 지도"처럼 보이는데 실제로는 최근 3천 개만 그린, 조용한 거짓말이었다. 병렬화로
+  // 전량 빌드가 27.6초(실측)가 됐으므로 기본을 전량으로 올린다. 렌더는 여전히 싸다(≤80
+  // 슈퍼노드) — 비싼 쪽은 빌드고, 그건 5분 캐시 + 진행률로 흡수한다.
+  const clusterCap = Math.max(200, Math.floor(options.clusterCap ?? (Number(process.env.GRAPH_CLUSTER_CAP) || 20000)));
   const clusterCount = Math.max(1, Math.floor(
     options.clusterCount ?? Math.min(80, Math.max(6, Math.round(Math.sqrt(clusterCap / 2.5)))),
   ));
@@ -349,6 +571,9 @@ export async function buildClusteredGraph(
   const data = await buildGraphData(store, {
     mode, nodeCap: clusterCap, clusterCount,
     edgeThreshold: options.edgeThreshold, maxEdgesPerNode: options.maxEdgesPerNode,
+    // The galaxy rollup below is O(nodes+edges) and sub-second; buildGraphData owns every
+    // phase worth reporting, so pass the caller's sink straight through.
+    onProgress: options.onProgress,
   });
 
   // node → cluster, and member lists per cluster.
@@ -398,7 +623,7 @@ export async function buildClusteredGraph(
       clusterId: cid,
       // strip buildGraphData's trailing " (N)" — memberCount is a separate field.
       label: (clusterLabel.get(cid) ?? `Cluster ${cid + 1}`).replace(/\s*\(\d+\)\s*$/, ''),
-      color: CLUSTER_COLORS[cid % CLUSTER_COLORS.length],
+      color: paletteHex(cid),
       memberCount: mem.length,
       position: [0, 0, 0], // assigned below by Fibonacci rank
       size: 2 + Math.min(12, Math.sqrt(mem.length)),

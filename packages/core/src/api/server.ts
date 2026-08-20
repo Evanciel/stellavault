@@ -6,7 +6,7 @@ import cors from 'cors';
 import { randomBytes } from 'node:crypto';
 import type { VectorStore } from '../store/types.js';
 import type { SearchEngine } from '../search/index.js';
-import { buildGraphData, buildClusteredGraph, flattenClusterLevel, type BuildGraphOptions, type BuildClusteredOptions, type ClusteredGraph } from './graph-data.js';
+import { buildGraphData, buildClusteredGraph, flattenClusterLevel, type BuildGraphOptions, type BuildClusteredOptions, type ClusteredGraph, type GraphBuildProgress } from './graph-data.js';
 import type { GraphData } from '../types/graph.js';
 import { createFederationRouter } from './routes/federation.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
@@ -140,22 +140,76 @@ export function createApiServer(options: ApiServerOptions) {
   // expensive direction (full-cap buildGraphData) so it is clamped tighter (≤4000); cluster
   // only feeds clusterCap (~3000) into buildGraphData so it tolerates a higher ceiling.
   // undefined cap → '' sentinel so the default build occupies a single cache slot.
+  // 허용 캡은 명시 화이트리스트다. 예전엔 1000 단위 반올림 + 상한이었는데, 전량(17k) 을
+  // 열어주려면 상한만 올릴 경우 슬롯이 20개까지 늘어난다 — 17k 노드/72k 엣지 페이로드 하나가
+  // 수십 MB라 캐시가 그대로 메모리 폭탄이 된다. 상단으로 갈수록 간격을 벌려 슬롯 수를 7개로
+  // 묶었다. 요청값은 가장 가까운 허용값으로 스냅한다(거부 대신 스냅 — ?cap=5000 이 에러가 아니라
+  // 4000 이 되는 편이 호출자에게 낫다).
+  const CAP_STEPS_RAW: readonly number[] = [1000, 2000, 3000, 4000, 8000, 12000, 20000];
+  const CAP_STEPS_CLUSTER: readonly number[] = [1000, 2000, 3000, 4000, 8000, 12000, 20000];
   function clampCap(view: GraphView, raw: number): number | undefined {
     if (!Number.isFinite(raw) || raw <= 0) return undefined;
-    const max = view === 'raw' ? 4000 : 6000;
-    const rounded = Math.round(raw / 1000) * 1000;
-    return Math.max(1000, Math.min(max, rounded));
+    const steps = view === 'raw' ? CAP_STEPS_RAW : CAP_STEPS_CLUSTER;
+    let best = steps[0];
+    for (const step of steps) {
+      if (Math.abs(step - raw) < Math.abs(best - raw)) best = step;
+    }
+    return best;
   }
+
+  // Latest coarse progress from whichever build reported last. Concurrent builds for
+  // DIFFERENT keys interleave into this one object; in practice the viewer only ever has one
+  // in flight (the toggle blocks on it), and the alternative — a per-key progress map — would
+  // buy nothing the UI reads. `building` is derived from graphBuilds, never from here, so a
+  // crashed build cannot leave the flag stuck on.
+  let graphProgress: { phase: string; done: number; total: number } = { phase: 'idle', done: 0, total: 0 };
 
   async function buildGraphEntry(view: GraphView, mode: 'semantic' | 'folder', cap: number | undefined): Promise<GraphCacheEntry> {
     const now = new Date().toISOString();
+    const onProgress = (p: GraphBuildProgress): void => { graphProgress = { phase: p.phase, done: p.done, total: p.total }; };
     if (view === 'cluster') {
-      const g = await buildClusteredGraph(store, { mode, clusterCap: cap });
+      const g = await buildClusteredGraph(store, { mode, clusterCap: cap, onProgress });
       return { data: flattenClusterLevel(g.clusterLevel), clustered: g, generatedAt: now, cachedAt: Date.now() };
     }
-    const data = await buildGraphData(store, { mode, nodeCap: cap });
+    const data = await buildGraphData(store, { mode, nodeCap: cap, onProgress });
     return { data, generatedAt: now, cachedAt: Date.now() };
   }
+
+  // In-flight builds, keyed the SAME `view:mode:cap` way as graphCaches.
+  //
+  // Before this, a slow cold build served concurrently — the viewer's own retry, a second
+  // tab, the toggle tapped twice — started a SECOND full O(n²) pass for the same key. With
+  // the edge pass now in worker threads the Express event loop stays free during a build, so
+  // those concurrent requests actually arrive and get accepted instead of queueing behind a
+  // blocked thread; deduping them is what keeps that from meaning N times the CPU.
+  // Cardinality is bounded by clampCap's whitelist, same as the cache.
+  const graphBuilds = new Map<string, Promise<GraphCacheEntry>>();
+
+  // Bumped whenever the index changes under us (reindex). A build that started before the
+  // bump is reading the OLD index, so it still answers its own callers but must not write
+  // itself into the cache — graphCaches.clear() alone cannot stop it, the write happens after.
+  let graphEpoch = 0;
+
+  function buildGraphOnce(view: GraphView, mode: 'semantic' | 'folder', cap: number | undefined, cacheKey: string): Promise<GraphCacheEntry> {
+    const inflight = graphBuilds.get(cacheKey);
+    if (inflight) return inflight;
+    const startedAt = graphEpoch;
+    const pending = buildGraphEntry(view, mode, cap)
+      .then((entry) => { if (startedAt === graphEpoch) graphCaches.set(cacheKey, entry); return entry; })
+      .finally(() => {
+        graphBuilds.delete(cacheKey);
+        if (graphBuilds.size === 0) graphProgress = { phase: 'idle', done: 0, total: 0 };
+      });
+    graphBuilds.set(cacheKey, pending);
+    return pending;
+  }
+
+  // GET /api/graph/status — is a build running, and how far in?
+  // Cheap and synchronous on purpose: this is the endpoint the viewer polls DURING a cold
+  // full-vault build, which is exactly when the handler must not touch the store.
+  app.get('/api/graph/status', (_req, res) => {
+    res.json({ building: graphBuilds.size > 0, phase: graphProgress.phase, done: graphProgress.done, total: graphProgress.total });
+  });
 
   app.get('/api/graph', async (req, res) => {
     try {
@@ -164,10 +218,9 @@ export function createApiServer(options: ApiServerOptions) {
       const cap = clampCap(view, Number(req.query.cap));
       const cacheKey = `${view}:${mode}:${cap ?? ''}`;
       const cached = graphCaches.get(cacheKey);
-      if (!cached || Date.now() - cached.cachedAt > GRAPH_CACHE_TTL) {
-        graphCaches.set(cacheKey, await buildGraphEntry(view, mode, cap));
-      }
-      const entry = graphCaches.get(cacheKey)!;
+      const entry = (cached && Date.now() - cached.cachedAt <= GRAPH_CACHE_TTL)
+        ? cached
+        : await buildGraphOnce(view, mode, cap, cacheKey);
       res.json({ data: entry.data, generatedAt: entry.generatedAt, mode, view });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
@@ -177,14 +230,15 @@ export function createApiServer(options: ApiServerOptions) {
   // GET /api/graph/refresh?view=&mode=&cap= — 캐시 무효화 + 재생성.
   // MUST mirror the SAME composite key + parse + build branch as /api/graph, else refresh
   // writes one key and the GET reads another → silent no-op.
+  // Ignores the cache but NOT the in-flight map: an already-running build for this key is
+  // producing fresh data anyway, so joining it is what refresh asked for.
   app.get('/api/graph/refresh', async (req, res) => {
     try {
       const view = parseView(req.query.view);
       const mode = parseMode(req.query.mode);
       const cap = clampCap(view, Number(req.query.cap));
       const cacheKey = `${view}:${mode}:${cap ?? ''}`;
-      const entry = await buildGraphEntry(view, mode, cap);
-      graphCaches.set(cacheKey, entry);
+      const entry = await buildGraphOnce(view, mode, cap, cacheKey);
       res.json({ data: entry.data, generatedAt: entry.generatedAt, mode, view });
     } catch (err) {
       console.error(err); res.status(500).json({ error: 'Internal server error' });
@@ -202,8 +256,7 @@ export function createApiServer(options: ApiServerOptions) {
       const cacheKey = `cluster:${mode}:${cap ?? ''}`;
       let cached = graphCaches.get(cacheKey);
       if (!cached || !cached.clustered || Date.now() - cached.cachedAt > GRAPH_CACHE_TTL) {
-        cached = await buildGraphEntry('cluster', mode, cap);
-        graphCaches.set(cacheKey, cached);
+        cached = await buildGraphOnce('cluster', mode, cap, cacheKey);
       }
       const members = cached.clustered!.members.get(Number(req.params.id));
       if (!members) { res.status(404).json({ error: 'Cluster not found' }); return; }
@@ -246,7 +299,9 @@ export function createApiServer(options: ApiServerOptions) {
         },
       });
 
-      // 그래프 캐시 리셋
+      // 그래프 캐시 리셋 — epoch 도 함께 올려서, 재인덱스 전에 시작된 in-flight 빌드가
+      // 끝나면서 stale 결과를 다시 캐시에 써 넣는 것을 막는다.
+      graphEpoch++;
       graphCaches.clear();
 
       res.json({

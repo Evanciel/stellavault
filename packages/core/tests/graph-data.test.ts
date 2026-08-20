@@ -71,6 +71,96 @@ describe('buildGraphData', () => {
     }
   });
 
+  // REGRESSION: `filePath.split('/')[0] ?? 'root'` — the `??` was dead (split always yields ≥1
+  // element), so a vault-root note returned its own FILE NAME as its folder and became a
+  // one-note "planet" labelled e.g. "Projects.md". All root notes belong in ONE bucket.
+  it('folder 모드: 루트 노트는 파일마다 클러스터가 아니라 하나의 (root) 로 묶인다', async () => {
+    for (const name of ['Projects', 'Inbox', 'Scratch']) {
+      await store.upsertDocument({
+        id: `root-${name}`, filePath: `${name}.md`, title: name,
+        content: name, frontmatter: {}, tags: [],
+        lastModified: '2026-01-02', contentHash: `h-${name}`,
+      });
+      await store.upsertChunks([{
+        id: `root-${name}#0`, documentId: `root-${name}`, content: name,
+        heading: name, startLine: 1, endLine: 1, tokenCount: 1,
+        embedding: [0.5, 0.5, 0.5, 0.5],
+      }]);
+    }
+
+    const data = await buildGraphData(store, { mode: 'folder' });
+    const rootCluster = data.clusters.filter((c) => c.label === '(root)');
+    expect(rootCluster.length).toBe(1);
+    expect(rootCluster[0].nodeCount).toBe(3);
+    // and no cluster is named after a file
+    expect(data.clusters.some((c) => c.label.endsWith('.md'))).toBe(false);
+  });
+
+  // REGRESSION: folder mode ignored options.clusterCount entirely while the semantic branch
+  // honoured it, so buildClusteredGraph's ceiling did not apply and a vault with many top-level
+  // folders produced one planet per folder (palette exhausted, labels unreadable).
+  it('folder 모드: clusterCount 상한을 지키고 롱테일을 (other) 로 접는다', async () => {
+    for (let i = 3; i < 12; i++) {
+      await store.upsertDocument({
+        id: `extra${i}`, filePath: `folder${i}/n.md`, title: `Extra ${i}`,
+        content: `Extra ${i}`, frontmatter: {}, tags: [],
+        lastModified: '2026-01-01', contentHash: `he${i}`,
+      });
+      await store.upsertChunks([{
+        id: `extra${i}#0`, documentId: `extra${i}`, content: `Extra ${i}`,
+        heading: `Extra ${i}`, startLine: 1, endLine: 1, tokenCount: 1,
+        embedding: [0.1, 0.2, 0.3, 0.4],
+      }]);
+    }
+
+    const uncapped = await buildGraphData(store, { mode: 'folder' });
+    expect(uncapped.clusters.length).toBe(12); // no clusterCount → unchanged behaviour
+
+    const capped = await buildGraphData(store, { mode: 'folder', clusterCount: 4 });
+    expect(capped.clusters.length).toBe(4);
+    expect(capped.clusters[3].label).toMatch(/^\(other\) \(\d+\)$/);
+    // every node still lands in a real cluster, and the counts add up to the node total
+    const total = capped.clusters.reduce((sum, c) => sum + c.nodeCount, 0);
+    expect(total).toBe(capped.nodes.length);
+    for (const n of capped.nodes) {
+      expect(n.clusterId).toBeGreaterThanOrEqual(0);
+      expect(n.clusterId).toBeLessThan(4);
+    }
+  });
+
+  // REGRESSION: the folder branch counted `docs` (the WHOLE vault) while nodes came from the
+  // capped `docsWithVecs`, so clusters[] listed folders with zero nodes on screen and nodeCount
+  // reported vault totals instead of what was rendered.
+  it('folder 모드: nodeCap 적용 시 유령 클러스터가 없고 nodeCount 가 렌더된 수와 일치', async () => {
+    // nodeCap floors at 200, so the cap only bites past 200 docs. `recent/` fills the cap and
+    // `archive/` is older, so archive is ranked out entirely — under the old code it still showed
+    // up in clusters[] as a folder with 0 rendered nodes but nodeCount 10.
+    const mk = async (id: string, filePath: string, lastModified: string) => {
+      await store.upsertDocument({
+        id, filePath, title: id, content: id, frontmatter: {}, tags: [],
+        lastModified, contentHash: `h-${id}`,
+      });
+      await store.upsertChunks([{
+        id: `${id}#0`, documentId: id, content: id, heading: id,
+        startLine: 1, endLine: 1, tokenCount: 1, embedding: [0.1, 0.2, 0.3, 0.4],
+      }]);
+    };
+    for (let i = 0; i < 210; i++) await mk(`recent${i}`, `recent/n${i}.md`, '2026-05-01');
+    for (let i = 0; i < 10; i++) await mk(`arch${i}`, `archive/n${i}.md`, '2020-01-01');
+
+    const data = await buildGraphData(store, { mode: 'folder', nodeCap: 200 });
+    expect(data.nodes.length).toBe(200); // cap applied
+
+    const rendered = new Map<number, number>();
+    for (const n of data.nodes) rendered.set(n.clusterId, (rendered.get(n.clusterId) ?? 0) + 1);
+
+    expect(data.clusters.length).toBe(rendered.size); // no cluster without nodes on screen
+    expect(data.clusters.some((c) => c.label === 'archive')).toBe(false);
+    for (const c of data.clusters) {
+      expect(c.nodeCount).toBe(rendered.get(c.id));
+    }
+  });
+
   it('클러스터에 컬러와 라벨 존재', async () => {
     const data = await buildGraphData(store);
     for (const c of data.clusters) {
@@ -132,14 +222,33 @@ describe('flattenClusterLevel', () => {
     expect(data.stats.clusterCount).toBe(2);
   });
 
-  it('COLOR DECISION (a): clusters[].color is the renderer-aligned PALETTE hex, NOT CLUSTER_COLORS', () => {
-    // Documented decision: the ClusterFilter swatch is synthesized from the renderer's
-    // PALETTE (PALETTE_HEX in graph-data.ts), so the swatch matches the rendered dot color.
-    // The pre-existing CLUSTER_COLORS array (sn.color, index 0 = #6366f1) differs in order
-    // AND length from PALETTE_HEX (index 0 = #7c3aed). We deliberately do NOT inherit sn.color.
+  it('COLOR DECISION (a): clusters[].color is synthesized from the renderer-aligned PALETTE', () => {
+    // The ClusterFilter swatch is synthesized from PALETTE_HEX — the same literal the renderer
+    // parses for dot colours — so the swatch always matches the dot it filters. An incoming
+    // sn.color is NOT inherited (a stale/foreign colour would silently desync the swatch).
     const data = flattenClusterLevel(level);
-    expect(data.clusters[0].color).toBe('#7c3aed'); // PALETTE_HEX[0], not CLUSTER_COLORS[0] (#6366f1)
+    expect(data.clusters[0].color).toBe('#7c3aed'); // PALETTE_HEX[0]
     expect(data.clusters[0].color).not.toBe(level.superNodes[0].color);
     expect(data.clusters[0].color).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+});
+
+// REGRESSION: the palette held 15 colours while buildClusteredGraph builds up to 80 clusters
+// (default ≈35), so unrelated planets wrapped onto the same colour and "same colour = same
+// group" was false. scripts/check-palette.mjs additionally pins core and graph to each other.
+describe('cluster palette', () => {
+  it('클러스터 상한(80)만큼의 서로 다른 색을 가진다', async () => {
+    const seen = new Map<string, number>();
+    for (let cid = 0; cid < 80; cid++) {
+      const data = flattenClusterLevel({
+        level: 'galaxy',
+        superNodes: [{ clusterId: cid, label: `c${cid}`, color: '#000000', memberCount: 1, position: [0, 0, 0], size: 1, representativeId: 'x' }],
+        metaEdges: [], totalNodes: 1, totalEdges: 0, layoutVersion: 'semantic',
+      });
+      const color = data.clusters[0].color;
+      expect(seen.has(color)).toBe(false); // would fail at cid=15 with the old 15-colour palette
+      seen.set(color, cid);
+    }
+    expect(seen.size).toBe(80);
   });
 });

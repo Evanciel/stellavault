@@ -24,6 +24,19 @@ export interface GraphEdge {
   source: string;
   target: string;
   weight: number;
+  /**
+   * What kind of connection this is.
+   *
+   * - `'link'`     — a real `[[wikilink]]` the user wrote. Trusted, directional, sparse.
+   * - `'semantic'` — cosine similarity between embeddings. Inferred, undirected, dense.
+   *
+   * ABSENT MEANS `'semantic'`: every payload produced before link edges existed stays valid,
+   * and the k-NN producer in api/graph-data.ts does not have to tag its output.
+   *
+   * The distinction is the point of the two-class edge rendering — "I drew this" must not look
+   * like "a model thinks these are related".
+   */
+  kind?: 'link' | 'semantic';
 }
 
 export interface Cluster {

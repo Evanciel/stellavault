@@ -93,8 +93,10 @@ export async function indexVault(
         }),
       }));
 
-      // 저장 (document → chunks)
+      // 저장 (document → links → chunks)
       await store.upsertDocument(doc);
+      // links 는 upsertDocument 안에서 같은 트랜잭션으로 파생·기록된다(store/sqlite-vec.ts).
+      // 여기서 또 부르면 같은 파싱을 문서마다 두 번 하게 된다.
       await store.upsertChunks(chunksWithEmbeddings);
 
       indexed++;

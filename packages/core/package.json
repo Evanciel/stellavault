@@ -10,6 +10,10 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./links": {
+      "import": "./dist/links/wikilink.js",
+      "types": "./dist/links/wikilink.d.ts"
+    },
     "./intelligence/youtube-extractor": {
       "import": "./dist/intelligence/youtube-extractor.js",
       "types": "./dist/intelligence/youtube-extractor.d.ts"
