@@ -619,6 +619,13 @@ export const messages = {
   "dialog.qs.create": { en: "shift+↵ create", ko: "shift+↵ 생성" },
   "dialog.close": { en: "Close dialog", ko: "대화 상자 닫기" },
   "app.loadingGraph": { en: "Loading graph…", ko: "그래프 로딩 중…" },
+  "graph.edges.all": { en: "All", ko: "전체" },
+  "graph.edges.links": { en: "Links", ko: "직접 링크" },
+  "graph.edges.semantic": { en: "AI", ko: "AI 유사도" },
+  "graph.edges.tooltip": {
+    en: "{linkCount} wikilinks you wrote, {total} connections total",
+    ko: "직접 쓴 위키링크 {linkCount}개 / 전체 연결 {total}개",
+  },
   "graph.backToClusters": { en: "Back to all clusters", ko: "모든 클러스터로 돌아가기" },
   "graph.switchTo3d": { en: "Switch to 3D", ko: "3D로 전환" },
   "graph.switchTo2d": { en: "Switch to 2D (flat, top-down)", ko: "2D로 전환 (평면, 위에서 본 뷰)" },

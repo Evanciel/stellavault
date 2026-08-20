@@ -2030,6 +2030,11 @@ function registerIpcHandlers(config: AppConfig) {
   // in-flight Map coalesces the two near-simultaneous mount calls so the build
   // executes once even before it resolves. Invalidated by bumpGraphCacheVersion()
   // on reindex / file:changed (see core:index + startVaultWatcher below).
+  // renderer 의 MAX_GLOBAL_NODES(graph-core.tsx)와 같은 값. 두 곳에 있는 이유는
+  // main 이 renderer 모듈을 import 할 수 없기 때문이고, 어긋나면 IPC 가 버려질 노드를
+  // 실어 나른다 — 한쪽을 바꾸면 반드시 다른 쪽도 바꿀 것.
+  const DESKTOP_GRAPH_NODE_CAP = 3000;
+
   ipcMain.handle('graph:build', async (_e, mode: string) => {
     if (!coreReady || !store) return { nodes: [], edges: [] };
     const safeMode: 'semantic' | 'folder' = mode === 'folder' ? 'folder' : 'semantic';
@@ -2041,7 +2046,12 @@ function registerIpcHandlers(config: AppConfig) {
     const p = (async () => {
       try {
         const core = await import('@stellavault/core');
-        const data = await core.buildGraphData(store, { mode: safeMode });
+        // nodeCap 을 명시하는 이유: core 기본 상한이 1,500 → 20,000 으로 올라갔는데(웹 그래프는
+        // 옥트리 레이아웃으로 17k 를 60fps 로 그린다), 데스크탑 렌더러는 여전히
+        // MAX_GLOBAL_NODES(3,000)에서 잘라 쓴다. 명시하지 않으면 17k 노드 + 72k 엣지를
+        // IPC 로 직렬화해 보낸 뒤 렌더러가 82%를 버리게 된다 — 창이 그만큼 더 오래 멈춘다.
+        // 데스크탑 sim(uniform-grid)이 그 규모에서 어떤지 실측하기 전에는 올리지 않는다.
+        const data = await core.buildGraphData(store, { mode: safeMode, nodeCap: DESKTOP_GRAPH_NODE_CAP });
         graphBuildCache.set(cacheKey, data);
         return data;
       } catch (err) {

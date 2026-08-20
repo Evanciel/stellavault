@@ -20,8 +20,9 @@ import { flushDirtyPreview } from '../../lib/preview-save.js';
 import { useAppStore } from '../../stores/app-store.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import {
-  type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
+  type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo, type EdgeFilter,
   MAX_GLOBAL_NODES, DEEP_SPACE_BG,
+  partitionEdges, edgeDrawRange, buildEdgeColors,
   mapCoreNodes, readAccentColor, bfsFilter, bfsVisitOrder,
   buildBaseBuffers, buildNeighborSets, applyHoverToBuffers, applyPulseLitToBuffers,
   makePointsMaterial, StarFieldLite, GraphErrorBoundary,
@@ -39,7 +40,7 @@ const LABEL_FAR = 600;         // invisible beyond this (also raised for 2D zoom
 
 // ─── Scene ───────────────────────────────────────────
 
-function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, mode2d, onNodeClick, onHover, labelEls, labelRank, pulseVisitIdx = [], pulseRunId = 0, onPulseArrive }: {
+function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal, mode2d, edgeFilter, onNodeClick, onHover, labelEls, labelRank, pulseVisitIdx = [], pulseRunId = 0, onPulseArrive }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
   accent: string;
@@ -47,6 +48,8 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   settingsRef: React.MutableRefObject<SimSettings>;
   reheatSignal: number;
   mode2d: boolean;
+  /** 어느 엣지 계층을 그릴지. 상태는 툴바(GraphView)가 갖고 씬은 받아 쓴다. */
+  edgeFilter: EdgeFilter;
   onNodeClick: (node: GraphNode) => void;
   onHover: (info: HoverInfo | null) => void;
   labelEls: React.MutableRefObject<Map<number, HTMLDivElement>>;
@@ -148,17 +151,8 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
   const neighborSets = useMemo(() => buildNeighborSets(nodes, edges), [nodes, edges]);
 
   // Index pairs for the sim + edge buffer (shared layout: link k → floats k*6..k*6+5).
-  const linkPairs = useMemo(() => {
-    const idToIndex = new Map(nodes.map((n, i) => [n.id, i]));
-    const pairs: Array<[number, number]> = [];
-    for (const e of edges) {
-      const a = idToIndex.get(e.source);
-      const b = idToIndex.get(e.target);
-      if (a == null || b == null || a === b) continue;
-      pairs.push([a, b]);
-    }
-    return pairs;
-  }, [nodes, edges]);
+  // 링크 엣지가 앞쪽에 모여 있어서 "직접 링크만" 필터가 setDrawRange 두 숫자로 끝난다.
+  const { pairs: linkPairs, linkCount } = useMemo(() => partitionEdges(nodes, edges), [nodes, edges]);
 
   // The simulation — starts from the current hash-seeded positions.
   // The galaxy (cluster super-nodes) uses a precomputed even (Fibonacci) layout that the
@@ -204,11 +198,24 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
     () => new Float32Array(linkPairs.length * 6),
     [linkPairs],
   );
+  // 정점 RGBA — 링크(앰버)와 시맨틱(스틸블루)을 한 버퍼에서 나눈다. material.opacity 는
+  // 1 로 두고 알파를 정점이 들고 있어야, 두 계층이 서로 다른 밝기를 가질 수 있다.
+  const edgeColors = useMemo(
+    () => buildEdgeColors(linkPairs.length, linkCount),
+    [linkPairs, linkCount],
+  );
   // Lit overlay reuses the same max-size buffer + drawRange.
   const litPositions = useMemo(
     () => new Float32Array(Math.max(1, linkPairs.length) * 6),
     [linkPairs],
   );
+
+  useEffect(() => {
+    const geo = edgesRef.current?.geometry;
+    if (!geo) return;
+    const [start, count] = edgeDrawRange(edgeFilter, linkCount, linkPairs.length);
+    geo.setDrawRange(start, count);
+  }, [edgeFilter, linkCount, linkPairs.length]);
   const litLinksRef = useRef<number[]>([]);
 
   const coreMat = useMemo(() => makePointsMaterial(0.95, false), []);
@@ -542,8 +549,10 @@ function ForceScene({ nodes, edges, accent, fitSignal, settingsRef, reheatSignal
         <lineSegments key={`edges-${linkPairs.length}`} ref={edgesRef} raycast={() => null} frustumCulled={false}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[edgePositions, 3]} />
+            <bufferAttribute attach="attributes-color" args={[edgeColors, 4]} />
           </bufferGeometry>
-          <lineBasicMaterial color="#4466aa" transparent opacity={0.16} depthWrite={false} />
+          {/* itemSize 4 → three 가 USE_COLOR_ALPHA 를 켠다. 최종 알파 = opacity(1) * vColor.a. */}
+          <lineBasicMaterial vertexColors transparent opacity={1} depthWrite={false} />
         </lineSegments>
       )}
 
@@ -725,6 +734,8 @@ export function GraphView() {
   const [reheatSignal, setReheatSignal] = useState(0);
   // T2-9: 2D (flat, orthographic) vs 3D (default). Persisted only in-session.
   const [mode2d, setMode2d] = useState(false);
+  // 엣지 계층 필터 — 툴바가 소유하고 씬에 내려준다.
+  const [edgeFilter, setEdgeFilter] = useState<EdgeFilter>('both');
   const settingsRef = useRef<SimSettings>(settings);
   const labelEls = useRef<Map<number, HTMLDivElement>>(new Map());
   // T2-9: node index → size rank (0 = largest), consumed by the zoom-adaptive
@@ -925,6 +936,13 @@ export function GraphView() {
     return { visibleNodes: allNodes, visibleEdges: edges };
   }, [allNodes, allEdges, drillCluster]);
 
+  // 툴바가 "직접 링크 N개 / 전체 M개"를 말할 수 있게. 씬이 파티션할 때 쓰는 것과 같은
+  // 집합(visibleEdges)을 세야 화면에 그려진 수와 어긋나지 않는다.
+  const edgeCounts = useMemo(() => ({
+    links: visibleEdges.reduce((n, e) => n + (e.kind === 'link' ? 1 : 0), 0),
+    total: visibleEdges.length,
+  }), [visibleEdges]);
+
   // Top-N largest nodes get a (possibly hidden) HTML label, positioned
   // imperatively by the scene. T2-9: pool is LABEL_POOL; the frame loop reveals
   // a zoom-dependent subset. We also record each node index's size rank so the
@@ -1079,6 +1097,7 @@ export function GraphView() {
             settingsRef={settingsRef}
             reheatSignal={reheatSignal}
             mode2d={mode2d}
+            edgeFilter={edgeFilter}
             onNodeClick={handleNodeClick}
             onHover={handleHover}
             labelEls={labelEls}
@@ -1156,6 +1175,32 @@ export function GraphView() {
           <button style={overlayButtonStyle} title={t('panel.graph.fitTooltip')} onClick={() => setFitSignal((s) => s + 1)}>
             {t('panel.graph.fitButton')}
           </button>
+          {/* 엣지 2계층 필터. 손으로 그은 링크(앰버)와 모델이 추론한 유사도(스틸블루)를
+              따로 볼 수 있어야 "내가 만든 연결"을 실제로 찾을 수 있다. 버퍼가 link-먼저라
+              전환 비용은 setDrawRange 두 숫자뿐이다. 링크가 0개면 고를 것이 없으니 숨긴다. */}
+          {edgeCounts.links > 0 && (
+            <div style={{ display: 'flex', gap: 2 }}>
+              {([
+                ['both', t('graph.edges.all')],
+                ['links', t('graph.edges.links')],
+                ['semantic', t('graph.edges.semantic')],
+              ] as Array<[EdgeFilter, string]>).map(([v, label]) => (
+                <button
+                  key={v}
+                  style={{
+                    ...overlayButtonStyle,
+                    background: edgeFilter === v ? 'var(--accent)' : 'rgba(120,120,160,0.15)',
+                    color: edgeFilter === v ? '#fff' : 'var(--ink-dim)',
+                  }}
+                  title={t('graph.edges.tooltip', { linkCount: edgeCounts.links, total: edgeCounts.total })}
+                  onClick={() => setEdgeFilter(v)}
+                  aria-pressed={edgeFilter === v}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* T2-9: 2D ↔ 3D + Forces — only in drill-down. The galaxy is a frozen
               precomputed layout, so these have no effect there (and 2D would just
               flatten an overview that's meant to be read in 3D) → hidden. */}
