@@ -16,15 +16,11 @@ import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
+import { paletteHex } from '../lib/palette.js';
 
-// Cluster palette (matches GraphNodes.tsx PALETTE order) — the label is tinted to its OWN
-// cluster colour instead of stark white, so it reads as part of the dot rather than a row of
-// equally-loud captions. Each is softened toward white for legibility on the dark canvas.
-const PALETTE_HEX = [
-  '#7c3aed', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
-  '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
-  '#14b8a6', '#e879f9', '#eab308', '#22d3ee', '#fb7185',
-];
+// The label is tinted to its OWN cluster colour instead of stark white, so it reads as part of
+// the dot rather than a row of equally-loud captions. Each is softened toward white for
+// legibility on the dark canvas. Colour comes from lib/palette.ts (single source).
 
 /** Lighten a hex toward white by `t` (0..1) so saturated cluster colours stay readable. */
 function soften(hex: string, t: number): string {
@@ -103,7 +99,7 @@ export function ClusterLabels() {
         const rel = Math.sqrt(mc) / Math.sqrt(maxMc); // 0..1, bigger cluster → louder label
         // Deliberately small captions — faint constellation names, not banners. Range ≈ 1.4 .. 2.3.
         const fontSize = 1.3 + 0.12 * Math.min(8, Math.sqrt(mc));
-        const base = PALETTE_HEX[n.clusterId % PALETTE_HEX.length];
+        const base = paletteHex(n.clusterId);
         const fillColor = isLight ? base : soften(base, 0.28);
         const [x, y, z] = n.position!;
         // Keep it ONE horizontal line: drei <Text> maxWidth wraps, and CJK (Korean) breaks between

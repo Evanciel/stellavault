@@ -6,6 +6,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GraphNodes } from './GraphNodes.js';
 import { GraphEdges } from './GraphEdges.js';
+import { commonPathPrefix, folderLevel, folderScene } from '../lib/scene-derive.js';
 import { ClusterLabels } from './ClusterLabels.js';
 import { MemberLabels } from './MemberLabels.js';
 import { ClusterPlanets } from './ClusterPlanets.js';
@@ -56,8 +57,10 @@ function Scene() {
     if (fitNodes.length === 0) return; // nothing loaded yet — fit on the next (data) change
     // Fit on the first populated paint AND every swap. Cluster super-nodes are baked (ready);
     // raw/drilled members come from the async force worker (wait for it to settle).
-    const isClusterGalaxy = view === 'cluster' && !!fitNodes[0]?.isCluster;
-    const isDrilldown = view === 'cluster' && !fitNodes[0]?.isCluster;
+    // baked = 서버가 위치를 구워 보낸 클러스터 갤럭시. 예전엔 fitNodes[0].isCluster 로 봤는데,
+    // 폴더 드릴다운 씬은 슈퍼노드와 파일이 섞여 있어 0번이 무엇이냐에 좌우된다.
+    const isClusterGalaxy = useGraphStore.getState().sceneBaked;
+    const isDrilldown = !isClusterGalaxy && useGraphStore.getState().sceneStack.length > 0;
     const fit = () => (window as any).__sv_fitView?.();
     // Drilldown: ONE fit once the (small, fast) compact worker layout has settled, so the framing
     // is computed from final positions (an early fit catches the members mid-spread and parks the
@@ -148,6 +151,32 @@ export function Graph3D() {
           // useLayout's swap-sensitive signature reheats the opened cluster via the worker.
           const m = /^cluster:(\d+)$/.exec(currentState.hoveredNodeId);
           const hovered = currentState.nodes.find((nn) => nn.id === currentState.hoveredNodeId);
+
+          // 폴더 슈퍼노드 클릭 → 한 계단 더. 서버 왕복이 없다: 현재 프레임의 pool 이 접기 전
+          // 멤버 전량이라 거기서 바로 다음 레벨을 만든다.
+          const fm = /^folder:(.+)$/.exec(currentState.hoveredNodeId);
+          if (fm) {
+            const top = currentState.sceneStack[currentState.sceneStack.length - 1];
+            const pool = top?.pool;
+            if (pool) {
+              const path = fm[1];
+              const lv = folderLevel(pool.nodes, path);
+              const inside = pool.nodes.filter((n) => (n.filePath ?? '').startsWith(path + '/'));
+              const insideIds = new Set(inside.map((n) => n.id));
+              const insideEdges = pool.edges.filter((e) => insideIds.has(e.source) && insideIds.has(e.target));
+              // 더 내려갈 폴더가 없으면 파일 목록을 그대로 보여준다(빈 화면 대신).
+              const scene = lv.folders.length > 0
+                ? folderScene(lv, insideEdges)
+                : { nodes: inside, edges: insideEdges };
+              currentState.pushScene({
+                kind: 'folder', key: path, label: path.split('/').pop() ?? path,
+                nodes: scene.nodes, edges: scene.edges,
+                pool: { nodes: inside, edges: insideEdges }, folderPath: path, baked: false,
+              });
+            }
+            return;
+          }
+
           if (m || hovered?.isCluster) {
             const cid = m ? m[1] : String(hovered!.clusterId);
             // Cinematic dive: fly the camera INTO the clicked planet first, then the member
@@ -228,10 +257,89 @@ export function Graph3D() {
       fetch(`/api/graph/cluster/${cid}?view=cluster&mode=${mode}${capParam}`)
         .then((r) => { if (!r.ok) throw new Error(`API error: ${r.status}`); return r.json(); })
         .then((json) => {
-          const members = json.data;
+          const payload = json.data;
           const s = useGraphStore.getState();
-          s.selectNode(null);
-          s.setGraphData(members.members ?? [], members.intraEdges ?? [], s.clusters);
+          const members = payload.members ?? [];
+          const nodes = [...members];
+          const edges = [...(payload.intraEdges ?? [])];
+
+          // The server computes boundaryEdges (member → SOME OTHER cluster) on every drill-in and
+          // we used to throw the whole array away, so entering a cluster silently amputated every
+          // connection leaving it — the one thing you most want to see from inside. Surface the
+          // strongest neighbours as satellite super-nodes at the rim: they read as nearby planets,
+          // and clicking one hops straight into that cluster (the click handler already routes
+          // isCluster → drilldown), which turns the drill-in from a dead end into navigation.
+          //
+          // Members MUST stay first: useLayout skips the force worker when nodes[0].isCluster
+          // (that gate exists so the server-baked galaxy is never re-laid-out). A satellite at
+          // index 0 would leave the whole member set without positions.
+          if (members.length > 0) {
+            const byCluster = new Map<number, Array<{ source: string; weight: number }>>();
+            for (const be of (payload.boundaryEdges ?? []) as Array<{ source: string; targetCluster: number; weight: number }>) {
+              const list = byCluster.get(be.targetCluster);
+              if (list) list.push(be);
+              else byCluster.set(be.targetCluster, [be]);
+            }
+            // Cap both dimensions — a hub cluster can border dozens of others with hundreds of
+            // edges each, which would re-create the hairball we drilled in to escape.
+            const MAX_SATELLITES = 8;
+            const MAX_EDGES_PER_SATELLITE = 12;
+            const strongest = [...byCluster.entries()]
+              .map(([targetCluster, list]) => ({
+                targetCluster,
+                list: list.sort((a, b) => b.weight - a.weight).slice(0, MAX_EDGES_PER_SATELLITE),
+                total: list.reduce((sum, e) => sum + e.weight, 0),
+              }))
+              .sort((a, b) => b.total - a.total)
+              .slice(0, MAX_SATELLITES);
+
+            for (const { targetCluster, list } of strongest) {
+              const meta = s.clusters.find((c) => c.id === targetCluster);
+              nodes.push({
+                id: `cluster:${targetCluster}`,
+                label: meta?.label ?? `Cluster ${targetCluster + 1}`,
+                filePath: '',
+                tags: [],
+                clusterId: targetCluster,
+                size: 2 + Math.min(12, Math.sqrt(meta?.nodeCount ?? 1)),
+                source: 'cluster',
+                type: 'cluster',
+                isCluster: true,
+                memberCount: meta?.nodeCount ?? 0,
+              });
+              for (const be of list) {
+                edges.push({ source: be.source, target: `cluster:${targetCluster}`, weight: be.weight });
+              }
+            }
+          }
+
+          const label = s.clusters.find((c) => c.id === Number(cid))?.label ?? `Cluster ${Number(cid) + 1}`;
+
+          // 폴더 모드에서는 클러스터 = 최상위 폴더다. 멤버를 평평하게 쏟아붓는 대신 한 계단
+          // 아래 폴더로 접는다 — 사용자가 처음 물었던 "행성 들어가면 그 이하는 폴더로 안 되나"가
+          // 정확히 이 지점이다. 실볼트에서 08_Patterns 는 8,109개인데 그중 8,098개가 concepts
+          // 하나에 들어 있어서, 접지 않으면 구분 없는 8천 개 덩어리만 보인다.
+          // 접두사는 클러스터 라벨이 아니라 멤버에서 뽑는다(scene-derive.commonPathPrefix 주석 참조).
+          if (cur.mode === 'folder' && members.length > 0) {
+            const prefix = commonPathPrefix(members);
+            const lv = folderLevel(members, prefix);
+            // 하위 폴더가 하나도 없으면 접을 것이 없다 — 평평한 멤버 뷰가 맞다.
+            if (lv.folders.length > 0) {
+              const folded = folderScene(lv, edges);
+              s.pushScene({
+                kind: 'folder', key: prefix, label: prefix === '' ? label : prefix,
+                nodes: folded.nodes, edges: folded.edges,
+                pool: { nodes: members, edges }, folderPath: prefix, baked: false,
+              });
+              s.setFocusedCluster(Number(cid));
+              return;
+            }
+          }
+
+          // `clusters` stays the FULL galaxy list on purpose — the satellites above need every
+          // neighbour's label/colour, including after hopping cluster→cluster. focusedClusterId
+          // is what tells the UI we are inside one.
+          s.pushScene({ kind: 'cluster', key: String(cid), label, nodes, edges, baked: false });
         })
         .catch((err) => useGraphStore.getState().setError(String(err)))
         .finally(() => useGraphStore.getState().setLoading(false));
@@ -264,7 +372,7 @@ export function Graph3D() {
       //    shrank the body to a speck. The median tracks the body and ignores outliers (a few
       //    sparse clusters may sit near the edge — fine).
       //  - raw hairball: 88th pct fill (unchanged).
-      const isDrilldown = st.view === 'cluster' && !st.nodes[0]?.isCluster;
+      const isDrilldown = !st.sceneBaked && st.sceneStack.length > 0;
       const median = dists[Math.floor(dists.length * 0.5)] ?? 100;
       let r: number;
       let margin: number;

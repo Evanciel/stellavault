@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useGraphStore } from '../stores/graph-store.js';
 
 export function useGraph() {
-  const { setGraphData, setLoading, setError } = useGraphStore();
+  const { setGraphData, setLoading, setError, setBuildProgress } = useGraphStore();
   const mode = useGraphStore((s) => s.mode);
   const view = useGraphStore((s) => s.view);
   const rawCap = useGraphStore((s) => s.rawCap);
@@ -18,6 +18,17 @@ export function useGraph() {
     async function load() {
       setLoading(true);
       setError(null);
+      // 서버가 빌드 중이면 진행률을 폴링한다. /api/graph 는 빌드가 끝나야 응답하므로, 그 사이
+      // 상태는 이 별도 엔드포인트로만 볼 수 있다. 폴링은 fetch 가 끝나면 finally 에서 멈춘다.
+      const poll = setInterval(() => {
+        fetch('/api/graph/status')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((st: any) => {
+            if (cancelled || !st?.building) return;
+            setBuildProgress({ phase: String(st.phase ?? ''), done: Number(st.done ?? 0), total: Number(st.total ?? 0) });
+          })
+          .catch(() => { /* 진행률은 부가정보 — 실패해도 본 요청에 영향 없다 */ });
+      }, 700);
       try {
         // raw view sends its cap; cluster view's cap is server-defaulted (GRAPH_CLUSTER_CAP).
         const capParam = view === 'raw' ? `&cap=${rawCap}` : '';
@@ -66,6 +77,7 @@ export function useGraph() {
       } catch (err) {
         if (!cancelled) setError(String(err));
       } finally {
+        clearInterval(poll);
         if (!cancelled) setLoading(false);
       }
     }
