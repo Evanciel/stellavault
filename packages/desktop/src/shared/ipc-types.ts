@@ -510,6 +510,12 @@ export interface IpcChannelMap {
   // Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md).
   'graph:clusters':       { args: [opts?: { mode?: string }]; result: ClusterLevelGraph };
   'graph:expand-cluster': { args: [opts: { mode?: string; clusterId: number }]; result: ClusterMembersGraph };
+  // 그래프 상한 밖의 노트도 "주변 보기"가 되게 하는 경로 — 링크 테이블만 읽는다(임베딩 없음).
+  'graph:note-links':     { args: [opts: { filePath: string; depth?: number }]; result: {
+    found: boolean; isolated: boolean; truncated: number;
+    nodes: Array<{ id: string; title: string; filePath: string; hop: number }>;
+    edges: Array<{ source: string; target: string; weight: number; kind: 'link' }>;
+  } };
   // Startup race guard — renderer queries this on mount (see App.tsx).
   'core:get-ready':       { args: []; result: boolean };
 

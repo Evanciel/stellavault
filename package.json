@@ -34,8 +34,9 @@
     "packages/graph"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present && npm run bundle",
+    "build": "npm run check:palette && npm run build --workspaces --if-present && npm run bundle",
     "bundle": "node scripts/bundle-cli.mjs",
+    "check:palette": "node scripts/check-palette.mjs",
     "test": "npm run test --workspaces --if-present",
     "sync": "npm run sync --workspace=@stellavault/sync",
     "dev:core": "npm run dev --workspace=@stellavault/core",

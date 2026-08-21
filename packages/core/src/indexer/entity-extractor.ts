@@ -8,6 +8,8 @@
 // language-agnostic: Korean/CJK vaults still get wikilink/tag/heading entities
 // even though Title-Case heuristics only fire on Latin script.
 
+import { parseWikilinks } from '../links/wikilink.js';
+
 export interface EntityInput {
   content: string;
   heading?: string;
@@ -46,21 +48,31 @@ function isMeaningful(n: string): boolean {
   return true;
 }
 
-/** Extract wikilink targets: [[Target]], [[Target|alias]], [[Target#section]]. */
+/**
+ * Extract wikilink targets: [[Target]], [[Target|alias]], [[Target#section]].
+ *
+ * Thin wrapper over the one shared parser (src/links/wikilink.ts) — same signature,
+ * same trimmed-target output for the existing callers (extractEntities below,
+ * search/entity.ts via extractQueryTerms).
+ *
+ * `skipCode: false` ON PURPOSE. Turning masking on here would drop every wikilink that
+ * currently lives inside a code fence out of chunk_entities, silently shifting search
+ * ranking for every existing user until they do a full re-index — and this runs on CHUNK
+ * text, where fence state is unreliable anyway: the chunker cuts by heading/size, so a
+ * chunk can start mid-fence (opener invisible → nothing masked) or end mid-fence (opener
+ * without closer → the rest of the chunk masked). The measured false-positive rate the
+ * masking would buy back is 1.91%, all of it one project's `[[tts:text]]` placeholders.
+ * Not worth an unannounced ranking change; the links table (which is new, so nothing to
+ * regress) does mask.
+ *
+ * One behaviour change comes along regardless: the shared regex is line-bounded, so an
+ * unclosed `[[` no longer pairs with a closer on a later line and invents a multi-line
+ * "entity". That path only ever produced garbage.
+ */
 export function extractWikilinks(text: string): string[] {
-  const out: string[] = [];
-  const re = /\[\[([^\]]+)\]\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    let target = m[1];
-    const pipe = target.indexOf('|');
-    if (pipe >= 0) target = target.slice(0, pipe);
-    const hash = target.indexOf('#');
-    if (hash >= 0) target = target.slice(0, hash);
-    target = target.trim();
-    if (target) out.push(target);
-  }
-  return out;
+  return parseWikilinks(text, { skipCode: false })
+    .map((link) => link.target.trim())
+    .filter(Boolean);
 }
 
 /** Inline #tags within content (e.g. "#knowledge-management"). */

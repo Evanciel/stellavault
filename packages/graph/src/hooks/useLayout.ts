@@ -10,24 +10,26 @@ export function useLayout() {
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const view = useGraphStore((s) => s.view);
-  const setGraphData = useGraphStore((s) => s.setGraphData);
+  const sceneBaked = useGraphStore((s) => s.sceneBaked);
+  const applyLayoutPositions = useGraphStore((s) => s.applyLayoutPositions);
 
   useEffect(() => {
     // Swap-sensitive signature. The old dep was the BOOLEAN `[nodes.length > 0]`, which does
     // NOT change on a raw↔cluster↔drilldown swap (both true) → the effect never re-ran and
     // ranRef reset was dead. This signature changes on node-count change, first-node-id change
     // (drilldown / cluster→raw), AND view change → the worker re-layouts those swaps.
-    const sig = `${nodes.length}:${nodes[0]?.id ?? ''}:${view}`;
+    const sig = `${nodes.length}:${nodes[0]?.id ?? ''}:${view}:${sceneBaked}`;
     if (sig !== sigRef.current) {
       sigRef.current = sig;
       ranRef.current = false; // new node-set → allow a fresh layout pass
     }
 
-    // The cluster SUPER-NODE view carries baked galaxy positions from the server — never
-    // re-layout it (detect by isCluster, NOT by view: a drilldown keeps view='cluster' but
-    // swaps in member nodes that have NO server positions and DO need the worker). Also skip
-    // an empty set. Raw + drilled-down members fall through to the worker.
-    if (nodes[0]?.isCluster || nodes.length === 0) return;
+    // 서버가 위치를 구워 보낸 씬(클러스터 갤럭시)은 다시 배치하지 않는다.
+    //
+    // 예전 판정은 `nodes[0]?.isCluster` 였다 — "0번 노드가 슈퍼노드인가" 라는 위치 의존 검사라,
+    // 슈퍼노드와 일반 노트가 섞인 씬(폴더 하위 드릴다운)에서는 0번이 무엇이냐에 따라 레이아웃이
+    // 통째로 스킵돼 전부 원점에 겹친다. 스토어의 명시 플래그로 바꿨다.
+    if (sceneBaked || nodes.length === 0) return;
     if (ranRef.current) return;
     ranRef.current = true;
 
@@ -49,7 +51,7 @@ export function useLayout() {
           ...n,
           position: positions[i] as [number, number, number],
         }));
-        setGraphData(updated, currentState.edges, currentState.clusters);
+        applyLayoutPositions(updated);
       }
       if (type === 'done') worker.terminate();
     };
@@ -78,5 +80,5 @@ export function useLayout() {
     });
 
     return () => worker.terminate();
-  }, [nodes.length, nodes[0]?.id, view, edges, setGraphData]);
+  }, [nodes.length, nodes[0]?.id, view, sceneBaked, edges, applyLayoutPositions]);
 }

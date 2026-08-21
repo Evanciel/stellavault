@@ -11,12 +11,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
-
-const PALETTE_HEX = [
-  '#7c3aed', '#ec4899', '#f59e0b', '#10b981', '#3b82f6',
-  '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6',
-  '#14b8a6', '#e879f9', '#eab308', '#22d3ee', '#fb7185',
-];
+import { paletteHex } from '../lib/palette.js';
 
 const NOOP_RAYCAST = () => null;
 const TYPES = 5;
@@ -178,7 +173,7 @@ export function ClusterPlanets() {
           // a busy foreground of textured Jupiters. Visible floor so outer ones don't vanish.
           // Range ≈ 1.0 (small) .. 2.4 (largest).
           radius={0.7 + (n.size ?? 3) * 0.12}
-          color={PALETTE_HEX[n.clusterId % PALETTE_HEX.length]}
+          color={paletteHex(n.clusterId)}
           seed={n.clusterId}
           // spread the 5 types across clusters; +the cluster's own id so colour≠type lockstep
           type={(n.clusterId * 2 + 1) % TYPES}

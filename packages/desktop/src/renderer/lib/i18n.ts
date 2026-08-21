@@ -619,6 +619,21 @@ export const messages = {
   "dialog.qs.create": { en: "shift+↵ create", ko: "shift+↵ 생성" },
   "dialog.close": { en: "Close dialog", ko: "대화 상자 닫기" },
   "app.loadingGraph": { en: "Loading graph…", ko: "그래프 로딩 중…" },
+  "graph.explore.isolated": {
+    en: "This note has no links yet — nothing to show around it.",
+    ko: "이 노트에는 아직 연결이 없어요. 주변에 보여줄 것이 없습니다.",
+  },
+  "graph.explore.missing": {
+    en: "This note isn't in the index yet. Run an index and try again.",
+    ko: "이 노트가 아직 색인에 없어요. 색인을 실행한 뒤 다시 시도해 주세요.",
+  },
+  "graph.edges.all": { en: "All", ko: "전체" },
+  "graph.edges.links": { en: "Links", ko: "직접 링크" },
+  "graph.edges.semantic": { en: "AI", ko: "AI 유사도" },
+  "graph.edges.tooltip": {
+    en: "{linkCount} wikilinks you wrote, {total} connections total",
+    ko: "직접 쓴 위키링크 {linkCount}개 / 전체 연결 {total}개",
+  },
   "graph.backToClusters": { en: "Back to all clusters", ko: "모든 클러스터로 돌아가기" },
   "graph.switchTo3d": { en: "Switch to 3D", ko: "3D로 전환" },
   "graph.switchTo2d": { en: "Switch to 2D (flat, top-down)", ko: "2D로 전환 (평면, 위에서 본 뷰)" },

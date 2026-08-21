@@ -15,8 +15,17 @@ export type {
 } from './types/search.js';
 
 // Interfaces
-export type { VectorStore } from './store/types.js';
+export type { VectorStore, LinkRow, LinkPair } from './store/types.js';
 export type { Embedder } from './indexer/embedder.js';
+
+// Links — the one shared wikilink parser. Import-free (no node: builtins), so the
+// Electron renderer and the browser graph bundle can take it via the "./links"
+// subpath without dragging better-sqlite3 into a Vite build.
+export {
+  splitWikilinkInner, parseWikilinks, resolveTargetKey, replaceWikilinks,
+  parseFrontmatterWikilinks, collectDocumentLinks, toLinkRows, frontmatterEnd,
+} from './links/wikilink.js';
+export type { ParsedWikilink, ParseWikilinkOptions } from './links/wikilink.js';
 
 // Store
 export { createSqliteVecStore } from './store/index.js';
