@@ -2,6 +2,7 @@
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage } from 'electron';
+import { linkHops, buildNeighbourhood } from './note-neighbourhood.js';
 import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, renameSync, unlinkSync, rmSync, copyFileSync, cpSync, watch as fsWatch, promises as fsp } from 'node:fs';
@@ -2063,6 +2064,44 @@ function registerIpcHandlers(config: AppConfig) {
     })();
     graphBuildInflight.set(cacheKey, p);
     return p;
+  });
+
+  // 그래프 상한 밖의 노트도 "주변 보기"가 되게 하는 경로.
+  //
+  // graph:build 는 최근 3,000개만 싣는다. 실볼트 17,462개에서 오래된 노트를 열면
+  // 중심을 못 찾아 아무것도 안 나왔고, 화면에는 "아직 색인된 문서가 없습니다"가 떴다.
+  // 링크 테이블은 문서 전량에 대해 채워져 있으므로 여기서는 상한과 무관하게 답한다.
+  ipcMain.handle('graph:note-links', async (_e, arg: { filePath: string; depth?: number }) => {
+    if (!coreReady || !store) return { found: false, isolated: false, nodes: [], edges: [], truncated: 0 };
+    try {
+      const db = store.getDb?.();
+      if (!db) return { found: false, isolated: false, nodes: [], edges: [], truncated: 0 };
+      // 상대/절대 둘 다 받는다. docIdForFile → toVaultRel 은 상대 경로를 프로세스 cwd 기준으로
+      // resolve 해버려서(볼트 기준이 아니다) 그냥 넘기면 조용히 빈 결과가 나온다 — 실제로 이걸로
+      // 한 번 헛짚었다. absVaultPath 가 볼트 기준으로 붙이고 볼트 밖 경로는 undefined 로 막는다.
+      const abs = absVaultPath(arg?.filePath);
+      if (!abs) return { found: false, isolated: false, nodes: [], edges: [], truncated: 0 };
+      const id = docIdForFile(currentVaultPath, abs);
+      // 링크는 DB 에 해석되지 않은 문자열로 있다 — 문자열→문서 해석은 store 가 5단 사다리로
+      // 한다(graph-data.ts 가 엣지를 만들 때 쓰는 것과 같은 경로). 여기서 SQL 로 직접 이으면
+      // 그 해석을 재구현하게 되고, 실제로 없는 컬럼(target_doc_id)을 가정하는 실수를 했다.
+      const pairs = await store.getLinkPairs();
+      const hops = linkHops(pairs, id, arg?.depth ?? 2);
+      const ids = [...hops.hops.keys()];
+      const meta = new Map<string, { title?: string; filePath?: string }>();
+      // SQLite 바인딩 파라미터 상한을 넘기지 않게 잘라서 묻는다(maxNodes 400 이라 보통 한 번).
+      for (let i = 0; i < ids.length; i += 200) {
+        const slice = ids.slice(i, i + 200);
+        const marks = slice.map(() => '?').join(',');
+        const rows = db.prepare(`SELECT id, title, file_path FROM documents WHERE id IN (${marks})`)
+          .all(...slice) as Array<{ id: string; title?: string; file_path?: string }>;
+        for (const r of rows) meta.set(r.id, { title: r.title, filePath: r.file_path });
+      }
+      return buildNeighbourhood(hops, id, meta);
+    } catch (err) {
+      console.error('[main] graph:note-links failed:', err);
+      return { found: false, isolated: false, nodes: [], edges: [], truncated: 0 };
+    }
   });
 
   // ─── Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md) ───

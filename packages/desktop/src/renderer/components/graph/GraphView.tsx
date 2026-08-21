@@ -736,6 +736,8 @@ export function GraphView() {
   const [mode2d, setMode2d] = useState(false);
   // 엣지 계층 필터 — 툴바가 소유하고 씬에 내려준다.
   const [edgeFilter, setEdgeFilter] = useState<EdgeFilter>('both');
+  // "주변 보기"가 실패한 이유. null 이면 정상. 조용히 빈 화면을 주는 대신 이유를 말한다.
+  const [exploreMiss, setExploreMiss] = useState<'isolated' | 'missing' | null>(null);
   const settingsRef = useRef<SimSettings>(settings);
   const labelEls = useRef<Map<number, HTMLDivElement>>(new Map());
   // T2-9: node index → size rank (0 = largest), consumed by the zoom-adaptive
@@ -828,12 +830,36 @@ export function GraphView() {
         return abs === rel || abs.endsWith('/' + rel);
       });
       if (!center) {
-        // The focused note vanished from the graph (deleted/renamed). On a file:changed
-        // reload, don't strand the view pinned to a missing note — fall back to the galaxy
-        // (which resets lastViewRef + clears the stale pulse). Normal explore just returns.
-        if (pulseAgainst) { setPulse(null); void loadGalaxy(); }
+        // 중심을 못 찾는 흔한 이유는 "지워졌다"가 아니라 "그래프 상한 밖"이다.
+        // graph:build 는 최근 3,000개만 싣는데 실볼트는 17,462개다 — 오래된 노트를 열면
+        // 여기서 그냥 return 했고, 화면에는 색인이 비었다는 (사실이 아닌) 안내가 남았다.
+        // 링크 테이블은 문서 전량을 갖고 있으므로 상한과 무관한 경로로 다시 묻는다.
+        const nb = await ipc('graph:note-links', { filePath, depth: 2 }) as unknown as {
+          found: boolean; isolated: boolean; truncated: number;
+          nodes: Array<{ id: string; title: string; filePath: string; hop: number }>;
+          edges: GraphEdge[];
+        };
+        if (nb?.found && nb.nodes.length > 1) {
+          expandedRef.current.clear();
+          setPulse(null);
+          setAllNodes(mapCoreNodes(nb.nodes.map((n) => ({
+            // hop 이 멀수록 작게 — 중심이 어디인지 크기로 읽히게.
+            id: n.id, title: n.title, filePath: n.filePath, size: Math.max(1, 6 - n.hop * 2), cluster: n.hop,
+          })) as unknown as CoreGraphNode[]));
+          setAllEdges(nb.edges);
+          setDrillCluster({ id: -2, label: `⚡ ${title}` });
+          setFitSignal((s) => s + 1);
+          setReheatSignal((s) => s + 1);
+          setExploreMiss(null);
+          return;
+        }
+        // 링크도 없다 = 진짜로 고립된 노트거나 색인에 없는 파일. 어느 쪽인지 말해준다.
+        setExploreMiss(nb?.found ? 'isolated' : 'missing');
+        setPulse(null);
+        void loadGalaxy();
         return;
       }
+      setExploreMiss(null);
       const sub = bfsFilter(full.nodes, full.edges, center.id, 2);
       expandedRef.current.clear();
       setAllNodes(sub.nodes);
@@ -1036,7 +1062,13 @@ export function GraphView() {
     return (
       <div style={{ flex: 1, display: 'grid', placeItems: 'center', background: DEEP_SPACE_BG }}>
         <div style={{ textAlign: 'center', color: 'var(--ink-faint)', fontSize: 12 }}>
-          <div style={{ marginBottom: 12 }}>{t('panel.graph.noDocuments')}</div>
+          {/* 예전엔 무조건 "색인된 문서가 없습니다"였다. 실제로는 대부분 색인이 멀쩡한데
+              이 노트가 그래프 상한 밖이라 못 찾은 경우였고, 그 안내는 거짓말이었다. */}
+          <div style={{ marginBottom: 12 }}>
+            {exploreMiss === 'isolated' ? t('graph.explore.isolated')
+              : exploreMiss === 'missing' ? t('graph.explore.missing')
+              : t('panel.graph.noDocuments')}
+          </div>
           <button
             disabled={indexing}
             onClick={async () => {

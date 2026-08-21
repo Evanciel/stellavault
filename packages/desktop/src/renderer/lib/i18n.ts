@@ -619,6 +619,14 @@ export const messages = {
   "dialog.qs.create": { en: "shift+↵ create", ko: "shift+↵ 생성" },
   "dialog.close": { en: "Close dialog", ko: "대화 상자 닫기" },
   "app.loadingGraph": { en: "Loading graph…", ko: "그래프 로딩 중…" },
+  "graph.explore.isolated": {
+    en: "This note has no links yet — nothing to show around it.",
+    ko: "이 노트에는 아직 연결이 없어요. 주변에 보여줄 것이 없습니다.",
+  },
+  "graph.explore.missing": {
+    en: "This note isn't in the index yet. Run an index and try again.",
+    ko: "이 노트가 아직 색인에 없어요. 색인을 실행한 뒤 다시 시도해 주세요.",
+  },
   "graph.edges.all": { en: "All", ko: "전체" },
   "graph.edges.links": { en: "Links", ko: "직접 링크" },
   "graph.edges.semantic": { en: "AI", ko: "AI 유사도" },

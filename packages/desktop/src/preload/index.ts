@@ -40,6 +40,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'graph:build',
   'graph:clusters',
   'graph:expand-cluster',
+  'graph:note-links',   // 상한 밖 노트의 위키링크 이웃 (읽기 전용)
   'backlinks:find',
   'window:minimize',
   'window:maximize',
