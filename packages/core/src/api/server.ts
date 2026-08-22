@@ -15,6 +15,10 @@ import { createProfileCardRouter } from './routes/profile-card.js';
 import { createHealthRouter } from './routes/health.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { assertPublicUrl } from './ssrf-guard.js';
+import { summarizeIndexRun } from '../indexer/report.js';
+import { checkVaultOwnership, VAULT_OWNER_KEY } from '../store/vault-ownership.js';
+import { resolve as resolvePath } from 'node:path';
+import type { IndexResult } from '../indexer/index.js';
 import type { DecayEngine } from '../intelligence/decay-engine.js';
 // detectDuplicates + detectKnowledgeGaps: lazy imported in /api/health only
 
@@ -92,6 +96,80 @@ export function createApiServer(options: ApiServerOptions) {
     if (token === authToken) return next();
     res.status(403).json({ error: 'Invalid or missing auth token. Send X-Stellavault-Token header.' });
   }
+
+  /**
+   * 🔴🔴 <남의 DB 에는 쓰지 않는다> (코덱스 14차 P1).
+   *
+   * 색인기는 각인이 어긋나면 한 글자도 안 쓰기로 했는데, 이 서버의 쓰기 경로들
+   * (`PUT /api/document/:id` · `DELETE` · ingest 라우터)은 그 판정을 <통째로 우회>해
+   * `store` 에 직접 썼다. `stellavault graph` 는 감시자 없이 API 만 띄우므로
+   * 설정의 `dbPath` 가 남의 볼트를 가리키면 그 DB 가 조용히 오염된다.
+   *
+   * ★라우트마다 붙이지 않고 <메서드로> 막는다. 라우트별로 붙이면 다음에 추가되는
+   *  쓰기 라우트가 조용히 빠지는데, 그 침묵이 정확히 이 사고의 모양이다.
+   *
+   * ⚠️ 막는 것은 <확정된 어긋남>뿐이다. 각인이 없는 DB(옛 DB·새 DB)는 통과시킨다 —
+   *    그러지 않으면 `POST /api/reindex` 가 막혀 <각인될 방법 자체가 사라진다>.
+   *    소유를 확정하는 판정은 여전히 색인기 하나가 소유한다.
+   * ⚠️ `vaultPath` 가 없으면 물을 수가 없으므로 통과시킨다(그 서버는 짝이 없다).
+   */
+  function dbBelongsToAnotherVault(): boolean {
+    if (!vaultPath) return false;
+    try {
+      return checkVaultOwnership(store.getMeta(VAULT_OWNER_KEY), resolvePath(vaultPath)).kind === 'mismatch';
+    } catch {
+      // 🔴 <물어볼 수 없으면 막는다> (코덱스 15차 P2). 한때 여기서 false 를 돌려주며
+      //    "막으면 읽기 전용 상황까지 죽는다" 고 적었는데 <두 군데가 틀렸다>:
+      //    ① 읽기는 아래 허용목록에서 이미 빠져나가므로 이 함수에 오지도 않는다.
+      //    ② 각인이 <실제로 없는> 정상 경우는 예외가 아니라 `undefined` 로 온다 —
+      //       즉 예외를 막아도 `/api/reindex` 이관 경로는 안 막힌다.
+      //    판정 불가를 통과로 바꾸면 그것은 가드가 아니라 <가드 모양의 통로>다.
+      return true;
+    }
+  }
+
+  /**
+   * 🔴🔴 남의 DB 에서도 <도는 것이 안전하다고 증명된> 경로만 통과시킨다.
+   *
+   * 한때 이 가드가 `req.method !== 'GET'` 이었다. <틀렸다> (코덱스 15차 P1):
+   * `GET /api/search` 와 `GET /api/document/:id` 는 `recordAccess` 로 DB 에 쓰고,
+   * `GET /api/decay` · `GET /api/heatmap` 은 `computeAll` 로 `decay_state` 를 갱신하며,
+   * `GET /api/ask?save=true` 는 <파일>까지 쓴다. HTTP 메서드는 부작용의 증거가 아니다.
+   *
+   * ★그래서 fail-closed 로 뒤집는다: 목록에 없으면 거부다. 새 라우트는 <기본이 거부>이고,
+   *  통과시키려면 여기에 이름을 적으며 "이건 안 쓴다" 를 한 번 확인하게 된다.
+   *  (옛 방식은 새 라우트가 <기본이 통과>였고, 그 침묵이 정확히 이 사고의 모양이다.)
+   */
+  // 🔴🔴 여기 적는 순간 <"이 경로는 DB 에 쓰지 않는다" 를 주장하는 것>이다.
+  //    16차에 그 주장이 <거짓으로> 드러났다: `/api/health` 를 "프로세스 상태" 라고 적어
+  //    넣었는데 그 핸들러는 `decayEngine.computeAll()` 을 부르고, 그것은 `decay_state` 에
+  //    INSERT/UPDATE 한다. 즉 <남의 DB 에 GET /api/health 한 번이면 쓴다>.
+  //
+  //    ★이것은 15차에 고친 결함과 <같은 부류다>. 그때 "HTTP 메서드는 부작용의 증거가
+  //     아니다" 라며 메서드 기반을 허용목록으로 뒤집었는데, 정작 그 목록을 채울 때
+  //     <경로 이름을 보고> 안전을 판정했다. 이름도 부작용의 증거가 아니다.
+  //
+  // 🔴 새 경로를 여기 넣기 전에: 핸들러를 <끝까지 따라가> 아무것도 안 쓰는지 확인하라.
+  //    `RouteWritesNothingGateTests` 가 목록의 <모든> 경로를 실제로 때려 보고
+  //    DB 가 안 바뀌는지 잰다 — 이름만 보고 넣으면 그 게이트가 빨개진다.
+  const SAFE_ON_FOREIGN_DB: ReadonlySet<string> = new Set([
+    '/api/token',          // 토큰만 돌려준다 — store 를 안 만진다
+    '/api/stats',          // getStats — SELECT 뿐
+    '/api/reindex/status', // 메모리 상태
+    '/api/graph/status',   // 메모리 상태
+    // 🔴 `/api/health` 는 <여기 없다>. decayEngine.computeAll() 로 decay_state 를 쓴다.
+  ]);
+
+  app.use((req, res, next) => {
+    if (SAFE_ON_FOREIGN_DB.has(req.path)) return next();
+    // 🔴 매 요청마다 다시 묻는다. 캐시하면 `POST /api/reindex` 가 각인한 <뒤에도>
+    //    옛 판정이 남아, 방금 자기 것이 된 DB 를 계속 거부한다.
+    if (!dbBelongsToAnotherVault()) return next();
+    res.status(409).json({
+      error: '이 DB 는 다른 볼트의 것이다 — 이 경로를 거부한다.',
+      hint: 'STELLAVAULT_DB_PATH 를 이 볼트 전용 경로로 지정하고 다시 띄워라.',
+    });
+  });
 
   // Token endpoint — only served to same-origin browser requests (origin in the
   // CORS allow-list). Local CLI/curl invocations have no Origin header and are
@@ -304,12 +382,7 @@ export function createApiServer(options: ApiServerOptions) {
       graphEpoch++;
       graphCaches.clear();
 
-      res.json({
-        success: true,
-        indexed: result.indexed,
-        skipped: result.skipped,
-        chunks: result.totalChunks,
-      });
+      res.json(reindexResponse(result));
     } catch (err: unknown) {
       console.error('[reindex]', err);
       res.status(500).json({ error: 'Reindex failed' });
@@ -459,7 +532,11 @@ export function createApiServer(options: ApiServerOptions) {
       writeFileSync(fullPath, updated, 'utf-8');
 
       // DB 업데이트
-      await store.upsertDocument({
+      // 🔴 upsertDocument 가 아니다. 그것은 INSERT OR REPLACE 라 FK cascade 로
+      //    <이 문서의 청크를 전부 날리는데>, 이 경로에는 임베더가 없어 다시 굽지 못한다.
+      //    결과는 "행은 있는데 검색이 안 되는" 문서다 (코덱스 7차 P1, 2026-08-21).
+      //    ★이 서버에는 watcher 도 없어서(`stellavault graph`) 저절로 복구되지도 않는다.
+      await store.upsertDocumentPreservingChunks({
         ...doc,
         title: title ?? doc.title,
         content: content ?? doc.content,
@@ -711,5 +788,35 @@ export function createApiServer(options: ApiServerOptions) {
       });
     },
     app,
+  };
+}
+
+/**
+ * POST /api/reindex 의 응답 본문.
+ *
+ * 🔴 함수로 뽑은 이유는 <시험 가능하게> 하기 위해서다. 라우트 안에 있을 때는
+ *    실제 임베딩 모델을 내려받아야만 닿을 수 있어, 이 조립이 한 번도 측정되지
+ *    않았다 — 그래서 `failed` 가 빠진 채로 오래 살았다 (코덱스 12차 P2).
+ *
+ * 🔴 `success` 는 `!foreignDb` 가 아니다. <소유 미확인>도 아무것도 안 한 실행이고,
+ *    그것을 성공으로 주면 자동화가 다음 단계로 넘어간다.
+ */
+export function reindexResponse(result: IndexResult) {
+  const s = summarizeIndexRun(result);
+  return {
+    success: s.ok,
+    // 🔴 <왜 실패했는지>를 함께 보낸다 (코덱스 14차 P2). 안 보내면 UI 가 보여줄 것이
+    //    없어 "Reindex failed" 같은 일반 문구로 떨어지고, 사용자는 <남의 DB 라서
+    //    아무것도 안 했다>는 사실을 영영 못 본다. 그 침묵이 이 사고를 하루 늦췄다.
+    note: s.note,
+    indexed: result.indexed,
+    skipped: result.skipped,
+    deleted: result.deleted,
+    deferredDeletes: result.deferredDeletes,
+    // 🔴 실패 수를 담는다. 없으면 "1,000개 중 999개가 실패" 도 success 로 읽힌다.
+    failed: result.failed,
+    foreignDb: result.foreignDb === true,
+    ownershipUnverified: result.ownershipUnverified === true,
+    chunks: result.totalChunks,
   };
 }

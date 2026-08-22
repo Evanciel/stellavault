@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { useAppStore } from '../../stores/app-store.js';
+import { runFullIndex } from '../../lib/run-index.js';
 import {
   type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
   MAX_GLOBAL_NODES, DEEP_SPACE_BG,
@@ -377,7 +378,7 @@ export function GraphPanel() {
           onClick={async () => {
             setIndexing(true);
             try {
-              await ipc('core:index');
+              await runFullIndex();
               const data = await ipc('graph:build', 'semantic') as unknown as { nodes: CoreGraphNode[]; edges: GraphEdge[] };
               setAllNodes(mapCoreNodes(data.nodes ?? []));
               setAllEdges((data.edges ?? []) as GraphEdge[]);

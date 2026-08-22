@@ -26,9 +26,58 @@ export interface DocumentMeta {
 
 export interface VectorStore {
   initialize(): Promise<void>;
+  /**
+   * 1회성 유지보수(링크 백필 · 고아 임베딩 정리). <소유가 확인된 뒤에만> 부른다.
+   *
+   * 🔴 initialize() 안에 있었는데, 그러면 스토어를 여는 것만으로 남의 DB 에 쓴다
+   *    (코덱스 12차 P1). "한 글자도 안 쓴다" 를 지키려면 여는 것과 고치는 것이
+   *    분리돼 있어야 한다.
+   */
+  runMaintenanceOnce(): void;
   upsertDocument(doc: Document): Promise<void>;
   upsertChunks(chunks: Chunk[]): Promise<void>;
+  /**
+   * 문서와 그 청크를 <한 트랜잭션으로> 교체한다. **색인 경로는 반드시 이것을 쓴다.**
+   *
+   * 🔴 upsertDocument 와 upsertChunks 를 <따로> 부르면 안 된다. 앞의 것이 쓰는
+   *    `INSERT OR REPLACE INTO documents` 는 행을 지웠다 다시 넣으므로 FK 의
+   *    ON DELETE CASCADE 가 그 문서의 <기존 청크를 전부 날린다>. 그 뒤 청크 쓰기가
+   *    실패하면 문서 행은 있는데 청크가 0 개 — 행은 남았는데 <검색이 안 되는> 유실이다.
+   *    실측 2026-08-21: 청크 1개짜리 문서를 upsertDocument 로만 갱신 → 검색 1건 → 0건.
+   */
+  replaceDocument(doc: Document, chunks: Chunk[]): Promise<void>;
+  /**
+   * 문서 내용만 갱신하고 <청크는 보존>한다. 임베더가 없는 경로용.
+   *
+   * 🔴 upsertDocument 를 단독으로 부르지 마라 — cascade 로 청크가 사라져
+   *    그 문서가 <검색에서 없어진다>. 다시 구울 수 없다면 이것을 쓴다.
+   *    content_hash 를 비워 다음 색인이 반드시 다시 굽게 한다.
+   */
+  upsertDocumentPreservingChunks(doc: Document): Promise<void>;
+  /**
+   * 1회성 마커·소유권 표식 저장소(`stellavault_meta`). 동기 API 다 — 부트스트랩에서
+   * <색인을 시작하기 전에> 물어야 하기 때문이다.
+   */
+  getMeta(key: string): string | undefined;
+  setMeta(key: string, value: string): void;
+  /**
+   * 원자적 소유권 주장. 값이 <없을 때만> 쓰고, 어느 쪽이 이겼든 <최종 소유자>를 돌려준다.
+   *
+   * 🔴 `getMeta` → `setMeta` 두 걸음으로 나누면 동시에 도는 두 색인이 <둘 다> 주장에
+   *    성공한다 — 둘 다 "내 DB 다" 라고 믿고 서로의 문서를 지운다 (코덱스 10차 P1).
+   *    이 볼트에는 실제로 색인 프로세스가 여럿 붙는다(잠금은 아직 없다).
+   */
+  claimMeta(key: string, value: string): string;
   deleteByDocumentId(documentId: string): Promise<void>;
+  /**
+   * 여러 문서 행을 <한 트랜잭션으로> 지운다.
+   *
+   * 🔴 한 파일이 정본·옛형식 <두 행>일 수 있다. 하나씩 지우다 두 번째에서 예외가 나면
+   *    상태가 <부분 삭제>가 되고, 그 뒤 무엇을 보고하든 거짓이 된다 — deleted 를 세면
+   *    "지웠다" 인데 한 행이 남아 계속 검색되고, 안 세면 "안 지웠다" 인데 한 행이 사라진
+   *    상태다. 코덱스가 10차에 <양쪽 다> 지적했다. 부분 상태를 안 만드는 것이 답이다.
+   */
+  deleteByDocumentIds(documentIds: string[]): Promise<void>;
   searchSemantic(embedding: number[], limit: number): Promise<ScoredChunk[]>;
   searchKeyword(query: string, limit: number): Promise<ScoredChunk[]>;
   /** 엔티티(위키링크/태그/명사구) 겹침 기반 검색 — Upgrade B2.

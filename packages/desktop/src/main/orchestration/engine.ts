@@ -27,7 +27,15 @@ export interface EngineDeps {
   extractFile: (path: string) => Promise<{ text: string; title?: string; sourceFormat: string }>;
   classify: (ctx: NoteCtx, cats: Category[], cfg: ClassifyConfig) => ClassifyResult;
   embed: (text: string) => Promise<number[]>;
-  indexFile: (absPath: string) => Promise<void>;     // noteSelfWrite + indexFiles + bump caches
+  /**
+   * noteSelfWrite + indexFiles + bump caches.
+   *
+   * 🔴 반환은 <색인이 실제로 일어났는가>다 (코덱스 16차 P1). 한때 `Promise<void>` 라
+   *    호출부가 판정을 <받을 수조차 없었고>, 그래서 소유권 거부로 아무것도 안 쓴
+   *    뒤에도 아래 `recordCapture` 가 `access_log`·`decay_state` 에 <옆문으로 썼다>.
+   *    ★"안 쓴다" 는 약속은 <가장 약한 문>만큼만 강하다.
+   */
+  indexFile: (absPath: string) => Promise<boolean>;
   recordCapture: (absPath: string) => void;          // decayEngine.recordAccess(docId, 'capture')
   emit: (channel: string, payload: unknown) => void; // → renderer (BrowserWindow.send)
   isReady: () => boolean;
@@ -239,8 +247,12 @@ export class OrchestrationEngine {
     }
 
     // 7. Index immediately (read-after-write) + seed decay + record dedup hash.
-    await d.indexFile(absPath);
-    d.recordCapture(absPath);
+    // 🔴 색인이 <거부되었으면> decay 도 건드리지 않는다 (코덱스 16차 P1).
+    //    `recordCapture` 는 이름과 달리 DB 에 <쓴다>(access_log INSERT · decay_state UPSERT).
+    //    소유가 확인되지 않은 DB 에서 색인이 아무것도 안 했는데 이것만 쓰면,
+    //    "증거가 없으면 한 글자도 안 쓴다" 가 그 자리에서 거짓이 된다.
+    const indexed = await d.indexFile(absPath);
+    if (indexed) d.recordCapture(absPath);
     // (dedup hash already recorded right after ingest above — Codex P2)
 
     return {

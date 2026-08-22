@@ -4,6 +4,7 @@
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, compileWiki, lintKnowledge, getInboxItems, archiveFile } from '@stellavault/core';
 import { resolve, join } from 'node:path';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function autopilotCommand(options: { once?: boolean }) {
   const config = loadConfig();
@@ -50,6 +51,9 @@ export async function autopilotCommand(options: { once?: boolean }) {
   // Step 3: Lint
   console.log(chalk.cyan('\nStep 3/4: Running health check...'));
   const hub = createKnowledgeHub(config);
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'autopilot');
   await hub.store.initialize();
 
   const lintResult = await lintKnowledge(hub.store);

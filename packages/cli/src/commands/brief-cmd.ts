@@ -2,11 +2,15 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine, detectKnowledgeGaps } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function briefCommand() {
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
 
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'brief');
   await hub.store.initialize();
   await hub.embedder.initialize();
 

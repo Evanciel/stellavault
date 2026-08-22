@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine, detectKnowledgeGaps, generateLearningPath } from '@stellavault/core';
 import type { KnowledgeGap } from '@stellavault/core';
 import type { CliCommand } from '../types.js';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function learnCommand(_opts: Record<string, never>, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
@@ -11,6 +12,9 @@ export async function learnCommand(_opts: Record<string, never>, cmd: CliCommand
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
 
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'learn');
   await hub.store.initialize();
   await hub.embedder.initialize();
 

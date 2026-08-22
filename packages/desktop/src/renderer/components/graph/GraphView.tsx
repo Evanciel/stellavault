@@ -28,6 +28,7 @@ import {
   makePointsMaterial, StarFieldLite, GraphErrorBoundary,
 } from './graph-core.js';
 import { ForceSim, DEFAULT_SIM_SETTINGS, type SimSettings } from './force-sim.js';
+import { runFullIndex } from '../../lib/run-index.js';
 
 // T2-9: zoom-adaptive labels. We keep a POOL of DOM label elements for the
 // top-N largest nodes; how many are actually shown scales with zoom (camera
@@ -1074,7 +1075,7 @@ export function GraphView() {
             onClick={async () => {
               setIndexing(true);
               try {
-                await ipc('core:index');
+                await runFullIndex();
                 fullGraphRef.current = null; // invalidate cached full graph so explore rebuilds
                 await loadGalaxy();
               } catch (err) {

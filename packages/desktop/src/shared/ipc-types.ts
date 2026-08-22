@@ -466,7 +466,17 @@ export interface IpcChannelMap {
   // Core
   'core:search':        { args: [query: string, limit?: number]; result: SearchResult[] };
   'core:get-stats':     { args: []; result: VaultStats };
-  'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
+  // 🔴 `foreignDb`·`ownershipUnverified` 를 함께 돌려준다 (코덱스 14차 P2).
+  //    둘만 빠져 있으면 UI 는 "0개 색인" 을 <빈 볼트>로 읽는다 — 그것이 이 사고에서
+  //    init 이 사용자 볼트에 샘플 노트를 쓸 뻔했던 바로 그 오독이다.
+  // 🔴 `ok` 는 <이 실행이 무언가를 이뤘는가>다 (코덱스 16차 P2). 한때 main 이
+  //    `summarizeIndexRun(...).ok` 를 계산해 놓고 <응답에서 버렸다> — 그래서
+  //    `allFailed`(전부 실패)가 렌더러에는 성공으로 도착했다. 계산한 것을 안 보내면
+  //    계산하지 않은 것과 같다.
+  'core:index':         { args: []; result: {
+    indexed: number; totalChunks: number; failed: number;
+    foreignDb: boolean; ownershipUnverified: boolean; note: string; ok: boolean;
+  } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
   // ③ v2 — read-only proactive review brief (titles/cluster-names only) for the chat empty-state.
   'chat:proactive-brief': { args: []; result: ProactiveBrief };
