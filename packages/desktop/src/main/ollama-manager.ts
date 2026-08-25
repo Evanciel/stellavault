@@ -391,14 +391,25 @@ export async function downloadAndInstallOllama(
 /** 모델 참조의 한 조각. 영숫자로 시작 — 그래서 `.` `..` 는 문법상 들어올 수 없다. */
 const MODEL_SEG = /^[a-z0-9][a-z0-9._-]*$/i;
 
-/** `[네임스페이스/]이름[:태그]` 인가. 경로 조각으로 쓰이므로 슬래시 2개·콜론 2개를 막는다. */
+/** Ollama 가 허깅페이스 GGUF 를 직접 받는 접두어 — 이때만 조각이 셋이다(host/user/repo). */
+const HF_HOSTS = new Set(['hf.co', 'huggingface.co']);
+
+/**
+ * `[네임스페이스/]이름[:태그]` 인가.
+ *
+ * 조각은 최대 둘이다 — 단 `hf.co/<유저>/<레포>` 형태만 셋을 허용한다. Ollama 가 그 형태로
+ * 허깅페이스 GGUF 를 바로 받기 때문이다(실측: `ollama pull hf.co/unsloth/SmolLM2-135M-
+ * Instruct-GGUF` 성공). 무한정 열지 않고 <아는 호스트일 때만> 한 칸 더 주는 이유는, 조각 수를
+ * 그냥 늘리면 임의 깊이의 경로가 URL 로 들어가는 문을 여는 것이기 때문이다.
+ */
 export function isValidModelRef(ref: string): boolean {
-  if (!ref || ref.length > 128) return false;
+  if (!ref || ref.length > 160) return false;
   const parts = ref.split(':');
   if (parts.length > 2) return false;
   if (parts[1] !== undefined && !MODEL_SEG.test(parts[1])) return false;
   const segs = parts[0].split('/');
-  if (segs.length > 2) return false;
+  const max = HF_HOSTS.has(segs[0]?.toLowerCase()) ? 3 : 2;
+  if (segs.length > max) return false;
   return segs.every((s) => MODEL_SEG.test(s));
 }
 
@@ -431,6 +442,29 @@ function hostIsPinned(res: { url?: string }, host: string): boolean {
 export async function modelExistsInRegistry(ref: string): Promise<boolean | null> {
   if (!isValidModelRef(ref)) return false;
   const [pathPart, tag = 'latest'] = ref.split(':');
+
+  // 🔴 hf.co 이름을 Ollama 레지스트리에 물으면 <있는 모델도 없다>고 답한다 — 거기 없는 게
+  //    당연하다. 그 false 가 UI 의 사전 확인을 타고 설치를 막았다(라이브에서 관측: 확인은
+  //    false 인데 실제 pull 은 성공). 출처가 다르면 묻는 곳도 달라야 한다.
+  const hfSegs = pathPart.split('/');
+  if (HF_HOSTS.has(hfSegs[0]?.toLowerCase())) {
+    if (hfSegs.length !== 3) return false;
+    try {
+      const res = await net.fetch(`https://${HF_HOST}/api/models/${hfSegs[1]}/${hfSegs[2]}`, {
+        headers: { Accept: 'application/json' },
+        redirect: 'error',
+      });
+      if (!hostIsPinned(res, HF_HOST)) return null;
+      if (res.status === 200) return true;
+      // 허깅페이스는 <없음>과 <비공개>를 구분해 흘리지 않으려고 둘 다 401 을 준다.
+      // 어느 쪽이든 받을 수 없다는 점은 같다.
+      if (res.status === 401 || res.status === 404) return false;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // 네임스페이스가 없으면 공식 라이브러리다 — 도커 레지스트리 규약과 같은 모양.
   const repo = pathPart.includes('/') ? pathPart : `library/${pathPart}`;
   try {
@@ -562,6 +596,59 @@ export async function browseRegistry(sort: BrowseSort = 'newest'): Promise<Brows
     if (models.length === 0) return { models: [], error: 'no-matches' };
 
     browseCache.set(sort, { at: Date.now(), models });
+    return { models };
+  } catch (err) {
+    return { models: [], error: (err as Error)?.message || 'unknown' };
+  }
+}
+
+// ─── 허깅페이스 GGUF 검색 ───────────────────────────────────────────────────
+//
+// Ollama 라이브러리는 큐레이션된 수백 개지만, 실제로 도는 로컬 모델의 대부분은 허깅페이스에
+// GGUF 로 올라온다. 그리고 Ollama 는 그것을 `hf.co/<유저>/<레포>` 로 <직접> 받는다
+// (실측 2026-08-25: `ollama pull hf.co/unsloth/SmolLM2-135M-Instruct-GGUF` 성공).
+//
+// 여기는 긁지 않는다 — 허깅페이스는 공개 JSON API 가 있다. 그래서 Ollama 쪽보다 깨질 여지가
+// 훨씬 적고, 검색과 정렬이 서버에서 된다(10만 개가 넘어 목록만으로는 아무 의미가 없다).
+//
+// ⚠️ 기본 정렬이 <다운로드순>인 이유: lastModified 로 뽑으면 방금 올라온 다운로드 0 짜리
+//    개인 실험 레포가 위를 채운다(실측). "최신" 이 곧 "쓸 만함" 이 아닌 데이터다.
+
+const HF_HOST = 'huggingface.co';
+const HF_MAX = 50;
+
+/** 검색어는 URL 질의로 들어간다 — 길이를 묶고 인코딩한다. 빈 검색어면 인기순 상위를 준다. */
+export async function searchHuggingFace(query: string): Promise<BrowseResult> {
+  const q = (query || '').trim().slice(0, 80);
+  const params = new URLSearchParams({
+    filter: 'gguf',
+    sort: 'downloads',
+    direction: '-1',
+    limit: String(HF_MAX),
+  });
+  if (q) params.set('search', q);
+  try {
+    const res = await net.fetch(`https://${HF_HOST}/api/models?${params}`, {
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+    });
+    if (!hostIsPinned(res, HF_HOST)) return { models: [], error: 'redirected' };
+    if (!res.ok) return { models: [], error: `http-${res.status}` };
+
+    const json = (await res.json()) as unknown;
+    if (!Array.isArray(json)) return { models: [], error: 'bad-shape' };
+
+    const models: string[] = [];
+    for (const row of json) {
+      const id = (row as { id?: unknown })?.id;
+      if (typeof id !== 'string') continue;
+      const ref = `hf.co/${id}`;
+      // 응답은 남이 쓴 데이터다 — pull 에 넘기기 전에 같은 문법으로 자른다.
+      if (isValidModelRef(ref)) models.push(ref);
+    }
+    // 결과 0개는 <그런 모델이 없다>는 정상 응답일 수 있다(검색어가 있을 때). 검색어가 없는데
+    // 0개면 API 셰입이 바뀐 것이다 — 그때만 실패로 부른다.
+    if (models.length === 0 && !q) return { models: [], error: 'no-matches' };
     return { models };
   } catch (err) {
     return { models: [], error: (err as Error)?.message || 'unknown' };

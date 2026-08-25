@@ -50,6 +50,7 @@ import {
   pullModel,
   modelExistsInRegistry,
   browseRegistry,
+  searchHuggingFace,
 } from './ollama-manager.js';
 import {
   saveSession as chatSaveSession,
@@ -2383,8 +2384,12 @@ function registerIpcHandlers(config: AppConfig) {
   // 몇 GB 씩 받는 일이라 동시 실행은 디스크와 대역을 갈라 먹기만 한다.
   let modelPull: { controller: AbortController; model: string } | null = null;
 
-  ipcMain.handle('ollama:browse-models', (_e, arg?: { sort?: string }) =>
-    browseRegistry(arg?.sort === 'popular' ? 'popular' : 'newest'),
+  // 두 출처: Ollama 큐레이션 라이브러리(최신순) / 허깅페이스 GGUF(검색·다운로드순).
+  // 후자는 Ollama 가 hf.co/<유저>/<레포> 로 직접 받는다.
+  ipcMain.handle('ollama:browse-models', (_e, arg?: { source?: string; query?: string; sort?: string }) =>
+    arg?.source === 'huggingface'
+      ? searchHuggingFace(String(arg?.query ?? ''))
+      : browseRegistry(arg?.sort === 'popular' ? 'popular' : 'newest'),
   );
 
   ipcMain.handle('ollama:model-exists', async (_e, arg: { model?: string }) => ({

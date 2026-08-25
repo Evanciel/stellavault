@@ -42,10 +42,21 @@ describe('모델 참조 문법', () => {
     expect(isValidModelRef('a:b:c')).toBe(false);
   });
 
+  // Ollama 는 허깅페이스 GGUF 를 hf.co/<유저>/<레포> 로 직접 받는다(실측 확인). 그래서
+  // 그 형태만 조각 셋을 허용한다 — 조각 수를 그냥 늘리면 임의 깊이 경로가 URL 로 들어간다.
+  it('hf.co 일 때만 조각 셋을 허용한다', () => {
+    expect(isValidModelRef('hf.co/unsloth/SmolLM2-135M-Instruct-GGUF')).toBe(true);
+    expect(isValidModelRef('huggingface.co/bartowski/HuggingFaceTB_SmolLM3-3B-GGUF')).toBe(true);
+    expect(isValidModelRef('hf.co/unsloth/SmolLM2-135M-Instruct-GGUF:Q4_K_M')).toBe(true);
+    // 다른 호스트 이름표를 붙였다고 한 칸 더 주지 않는다
+    expect(isValidModelRef('evil.test/a/b')).toBe(false);
+    expect(isValidModelRef('hf.co/a/b/c')).toBe(false);
+  });
+
   it('빈 문자열과 지나치게 긴 이름을 거절한다', () => {
     expect(isValidModelRef('')).toBe(false);
-    expect(isValidModelRef('a'.repeat(129))).toBe(false);
-    expect(isValidModelRef('a'.repeat(128))).toBe(true);
+    expect(isValidModelRef('a'.repeat(161))).toBe(false);
+    expect(isValidModelRef('a'.repeat(160))).toBe(true);
   });
 
   // 조각이 영숫자로 시작해야 한다 — 선행 하이픈은 CLI 플래그처럼 보이는 이름을 막는다.
@@ -102,6 +113,21 @@ describe('모델 설치 배선', () => {
   // 목록이 0개면 <새 모델이 없다>가 아니라 마크업이 바뀐 것이다 — 그걸 구분해서 보고한다.
   it('빈 결과를 성공으로 돌려주지 않는다', () => {
     expect(read('main', 'ollama-manager.ts')).toContain("error: 'no-matches'");
+  });
+
+  // ★ hf.co 이름을 Ollama 레지스트리에 물으면 있는 모델도 <없다>가 나오고, 그 false 가
+  //   UI 사전 확인을 타고 설치를 막는다. 라이브에서 "확인 false / 실제 설치 성공" 으로 관측했다.
+  it("hf.co 이름은 허깅페이스에 묻는다", () => {
+    const mgr = read('main', 'ollama-manager.ts');
+    expect(mgr).toContain('if (HF_HOSTS.has(hfSegs[0]?.toLowerCase()))');
+    expect(mgr).toContain('/api/models/');
+  });
+
+  // 허깅페이스 응답도 남이 쓴 데이터다 — id 를 그대로 pull 에 넘기지 않는다.
+  it('허깅페이스 결과도 모델 문법을 통과해야 한다', () => {
+    const mgr = read('main', 'ollama-manager.ts');
+    expect(mgr).toContain('if (isValidModelRef(ref)) models.push(ref)');
+    expect(mgr).toContain("filter: 'gguf'");
   });
 
   it('진행률을 브로드캐스트하지 않는다 (e.sender 로만)', () => {

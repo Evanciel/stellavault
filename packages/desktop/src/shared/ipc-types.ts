@@ -562,7 +562,7 @@ export interface IpcChannelMap {
   // <이름 확인 + 설치> 로 간다. exists 가 3값인 것에 주의 — null 은 "확인 못 했다" 다.
   // 목록 API 가 없어 공개 라이브러리 페이지를 읽는다 — 그래서 <깨질 수 있다>. models 가 비고
   // error 가 있으면 사이트가 바뀐 것이다: UI 는 빈 목록이 아니라 그 사실을 말해야 한다.
-  'ollama:browse-models': { args: [opts?: { sort?: 'newest' | 'popular' }];
+  'ollama:browse-models': { args: [opts?: { source?: 'ollama' | 'huggingface'; query?: string; sort?: 'newest' | 'popular' }];
                             result: { models: string[]; error?: string } };
   'ollama:model-exists': { args: [opts: { model: string }]; result: { exists: boolean | null } };
   'ollama:pull-model':   { args: [opts: { model: string; baseURL?: string }];

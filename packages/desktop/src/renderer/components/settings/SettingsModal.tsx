@@ -483,6 +483,9 @@ function AITab() {
   const [pullMsg, setPullMsg] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<string[]>([]);
   const [browsing, setBrowsing] = useState(false);
+  // 출처가 둘이라 버튼 뜻이 갈린다: Ollama 는 <최신순 목록>, HF 는 <검색>이다.
+  // HF 는 GGUF 레포만 10만 개가 넘어서 목록으로는 아무것도 못 고른다.
+  const [source, setSource] = useState<'ollama' | 'huggingface'>('ollama');
 
   const refreshOllama = useCallback(async () => {
     if (!isLocalOllama) { setOllama(null); setCompat(null); return; }
@@ -559,19 +562,27 @@ function AITab() {
   const handleBrowse = useCallback(async () => {
     setBrowsing(true); setPullMsg(null);
     try {
-      const r = await ipc('ollama:browse-models', { sort: 'newest' });
+      // HF 는 입력창의 글자를 <검색어>로 쓴다 — 그래서 이름을 덮어쓰지 않는다.
+      const r = await ipc('ollama:browse-models',
+        source === 'huggingface'
+          ? { source, query: pullName.trim() }
+          : { source, sort: 'newest' });
       if (r.models.length > 0) {
         setCatalog(r.models);
-        if (!pullName.trim()) setPullName(r.models[0]);   // 맨 위가 가장 최근에 올라온 것
-      } else {
+        // Ollama 목록은 맨 위가 가장 최근이라 비어 있으면 채워준다. HF 는 사용자가 친 검색어를
+        // 지우면 안 되므로 건드리지 않는다.
+        if (source === 'ollama' && !pullName.trim()) setPullName(r.models[0]);
+      } else if (r.error) {
         setPullMsg(t('settings.ai.model.pull.browseFailed'));
+      } else {
+        setPullMsg(t('settings.ai.model.pull.browseEmpty'));
       }
     } catch {
       setPullMsg(t('settings.ai.model.pull.browseFailed'));
     } finally {
       setBrowsing(false);
     }
-  }, [pullName, t]);
+  }, [pullName, source, t]);
 
   // Debounced re-check as the provider / baseURL changes.
   useEffect(() => {
@@ -862,20 +873,33 @@ function AITab() {
             {isLocalOllama && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 6 }}>
-                  {t('settings.ai.model.pull.hint')}
+                  {t(source === 'huggingface' ? 'settings.ai.model.pull.hintHf' : 'settings.ai.model.pull.hint')}
                 </div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <select
+                    value={source}
+                    aria-label={t('settings.ai.model.pull.source')}
+                    onChange={(e) => {
+                      setSource(e.target.value as 'ollama' | 'huggingface');
+                      setCatalog([]);          // 출처가 바뀌면 앞 목록은 더 이상 그 출처의 것이 아니다
+                      setPullMsg(null);
+                    }}
+                    style={{ ...textInputStyle, width: 128, cursor: 'pointer' }}
+                  >
+                    <option value="ollama">Ollama</option>
+                    <option value="huggingface">Hugging Face</option>
+                  </select>
                   <input
                     type="text"
                     value={pullName}
                     aria-label={t('settings.ai.model.pull.label')}
-                    placeholder="gemma4:12b"
+                    placeholder={source === 'huggingface' ? 'qwen3' : 'gemma4:12b'}
                     spellCheck={false}
                     disabled={pulling}
                     onChange={(e) => setPullName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !pulling) void handlePullModel(); }}
                     list="sv-ollama-catalog"
-                    style={{ ...textInputStyle, width: 240 }}
+                    style={{ ...textInputStyle, width: 190 }}
                   />
                   {/* 가져온 목록은 datalist 로 붙인다 — 입력창 하나가 타이핑 자동완성과
                       둘러보기를 겸한다. 목록에 없는 이름을 넣는 길도 그대로 열려 있다. */}
@@ -894,7 +918,7 @@ function AITab() {
                       opacity: (browsing || pulling) ? 0.6 : 1,
                     }}
                   >
-                    {browsing ? '…' : t('settings.ai.model.pull.browse')}
+                    {browsing ? '…' : t(source === 'huggingface' ? 'settings.ai.model.pull.search' : 'settings.ai.model.pull.browse')}
                   </button>
                   <button
                     onClick={() => void (pulling ? ipc('ollama:pull-abort') : handlePullModel())}
@@ -927,7 +951,7 @@ function AITab() {
                 )}
                 {catalog.length > 0 && !pulling && (
                   <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginTop: 4 }}>
-                    {t('settings.ai.model.pull.browsed').replace('{n}', String(catalog.length))}
+                    {t(source === 'huggingface' ? 'settings.ai.model.pull.searched' : 'settings.ai.model.pull.browsed').replace('{n}', String(catalog.length))}
                   </div>
                 )}
                 {pullMsg && <div style={{ fontSize: 10, color: 'var(--ink-dim)', marginTop: 4 }}>{pullMsg}</div>}
