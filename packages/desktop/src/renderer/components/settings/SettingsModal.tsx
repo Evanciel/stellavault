@@ -1097,6 +1097,34 @@ function AITab() {
               {t('settings.ai.confirmWrites.label')}
             </label>
           </Field>
+
+          {/* Thinking display (hermes absorb): opt-in — reasoning models stream their thinking
+              as a collapsible block. OFF by default (gemma4 answers fastest with it suppressed). */}
+          <Field label={t('settings.ai.showThinking.label')} hint={t('settings.ai.showThinking.hint')}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!settings.showThinking}
+                onChange={(e) => void update({ showThinking: e.target.checked })}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              {t('settings.ai.showThinking.label')}
+            </label>
+          </Field>
+
+          {/* Quick capture (hermes absorb): global hotkey → tiny always-on-top input → vault.
+              Registration happens at boot, so the toggle takes effect on restart. */}
+          <Field label={t('settings.ai.quickCapture.label')} hint={t('settings.ai.quickCapture.hint')}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={settings.quickCapture !== false}
+                onChange={(e) => void update({ quickCapture: e.target.checked })}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              {t('settings.ai.quickCapture.label')}
+            </label>
+          </Field>
         </>
       )}
     </div>

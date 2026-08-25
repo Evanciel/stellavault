@@ -2,6 +2,7 @@ import { Component } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
+import { QuickCapture } from './components/QuickCapture.js';
 import './lib/runtime-sync.js'; // Stage C: FSRS access tracking + file:changed sync (side-effect)
 import './lib/session-persist.js'; // Stage D: session restore/persist + W1-10/11/17 commands (side-effect)
 
@@ -81,8 +82,12 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
   }
 }
 
+// Quick capture (hermes absorb): the tiny always-on-top hotkey window loads THIS bundle with
+// '#capture' — render only the minimal capture input there (no app shell, no side-effect stores).
+const isQuickCapture = window.location.hash === '#capture';
+
 createRoot(document.getElementById('root')!).render(
   <RootErrorBoundary>
-    <App />
+    {isQuickCapture ? <QuickCapture /> : <App />}
   </RootErrorBoundary>,
 );

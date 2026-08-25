@@ -90,6 +90,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'mcp:status',
   // Second-brain auto-capture (Design §6.4)
   'vault:capture',
+  'capture:hide',   // quick-capture window (hermes absorb): Esc / after-filing hide
   'capture:list',
   'capture:set-paused',
   'capture:counts',
@@ -161,6 +162,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:chunk',
   'chat:done',
   'chat:error',
+  'chat:thinking',        // thinking display (hermes absorb): ephemeral reasoning deltas
   // Agent (SP-D): tool-activity transparency + write-approval handshake
   'chat:tool-call',
   'chat:tool-result',

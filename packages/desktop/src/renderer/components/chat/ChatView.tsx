@@ -34,7 +34,7 @@ import { useT } from '../../lib/i18n.js';
 import { useStickToBottom } from '../../lib/use-stick-to-bottom.js';
 import { useSettingsStore } from '../../stores/settings-store.js';
 import { useAppStore } from '../../stores/app-store.js';
-import { isLocalProviderUrl } from '../../../shared/ai-providers.js';
+import { isLocalProviderUrl, modelSupportsToolsStatic, DEFAULT_MODELS } from '../../../shared/ai-providers.js';
 
 import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { applyTemplate, type SlashCommand } from './commands.js';
@@ -97,6 +97,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [agentOn, setAgentOn] = useState(false);
   const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean; filePath?: string }>>([]);
   const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
+  const [denyReason, setDenyReason] = useState(''); // optional reason attached to a Deny (hermes absorb)
   // Auto-distill (SP-I, Karpathy ingest): after each answer, fold the conversation into the
   // wiki. autoDistillRef/messagesRef are read inside the mount-once chat:done handler.
   const [autoDistill, setAutoDistill] = useState(false);
@@ -140,7 +141,12 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   // the invoke resolves, so a too-late/no-op steer stays in the box for the user to resend.
   const [steerInput, setSteerInput] = useState('');
   // Context-fill vitals (P1-4): one pre-stream frame per send (text-only input fill vs the hard cap).
-  const [vitals, setVitals] = useState<{ fillPct: number; charsIn: number; budgetChars: number } | null>(null);
+  // trimmedCount (guaranteed-tail trim): how many oldest turns were folded out of this model call.
+  const [vitals, setVitals] = useState<{ fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number } | null>(null);
+  // Thinking display (hermes absorb): msgId → accumulated reasoning text. Renderer-only,
+  // ephemeral (never persisted with the session; lost on remount by design).
+  const [thinkingMap, setThinkingMap] = useState<Record<string, string>>({});
+  const showThinking = useSettingsStore((s) => s.settings.showThinking);
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
   // activeCount drives Stop/Composer affordances; mirrors streamMapRef.size.
@@ -159,9 +165,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     ai?.provider === 'openai-compatible' && isLocalProviderUrl(ai?.baseURL ?? '');
   // P0-1 (hermes-port-audit §4): opt-in review-every-write gate, sent on chat:send. Default OFF.
   const confirmWrites = useSettingsStore((s) => s.settings.confirmWrites);
-  // P0-2: the agent loop only fires on a LOCAL tools-capable model (chat-engine gate) — mirror that
-  // here so the 🤖 pill disables + annotates on cloud providers instead of silently no-op'ing.
-  const agentCapable = canStartOllama;
+  // Agent loop fires on a LOCAL tools-model OR a FRONTIER provider (anthropic/openai) with a key +
+  // tools-capable model (§6.6 selectTransport) — mirror that gate EXACTLY (same static table + same
+  // default-model resolution as main) so the 🤖 pill enables for a configured frontier and disables
+  // (with annotation) on a keyless/unsupported one. The renderer sees only provider/hasKey/model.
+  const agentCapable =
+    canStartOllama ||
+    ((ai?.provider === 'anthropic' || ai?.provider === 'openai') &&
+      !!ai?.hasKey &&
+      modelSupportsToolsStatic(ai.provider, ai?.model || DEFAULT_MODELS[ai.provider]));
   // SP2: show the 📎 attach affordance only for a local vision-capable setup (gemma4:e4b).
   // Same local-provider gate as Start-Ollama — local models we ship are vision-capable.
   const visionOn = canStartOllama;
@@ -284,6 +296,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       );
     });
 
+    // Thinking display (hermes absorb): reasoning deltas accumulate in a renderer-only map
+    // (msgId → text) — EPHEMERAL, never merged into the message (sessions persist without it).
+    const offThinking = onIpc('chat:thinking', (p: unknown) => {
+      const e = p as { streamId: string; delta: string };
+      const msgId = streamMapRef.current.get(e.streamId);
+      if (!msgId) return;
+      setThinkingMap((prev) => ({ ...prev, [msgId]: (prev[msgId] ?? '') + e.delta }));
+    });
+
     const offDone = onIpc('chat:done', (p: unknown) => {
       const e = p as { streamId: string; citations?: ChatCitation[] };
       const msgId = streamMapRef.current.get(e.streamId);
@@ -388,12 +409,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     // Context-fill vitals (P1-4): one pre-stream frame per send; stream-filtered so two concurrent
     // streams never cross-contaminate the bar. Session-switch reset is automatic (key remount).
     const offVitals = onIpc('chat:vitals', (p: unknown) => {
-      const e = p as { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
+      const e = p as { streamId: string; fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number };
       if (!ownsStream(e.streamId)) return;
-      setVitals({ fillPct: e.fillPct, charsIn: e.charsIn, budgetChars: e.budgetChars });
+      setVitals({ fillPct: e.fillPct, charsIn: e.charsIn, budgetChars: e.budgetChars, trimmedCount: e.trimmedCount });
     });
 
     return () => {
+      offThinking();
       offChunk();
       offDone();
       offError();
@@ -444,11 +466,14 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Approve/deny a write tool the agent requested.
-  const respondConfirm = useCallback((approve: boolean) => {
+  const respondConfirm = useCallback((approve: boolean, reason?: string) => {
     setConfirm((cur) => {
-      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve }).catch(() => {});
+      // Deny-with-reason (hermes absorb): a short reason rides the denial so the agent
+      // course-corrects instead of guessing. Approve ignores the field.
+      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve, reason: approve ? undefined : (reason || undefined) }).catch(() => {});
       return null;
     });
+    setDenyReason('');
   }, []);
 
   // ─── Abort ALL in-flight streams on unmount ───
@@ -485,13 +510,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     syncActiveCount();
     // P0-2: never send agentOn to a non-local model — the engine would drop it to single-shot
     // anyway; gating here keeps the wire honest. P0-1: forward the review-every-write opt-in.
-    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn: agentOn && agentCapable, confirmWrites: !!confirmWrites }).catch(() => {
+    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn: agentOn && agentCapable, confirmWrites: !!confirmWrites, showThinking: !!showThinking }).catch(() => {
       setCapMessage(true);
       streamMapRef.current.delete(newStreamId);
       syncActiveCount();
       setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
     });
-  }, [atCap, ragOn, agentOn, agentCapable, confirmWrites, sessionId, syncActiveCount]);
+  }, [atCap, ragOn, agentOn, agentCapable, confirmWrites, showThinking, sessionId, syncActiveCount]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -732,6 +757,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
                 key={m.id}
                 message={m}
                 variant={variant}
+                thinking={thinkingMap[m.id]}
                 state={bubbleStateFor(m, i === messages.length - 1)}
                 errorLabel={i === messages.length - 1 && error ? errorLabel : undefined}
                 onRetry={i === messages.length - 1 && error ? retry : undefined}
@@ -848,13 +874,21 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
             <div style={{ fontSize: 11, color: 'var(--ink-dim)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 8 }}>
               {confirm.argsPreview}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={() => respondConfirm(true)} style={{ padding: '5px 16px', fontSize: 12, fontWeight: 600, background: 'var(--accent)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>
                 {t('panel.ai.agentApprove')}
               </button>
-              <button onClick={() => respondConfirm(false)} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <button onClick={() => respondConfirm(false, denyReason.trim())} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
                 {t('panel.ai.agentDeny')}
               </button>
+              <input
+                value={denyReason}
+                onChange={(e) => setDenyReason(e.target.value.slice(0, 500))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && denyReason.trim()) respondConfirm(false, denyReason.trim()); }}
+                placeholder={t('panel.ai.agentDenyReason')}
+                aria-label={t('panel.ai.agentDenyReason')}
+                style={{ flex: 1, minWidth: 0, padding: '5px 8px', fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink)' }}
+              />
             </div>
           </div>
         </div>
@@ -1003,6 +1037,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
             <div style={{ height: '100%', width: `${vitals.fillPct}%`, background: vitals.fillPct > 85 ? '#e5484d' : 'var(--accent-2)', transition: 'width 120ms' }} />
           </div>
           <div style={{ fontSize: 9, color: 'var(--ink-faint)', marginTop: 2, textAlign: 'right' }}>
+            {(vitals.trimmedCount ?? 0) > 0 ? `✂ ${t('panel.ai.vitalsTrimmed', { n: vitals.trimmedCount! })} · ` : ''}
             {`${vitals.fillPct}% · ${vitals.charsIn.toLocaleString()}/${vitals.budgetChars.toLocaleString()}`}
           </div>
         </div>

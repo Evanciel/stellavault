@@ -1,7 +1,7 @@
 // Stellavault Desktop — Main Process
 // Owns: native modules (SQLite, embedder), file system, IPC handlers, window management.
 
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage, globalShortcut } from 'electron';
 import { linkHops, buildNeighbourhood } from './note-neighbourhood.js';
 import { pathToFileURL } from 'node:url';
 import { join, relative, resolve, dirname, basename, extname, isAbsolute } from 'node:path';
@@ -386,7 +386,7 @@ function ensureSingleInstanceLock(): boolean {
 // renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
 // Cleaned up on resolve / abort / chat:send finally so a blocked await never leaks the
 // cap-of-2 slot. Default on any teardown = DENY.
-const pendingApprovals = new Map<string, { resolve: (v: boolean) => void; wcId: number }>();
+const pendingApprovals = new Map<string, { resolve: (v: boolean, reason?: string) => void; wcId: number }>();
 const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAT_MAX_MESSAGES = 100;
 const CHAT_MAX_MSG_CHARS = 24_000;
@@ -411,7 +411,7 @@ const MEDIA_MIME: Record<string, string> = {
 // rejection reason. Caps message count / per-message length / total length.
 function validateChatReq(
   req: any,
-): { ok: true; clean: ChatMessage[]; totalChars: number } | { ok: false; msg: string } {
+): { ok: true; clean: ChatMessage[]; totalChars: number; trimmedCount: number } | { ok: false; msg: string } {
   if (!req || typeof req.streamId !== 'string' || !CHAT_UUID_RE.test(req.streamId)) {
     return { ok: false, msg: 'bad streamId' };
   }
@@ -484,10 +484,23 @@ function validateChatReq(
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
     });
   }
+  // Guaranteed-tail trim (hermes absorb, "compression respects your conversation"): an over-cap
+  // conversation used to HARD-REJECT ('conversation too long') — a long session just died. Now the
+  // OLDEST turns are dropped until it fits, and the most recent turns always survive. The renderer
+  // keeps the full transcript (sessions are renderer-owned); only the model call is trimmed, and
+  // the vitals frame reports trimmedCount so the bar can say so honestly. If even the guaranteed
+  // tail alone is over cap, reject as before — a single over-cap message is genuinely too large.
+  const GUARANTEED_TAIL = 4; // last N turns always kept (≥ the final user turn + recent context)
+  let trimmedCount = 0;
+  while (total > CHAT_MAX_TOTAL_CHARS && clean.length > GUARANTEED_TAIL) {
+    const dropped = clean.shift()!;
+    total -= dropped.text.length;
+    trimmedCount++;
+  }
   if (total > CHAT_MAX_TOTAL_CHARS) return { ok: false, msg: 'conversation too long' };
   // totalChars (P1-4 vitals): the message+transcript char sum — the SAME universe CHAT_MAX_TOTAL_CHARS
   // bounds (system/RAG/coreMemory/image-base64 are injected later and are NOT counted here).
-  return { ok: true, clean, totalChars: total };
+  return { ok: true, clean, totalChars: total, trimmedCount };
 }
 
 // ─── Agent Memory / MCP server (T3-3) ────────────────
@@ -1666,13 +1679,18 @@ function registerIpcHandlers(config: AppConfig) {
       agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) => {
         const mustPrompt = !!req.confirmWrites || isAgentForceConfirmTool(name);
         if (!mustPrompt) return Promise.resolve(true); // regular write, auto-apply mode
-        return new Promise<boolean>((resolve) => {
+        // Deny-with-reason (hermes absorb): the renderer may attach a short reason to a denial;
+        // the loop feeds it back to the model so it course-corrects instead of guessing.
+        return new Promise<boolean | { approved: boolean; reason?: string }>((resolve) => {
           if (controller.signal.aborted) { resolve(false); return; }
           const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
           controller.signal.addEventListener('abort', onAbort, { once: true });
           pendingApprovals.set(req.streamId, {
             wcId,
-            resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
+            resolve: (val: boolean, reason?: string) => {
+              controller.signal.removeEventListener('abort', onAbort);
+              resolve(val || !reason ? val : { approved: false, reason });
+            },
           });
           // SEC-7: a force-confirm memory write shows the FULL before/after fact + provenance
           // (resolved in main), not just the raw {id,old,new} diff — so the user sees the
@@ -1702,6 +1720,8 @@ function registerIpcHandlers(config: AppConfig) {
       fillPct: Math.min(100, Math.round((v.totalChars / CHAT_MAX_TOTAL_CHARS) * 100)),
       charsIn: v.totalChars,
       budgetChars: CHAT_MAX_TOTAL_CHARS,
+      // Guaranteed-tail trim: how many OLDEST turns were folded out of THIS model call (0 = none).
+      trimmedCount: v.trimmedCount,
     });
 
     try {
@@ -1715,6 +1735,10 @@ function registerIpcHandlers(config: AppConfig) {
           cfg,
           messages: v.clean,
           ragOn: !!req.ragOn,
+          // Thinking display (hermes absorb): opt-in via settings; deltas are ephemeral (never
+          // persisted with the session — display only).
+          showThinking: !!req.showThinking,
+          onThinking: (delta: string) => safeSend('chat:thinking', { streamId: req.streamId, delta }),
           signal: controller.signal,
           searchEngine, // module-level; may be null → engine null-guards
           // Agent MEMORY (P1, §3.2/§4.5): always-injected pinned user facts, pre-scanned + capped.
@@ -1777,13 +1801,15 @@ function registerIpcHandlers(config: AppConfig) {
   // Agent (SP-D): the renderer approves/denies a pending write tool. Owner-checked by
   // wcId so another window can't approve someone else's write. The renderer can ONLY
   // approve/deny — it never names a tool or its args (the model + main decide that).
-  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean }): void => {
+  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean; reason?: string }): void => {
     const sid = typeof payload?.streamId === 'string' ? payload.streamId : '';
     const pa = pendingApprovals.get(sid);
     if (!pa) return; // unknown / already-resolved
     if (pa.wcId !== e.sender.id) return; // not the owning window
     pendingApprovals.delete(sid);
-    pa.resolve(payload?.approve === true);
+    // reason rides ONLY on a denial (approve path ignores it); bounded here at the trust boundary.
+    const reason = typeof payload?.reason === 'string' ? payload.reason.trim().slice(0, 500) : undefined;
+    pa.resolve(payload?.approve === true, reason || undefined);
   });
 
   // Agent MEMORY management (P2, §6 / INT-8): the renderer lists / inspects / deletes durable
@@ -3114,6 +3140,8 @@ function registerCaptureHandlers(): void {
     if (!engine || typeof filePath !== 'string' || !filePath) return { id: '' };
     return engine.enqueue({ kind: 'file', payload: filePath, source: 'drop', sourceMeta: meta });
   });
+  // Quick capture (hermes absorb): hide the always-on-top window (Esc / after filing).
+  ipcMain.handle('capture:hide', (): void => { if (captureWin && !captureWin.isDestroyed()) captureWin.hide(); });
   ipcMain.handle('capture:list', (_e, limit?: number) => (engine ? engine.listCaptures(limit) : []));
   ipcMain.handle('capture:set-paused', (_e, paused: boolean) => { engine?.setPaused(paused); });
   ipcMain.handle('capture:counts', () => (engine ? engine.counts() : { capturedToday: 0, pendingReviewCount: 0, queueDepth: 0, watching: false }));
@@ -3608,6 +3636,49 @@ function createWindow() {
   return win;
 }
 
+// ─── Quick capture (hermes absorb, v0.20 quick-entry) ────────────────────────
+// A tiny frameless always-on-top window on a global hotkey: type a thought, Enter files it
+// into the vault through the SAME audited capture funnel as drag-drop/clip ('vault:capture',
+// kind:'text', source:'quick' — ingest→classify→index→decay). It loads the ordinary renderer
+// bundle with '#capture' (same preload, same allowlist — no new privileged surface); the
+// renderer entry renders the minimal QuickCapture input for that hash. Esc / blur hides.
+export const QUICK_CAPTURE_ACCEL = 'CommandOrControl+Alt+N';
+let captureWin: BrowserWindow | null = null;
+function createCaptureWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 560, height: 150, frame: false, resizable: false, alwaysOnTop: true,
+    skipTaskbar: true, show: false, backgroundColor: '#0a0a0f',
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+    },
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    let allowed = false;
+    try {
+      const target = new URL(url);
+      if (target.protocol === 'file:') allowed = true;
+      else if (MAIN_WINDOW_VITE_DEV_SERVER_URL && url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)) allowed = true;
+    } catch { /* unparseable → blocked */ }
+    if (!allowed) event.preventDefault();
+  });
+  win.on('blur', () => { if (!win.isDestroyed()) win.hide(); });
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    win.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#capture`);
+  } else {
+    win.loadFile(join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), { hash: 'capture' });
+  }
+  return win;
+}
+function toggleCaptureWindow(): void {
+  if (!captureWin || captureWin.isDestroyed()) captureWin = createCaptureWindow();
+  if (captureWin.isVisible()) { captureWin.hide(); return; }
+  captureWin.center();
+  captureWin.show();
+  captureWin.focus();
+}
+
 // Vite dev server URL (injected by electron-forge)
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -3839,6 +3910,17 @@ app.whenReady().then(async () => {
   registerAssetProtocol(config);
 
   const win = createWindow();
+
+  // Quick capture (hermes absorb): global hotkey → tiny always-on-top input → vault. Default ON
+  // (settings.quickCapture=false disables; toggle takes effect on restart). A registration miss
+  // (accelerator taken by another app) degrades silently to "no hotkey" — never a crash.
+  if (settingsStore.get().quickCapture !== false) {
+    try {
+      const registered = globalShortcut.register(QUICK_CAPTURE_ACCEL, toggleCaptureWindow);
+      if (!registered) console.warn(`[main] quick-capture hotkey ${QUICK_CAPTURE_ACCEL} unavailable (in use elsewhere)`);
+    } catch (err) { console.warn('[main] quick-capture hotkey registration failed:', err); }
+  }
+  app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } });
 
   // Daemon keep-alive (§2b): build the tray now if the daemon is opt-in enabled (the tray IS the
   // "daemon active" affordance + the headless Compile-now / Open / Quit menu). No-op when off.

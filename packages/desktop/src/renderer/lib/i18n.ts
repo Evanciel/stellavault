@@ -219,6 +219,10 @@ export const messages = {
   // P0-1 (hermes-port-audit §4): opt-in review-every-write confirm gate.
   "settings.ai.confirmWrites.label": { en: "Confirm every vault write", ko: "볼트 쓰기마다 확인" },
   "settings.ai.confirmWrites.hint": { en: "When on, the agent pauses for your approval before each note write (create / append / link / decision). Off by default — the second brain files writes automatically and you can undo them. Memory corrections always confirm regardless.", ko: "켜면 에이전트가 노트 쓰기(생성 / 추가 / 링크 / 결정)마다 승인을 기다립니다. 기본값은 꺼짐 — 세컨드 브레인이 자동으로 저장하며 실행 취소할 수 있습니다. 메모리 정정은 설정과 무관하게 항상 확인합니다." },
+  "settings.ai.showThinking.label": { en: "Show model thinking", ko: "모델 사고 과정 표시" },
+  "settings.ai.showThinking.hint": { en: "For reasoning models (deepseek-r1, qwen3): stream the model's chain-of-thought as a collapsible block above the answer. Off by default — non-reasoning models (gemma4) answer fastest with thinking suppressed.", ko: "추론 모델(deepseek-r1, qwen3)용: 모델의 사고 과정을 답변 위 접이식 블록으로 스트리밍합니다. 기본값 꺼짐 — 일반 모델(gemma4)은 사고를 생략해야 가장 빠릅니다." },
+  "settings.ai.quickCapture.label": { en: "Quick capture hotkey", ko: "퀵 캡처 단축키" },
+  "settings.ai.quickCapture.hint": { en: "Ctrl/Cmd+Alt+N anywhere in your OS opens a tiny capture window — type a thought, Enter files it into the vault through the capture pipeline. Takes effect on restart.", ko: "OS 어디서든 Ctrl/Cmd+Alt+N을 누르면 작은 캡처 창이 열립니다 — 생각을 입력하고 Enter를 누르면 캡처 파이프라인을 거쳐 볼트에 저장됩니다. 재시작 후 적용됩니다." },
   "settings.ai.model.label": { en: "Model", ko: "모델" },
   "settings.ai.model.custom": { en: "Custom…", ko: "사용자 지정…" },
   "settings.ai.model.none": { en: "(none)", ko: "(없음)" },
@@ -310,6 +314,14 @@ export const messages = {
   "panel.ai.ragToggle": { en: "Ground in vault", ko: "볼트 기반 답변" },
   "panel.ai.ragLabel": { en: "Cite my notes", ko: "내 노트 인용" },
   "panel.ai.streamingMessage": { en: "Thinking...", ko: "생각 중..." },
+  "panel.ai.thinkingLabel": { en: "Reasoning", ko: "사고 과정" },
+  "panel.ai.vitalsTrimmed": { en: "{n} old turns folded", ko: "이전 턴 {n}개 접힘" },
+  "quickCapture.title": { en: "Quick capture", ko: "퀵 캡처" },
+  "quickCapture.hint": { en: "Enter to file · Esc to close", ko: "Enter 저장 · Esc 닫기" },
+  "quickCapture.placeholder": { en: "Capture a thought into your vault…", ko: "떠오른 생각을 볼트에 담으세요…" },
+  "quickCapture.saving": { en: "Filing…", ko: "저장 중…" },
+  "quickCapture.saved": { en: "✓ Filed", ko: "✓ 저장됨" },
+  "quickCapture.error": { en: "Failed — is a vault open?", ko: "실패 — 볼트가 열려 있나요?" },
   "panel.ai.sourcesFound": { en: "Sources ({count})", ko: "출처 ({count})" },
   "panel.ai.sessionError": { en: "Chat history is stored unencrypted on this device.", ko: "채팅 기록은 이 기기에 암호화되지 않은 상태로 저장됩니다." },
   "panel.ai.capReached": { en: "Two responses are already streaming. Wait for one to finish.", ko: "이미 두 개의 응답이 스트리밍 중입니다. 하나가 끝날 때까지 기다려 주세요." },
@@ -317,15 +329,16 @@ export const messages = {
   "panel.ai.chatMainTitle": { en: "Chat with your second brain", ko: "내 세컨드 브레인과 대화하기" },
   "panel.ai.agentLabel": { en: "Agent", ko: "에이전트" },
   "panel.ai.agentHint": { en: "Let the AI search/read your vault and file edits automatically. Turn on “Confirm every vault write” in Settings → AI to approve each write.", ko: "AI가 볼트를 검색·읽고 편집을 자동으로 저장합니다. 설정 → AI에서 “볼트 쓰기마다 확인”을 켜면 매 쓰기를 승인합니다." },
-  // P0-2 (hermes-port-audit §4): the 🤖 pill is disabled on non-local providers (the agent loop
-  // only fires on a local tools-capable model) — this annotates WHY instead of silently no-op'ing.
-  "panel.ai.agentLocalOnly": { en: "Agent mode needs a local tools-capable model (e.g. Ollama gemma4). Set the provider to local Ollama in Settings → AI.", ko: "에이전트 모드는 로컬 도구 지원 모델이 필요합니다 (예: Ollama gemma4). 설정 → AI에서 공급자를 로컬 Ollama로 설정하세요." },
-  "panel.ai.agentLocalOnlyShort": { en: "(local model only)", ko: "(로컬 모델 전용)" },
+  // §6.6: the 🤖 pill is disabled when no tools-capable model is configured — agent mode runs on a
+  // LOCAL Ollama tools-model OR a frontier provider (Claude / GPT) WITH an API key. This annotates WHY.
+  "panel.ai.agentLocalOnly": { en: "Agent mode needs a tools-capable model — local Ollama (e.g. gemma4), or Claude / GPT with an API key set in Settings → AI.", ko: "에이전트 모드는 도구 지원 모델이 필요합니다 — 로컬 Ollama(예: gemma4) 또는 설정 → AI에 API 키가 등록된 Claude / GPT." },
+  "panel.ai.agentLocalOnlyShort": { en: "(needs a tools model)", ko: "(도구 모델 필요)" },
   // Steer-after-tool (P1-3): the input shown while the agent runs — inject a note for its next turn.
   "panel.ai.steerHint": { en: "Steer the agent — add a note for its next step (Enter)…", ko: "에이전트에 지시 추가 — 다음 단계에 반영 (Enter)…" },
   "panel.ai.agentWriteConfirm": { en: "The agent wants to write to your vault:", ko: "에이전트가 볼트에 쓰려고 합니다:" },
   "panel.ai.agentApprove": { en: "Approve", ko: "승인" },
   "panel.ai.agentDeny": { en: "Deny", ko: "거부" },
+  "panel.ai.agentDenyReason": { en: "Why? (optional — helps the agent adjust)", ko: "이유 (선택 — 에이전트가 방향을 수정합니다)" },
   "panel.ai.planProgress": { en: "Plan · {done}/{total}", ko: "계획 · {done}/{total}" },
   "panel.ai.agentSteps": { en: "{n} actions", ko: "{n}개 작업" },
   "panel.ai.agentWorking": { en: "Working…", ko: "작업 중…" },
