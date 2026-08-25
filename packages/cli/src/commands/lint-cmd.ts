@@ -2,12 +2,16 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, lintKnowledge } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function lintCommand() {
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
 
   console.error(chalk.dim('Scanning your knowledge base...'));
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'lint');
   await hub.store.initialize();
 
   const result = await lintKnowledge(hub.store);

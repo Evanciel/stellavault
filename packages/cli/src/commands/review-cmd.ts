@@ -4,6 +4,7 @@
 import chalk from 'chalk';
 import { createInterface } from 'node:readline';
 import { loadConfig, createKnowledgeHub, DecayEngine } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 interface ReviewOpts {
   count?: string;
@@ -40,6 +41,9 @@ export async function reviewCommand(options: ReviewOpts) {
   const excludeRe = options.exclude ? globToRegex(options.exclude) : null;
 
   if (!options.json) console.error(chalk.dim('⏳ Initializing...'));
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'review');
   await hub.store.initialize();
 
   const db = hub.store.getDb() as any;

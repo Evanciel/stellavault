@@ -29,10 +29,17 @@ export type { ParsedWikilink, ParseWikilinkOptions } from './links/wikilink.js';
 
 // Store
 export { createSqliteVecStore } from './store/index.js';
+export { checkVaultOwnership, overlapIsConvincing, VAULT_OWNER_KEY } from './store/vault-ownership.js';
+export type { VaultOwnership } from './store/vault-ownership.js';
 
 // Indexer
 export { indexVault, indexFiles, scanVault, scanFile, docIdForPath, chunkDocument, createLocalEmbedder, createWatcher } from './indexer/index.js';
 export type { IndexResult, IndexerOptions, SkipReason, SkippedFile } from './indexer/index.js';
+export { summarizeIndexRun } from './indexer/report.js';
+export { runMaintenanceIfOwned } from './store/vault-ownership.js';
+export { peekVaultOwner } from './store/peek-owner.js';
+export { packImportSucceeded } from './pack/importer.js';
+export type { IndexRunSummary, IndexRunKind } from './indexer/report.js';
 
 // Search
 export { createSearchEngine, DEFAULT_SIGNAL_WEIGHTS } from './search/index.js';

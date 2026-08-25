@@ -47,6 +47,10 @@ import {
   getOllamaVersion,
   checkCompat,
   downloadAndInstallOllama,
+  pullModel,
+  modelExistsInRegistry,
+  browseRegistry,
+  searchHuggingFace,
 } from './ollama-manager.js';
 import {
   saveSession as chatSaveSession,
@@ -57,6 +61,71 @@ import {
   isUuid as chatIsUuid,
 } from './chat-session-store.js';
 import type { ChatMessage, ChatAttachment, ReflectionCandidate } from '../shared/ipc-types.js';
+
+type CoreModule = typeof import('@stellavault/core');
+type CoreIndexOptions = Parameters<CoreModule['indexVault']>[1];
+
+/**
+ * 색인 1회분을 돌리고 <결과를 보고한다>.
+ *
+ * 🔴 데스크톱은 `indexFiles` 를 여섯 곳에서 부르는데 <전부 반환값을 버렸다>
+ *    (코덱스 12차 P2 에서 감시자 한 곳만 고쳤고, 13차 P2 가 나머지 다섯을 짚었다).
+ *    색인기는 <던지지 않는다> — 남의 DB · 소유 미확인 · 실패 · 미룬 삭제를 전부
+ *    결과 객체에 담아 알린다. 그래서 버리면 앱이 매번 아무것도 안 하면서
+ *    조용히 정상처럼 보인다. 그것이 이 저장소가 하루를 쓴 사고의 모양이다.
+ *
+ * @param where     로그에 찍을 자리 이름 (어느 경로가 조용히 실패하는지 알아야 한다)
+ * @param vaultOnly `indexFiles` 가 없는 옛 core 에서 볼트 전체 색인으로 <대체할지>.
+ *                  🔴 기본은 false 다 — 원래 그렇게 갈렸고, 여기서 바꾸면 저장 한 번이
+ *                  볼트 전체 재색인이 되는 자리가 생긴다.
+ *
+ * @returns 색인이 <실제로 일을 했는가>. 🔴 로그만 남기고 `void` 를 돌려주던 시절,
+ *          호출부는 거부 여부를 알 수 없어 <색인이 거부된 뒤에도> decay 를 기록했다
+ *          (코덱스 15차 P1). 보고와 판정은 다른 일이다 — 둘 다 돌려준다.
+ *          ⚠️ 색인기가 없어 아무것도 안 돌린 경우도 `false` 다. "안 했다" 가 같은 답이다.
+ */
+async function indexAndReport(
+  core: CoreModule,
+  where: string,
+  vaultPath: string,
+  paths: string[],
+  opts: CoreIndexOptions,
+  vaultOnly = false,
+): Promise<boolean> {
+  let r: Awaited<ReturnType<CoreModule['indexVault']>> | undefined;
+  if (typeof (core as { indexFiles?: unknown }).indexFiles === 'function') {
+    r = await core.indexFiles(vaultPath, paths, opts);
+  } else if (vaultOnly) {
+    r = await core.indexVault(vaultPath, opts);
+  }
+  if (!r) return false;
+  // 옛 core 에는 summarizeIndexRun 이 없다 — 없으면 판정을 못 하므로 <했다>고 본다
+  //   (그 빌드에는 소유 가드 자체가 없어, 여기서 막아도 막히는 것이 없다).
+  if (typeof (core as { summarizeIndexRun?: unknown }).summarizeIndexRun !== 'function') return true;
+  const s = core.summarizeIndexRun(r);
+  if (s.note) console.error(`[main] ${where}: ${s.note}`);
+  return s.ok;
+}
+
+/**
+ * 이 DB 가 <지금 볼트의 것이라고 확정됐는가>.
+ *
+ * 🔴 색인기 밖의 쓰기(decay 기록·seed)가 이 문을 쓴다 (코덱스 15차 P1). 색인기는
+ *    소유가 확정될 때만 쓰는데, 그 옆에서 다른 코드가 같은 DB 에 자유롭게 쓰면
+ *    약속이 반쪽이 된다.
+ * ⚠️ 매번 다시 묻는다 — 전체 색인이 방금 각인했을 수 있고, 그때는 곧바로 통과해야 한다.
+ */
+async function dbOwnershipConfirmed(): Promise<boolean> {
+  if (!store || !currentVaultPath) return false;
+  try {
+    const core = await import('@stellavault/core');
+    return core.checkVaultOwnership(
+      store.getMeta(core.VAULT_OWNER_KEY), resolve(currentVaultPath),
+    ).kind === 'ok';
+  } catch {
+    return false;   // 물어볼 수 없으면 쓰지 않는다
+  }
+}
 
 // ─── Asset protocol (T2-1) ───────────────────────────
 // Vault-relative images (![](assets/x.png)) can't load from a file:// renderer
@@ -455,6 +524,22 @@ async function initCore(config: AppConfig): Promise<void> {
     hubConfig = { ...hubConfig, vaultPath: config.vaultPath, dbPath: config.dbPath || hubConfig.dbPath };
     currentVaultPath = config.vaultPath; // T3-3: MCP server vaultPath-dependent tools
     coreChunkOptions = { ...coreChunkOptions, ...hubConfig.chunking };
+    // 🔴🔴 <열기 전에> 각인을 묻는다 (코덱스 15차 P1). `initialize()` 는 여는 것만으로
+    //   WAL 전환과 스키마 생성·마이그레이션을 실행한다 — 남의 DB 라고 판정하기도 전에
+    //   그 파일을 바꿔 놓는다. CLI 다섯 문에는 `refuseForeignDbEarly` 를 달았는데
+    //   데스크톱만 빠져 있었다.
+    //   ⚠️ 여기서는 <프로세스를 끝내지 않는다>. GUI 앱이라 창도 없이 죽으면 사용자가
+    //      이유를 볼 수 없다 — coreReady 를 세우지 않고 이유를 남긴다.
+    if (hubConfig.dbPath && config.vaultPath) {
+      const peeked = core.peekVaultOwner(hubConfig.dbPath, core.VAULT_OWNER_KEY);
+      if (peeked !== undefined && peeked !== ''
+          && core.checkVaultOwnership(peeked, resolve(config.vaultPath)).kind === 'mismatch') {
+        console.error('[main] 🔴 이 DB 는 다른 볼트의 것이다 — 엔진을 세우지 않는다.');
+        console.error('[main]    DB 의 볼트: ' + peeked);
+        console.error('[main]    지금 볼트 : ' + resolve(config.vaultPath));
+        return;
+      }
+    }
     const hub = core.createKnowledgeHub(hubConfig);
     await hub.store.initialize();
     // ★PERF: do NOT block coreReady on the ~470MB model load (~30-50s). The graph,
@@ -485,7 +570,20 @@ async function initCore(config: AppConfig): Promise<void> {
       // missing doc's FULL content (line decay-engine.ts:249) — on a 12k-note / cold-disk
       // vault that's tens of seconds, and it was awaited here BEFORE coreReady, blocking
       // the whole app ("Waiting for AI engine…"). It gates nothing the graph/editor need.
-      if (decayEngine) void decayEngine.initializeNewDocuments().catch((e: unknown) => console.error('[main] decay seed skipped:', e));
+      // 🔴🔴 <남의 DB 에는 심지 않는다> (코덱스 14차 P1). `initializeNewDocuments` 는
+      //    빠진 문서마다 `decay_state` 행을 INSERT 한다 — 색인기가 "이 DB 는 이 볼트의
+      //    것이 아니다" 라고 한 글자도 안 쓰기로 한 그 DB 에, 앱을 켜는 것만으로 쓴다.
+      //    🔴🔴 각인이 <없는> DB 도 막는다 (코덱스 15차 P1). 한때 "아직 판정 전일 뿐" 이라며
+      //     통과시켰는데, 그것은 규칙 2("증거가 없으면 한 글자도 안 쓴다")를 decay 만
+      //     면제해 준 것이다. 새 볼트는 첫 색인이 각인을 남기고, 그 <다음> 기동에서 심긴다 —
+      //     하루 늦을 뿐 영영 못 얻지 않는다. 쓰기를 먼저 하는 쪽이 항상 손해였다.
+      const decayOwnership = core.checkVaultOwnership(store.getMeta(core.VAULT_OWNER_KEY), resolve(currentVaultPath ?? ''));
+      if (decayEngine && decayOwnership.kind !== 'ok') {
+        console.error('[main] decay seed skipped — 소유가 확정되지 않았다 ('
+          + decayOwnership.kind + '). 전체 색인이 각인하면 다음 기동에서 심는다.');
+      } else if (decayEngine) {
+        void decayEngine.initializeNewDocuments().catch((e: unknown) => console.error('[main] decay seed skipped:', e));
+      }
     } catch (err) {
       console.error('[main] DecayEngine init skipped:', err);
     }
@@ -514,13 +612,12 @@ async function initCore(config: AppConfig): Promise<void> {
           embed: (text: string) => embedder.embed(text),
           indexFile: async (abs: string) => {
             noteSelfWrite(abs); // W1-15 echo guard — our own write
-            if (typeof (core as any).indexFiles === 'function') {
-              await (core as any).indexFiles(captureVaultPath, [abs], { store, embedder, chunkOptions: coreChunkOptions });
-            } else {
-              await core.indexVault(captureVaultPath, { store, embedder, chunkOptions: coreChunkOptions });
-            }
+            // 🔴 판정을 <돌려준다> (코덱스 16차 P1). 버리면 엔진이 뒤이어 decay 를 쓴다.
+            const ok = await indexAndReport(core, 'capture indexFile', captureVaultPath, [abs],
+              { store, embedder, chunkOptions: coreChunkOptions }, true);
             bumpVaultFsVersion();
             bumpGraphCacheVersion();
+            return ok;
           },
           recordCapture: (abs: string) => {
             if (decayEngine) {
@@ -881,9 +978,8 @@ async function runDistill(opts: {
     const safe = assertInsideVault(currentVaultPath, saved);
     noteSelfWrite(safe);
     const core = await import('@stellavault/core');
-    if (typeof (core as any).indexFiles === 'function') {
-      await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
-    }
+    await indexAndReport(core, 'agent afterWrite', currentVaultPath, [safe],
+      { store, embedder, chunkOptions: coreChunkOptions });
     bumpVaultFsVersion();
     bumpGraphCacheVersion();
   };
@@ -1168,11 +1264,25 @@ function registerIpcHandlers(config: AppConfig) {
   });
 
   ipcMain.handle('core:index', async () => {
-    if (!coreReady) return { indexed: 0, totalChunks: 0 };
+    if (!coreReady) {
+      // 🔴 `ok: false` 다 (코덱스 16차 P2). 엔진이 없어서 아무것도 안 한 것을
+      //    성공으로 돌려주면 호출부가 "0개 색인 = 빈 볼트" 로 읽는다.
+      return { indexed: 0, totalChunks: 0, failed: 0, foreignDb: false, ownershipUnverified: false,
+               note: '엔진이 아직 준비되지 않았다', ok: false };
+    }
     const core = await import('@stellavault/core');
     const result = await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
     bumpGraphCacheVersion(); // T2-7: a manual reindex changes the graph
-    return { indexed: result.indexed, totalChunks: result.totalChunks };
+    // 🔴 판정을 <버리지 않는다> (코덱스 14차 P2). 두 필드만 돌려주던 시절, 남의 DB 라
+    //    아무것도 안 한 실행이 UI 에는 "0개 색인" 으로만 보였다 — 빈 볼트와 구별이 안 된다.
+    const s = core.summarizeIndexRun(result);
+    return {
+      indexed: result.indexed, totalChunks: result.totalChunks, failed: result.failed,
+      foreignDb: result.foreignDb === true,
+      ownershipUnverified: result.ownershipUnverified === true,
+      note: s.note,
+      ok: s.ok,
+    };
   });
 
   ipcMain.handle('core:decay-top', async (_e, limit?: number) => {
@@ -1228,6 +1338,9 @@ function registerIpcHandlers(config: AppConfig) {
   // grade it branches: Again resets stability, Hard/Good/Easy raise it.
   ipcMain.handle('core:record-access', async (_e, filePath: string, _kind: 'open' | 'review', grade?: 1 | 2 | 3 | 4) => {
     if (!coreReady || !decayEngine) return;
+    // 🔴 이것도 <쓰기>다 (코덱스 15차 P1). 노트를 여는 것만으로 decay_state 에 행이 생긴다 —
+    //    남의 DB 면 그 볼트의 학습 상태를 우리가 오염시킨다.
+    if (!(await dbOwnershipConfirmed())) return;
     try {
       const safe = assertInsideVault(vp, filePath);
       const documentId = docIdForFile(vp, safe);
@@ -1377,9 +1490,8 @@ function registerIpcHandlers(config: AppConfig) {
         const safe = assertInsideVault(currentVaultPath, saved); // re-assert (defence in depth)
         noteSelfWrite(safe); // W1-15 echo guard
         const core = await import('@stellavault/core');
-        if (typeof (core as any).indexFiles === 'function') {
-          await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
-        }
+        await indexAndReport(core, 'chat afterWrite', currentVaultPath, [safe],
+          { store, embedder, chunkOptions: coreChunkOptions });
         bumpVaultFsVersion();
         bumpGraphCacheVersion();
       };
@@ -1806,9 +1918,8 @@ function registerIpcHandlers(config: AppConfig) {
       writeFileSync(safe, body, 'utf-8');
       noteSelfWrite(safe);
       const core = await import('@stellavault/core');
-      if (typeof (core as any).indexFiles === 'function') {
-        await (core as any).indexFiles(currentVaultPath, [safe], { store, embedder, chunkOptions: coreChunkOptions });
-      }
+      await indexAndReport(core, 'chat:export-note', currentVaultPath, [safe],
+        { store, embedder, chunkOptions: coreChunkOptions });
       bumpVaultFsVersion();
       bumpGraphCacheVersion();
       return { filePath: safe };
@@ -2266,6 +2377,45 @@ function registerIpcHandlers(config: AppConfig) {
       if (!e.sender.isDestroyed()) e.sender.send('ollama:download-progress', p);
     }),
   );
+
+  // ─── 모델 설치 ───
+  // 런타임 다운로드와 달리 여기는 렌더러가 <이름>을 준다. 검증은 ollama-manager 안에
+  // 있고(isValidModelRef → 로컬 URL 확인), 여기서는 <한 번에 하나만> 돈다는 것만 지킨다.
+  // 몇 GB 씩 받는 일이라 동시 실행은 디스크와 대역을 갈라 먹기만 한다.
+  let modelPull: { controller: AbortController; model: string } | null = null;
+
+  // 두 출처: Ollama 큐레이션 라이브러리(최신순) / 허깅페이스 GGUF(검색·다운로드순).
+  // 후자는 Ollama 가 hf.co/<유저>/<레포> 로 직접 받는다.
+  ipcMain.handle('ollama:browse-models', (_e, arg?: { source?: string; query?: string; sort?: string }) =>
+    arg?.source === 'huggingface'
+      ? searchHuggingFace(String(arg?.query ?? ''))
+      : browseRegistry(arg?.sort === 'popular' ? 'popular' : 'newest'),
+  );
+
+  ipcMain.handle('ollama:model-exists', async (_e, arg: { model?: string }) => ({
+    exists: await modelExistsInRegistry(String(arg?.model ?? '')),
+  }));
+
+  ipcMain.handle('ollama:pull-model', async (e, arg: { model?: string; baseURL?: string }) => {
+    if (modelPull) return { ok: false as const, reason: 'busy' };
+    const controller = new AbortController();
+    modelPull = { controller, model: String(arg?.model ?? '') };
+    try {
+      return await pullModel(
+        arg?.baseURL ?? '',
+        modelPull.model,
+        (p) => { if (!e.sender.isDestroyed()) e.sender.send('ollama:pull-progress', p); },
+        controller.signal,
+      );
+    } finally {
+      modelPull = null;
+    }
+  });
+
+  ipcMain.handle('ollama:pull-abort', () => {
+    modelPull?.controller.abort();
+    return { aborted: modelPull !== null };
+  });
   ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
     if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
     secretStore?.clearSecret(provider);
@@ -2888,13 +3038,12 @@ function registerPublishVaultClip(config: AppConfig): void {
 
         // Auto-embed + seed decay so the clip is searchable + tracked immediately.
         try {
-          if (typeof (core as any).indexFiles === 'function') {
-            await (core as any).indexFiles(vp, [fullPath], { store, embedder, chunkOptions: coreChunkOptions });
-          } else {
-            await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
-          }
+          const indexedOk = await indexAndReport(core, 'web clip', vp, [fullPath],
+            { store, embedder, chunkOptions: coreChunkOptions }, true);
           bumpGraphCacheVersion();
-          if (decayEngine) {
+          // 🔴 색인이 <거부>됐으면(남의 DB · 소유 미확인) decay 도 쓰지 않는다 —
+          //    안 그러면 색인기가 지킨 약속을 바로 옆줄이 깬다 (코덱스 15차 P1).
+          if (decayEngine && indexedOk) {
             const documentId = docIdForFile(vp, fullPath);
             await decayEngine.recordAccess({ documentId, type: 'view', timestamp: new Date().toISOString() }).catch(() => {});
           }
@@ -3074,11 +3223,8 @@ function startVaultWatcher(config: AppConfig): void {
           try {
             const core = await import('@stellavault/core');
             const changedPaths = [...batch.keys()];
-            if (typeof (core as any).indexFiles === 'function') {
-              await (core as any).indexFiles(vp, changedPaths, { store, embedder, chunkOptions: coreChunkOptions });
-            } else {
-              await core.indexVault(vp, { store, embedder, chunkOptions: coreChunkOptions });
-            }
+            await indexAndReport(core, 'watcher reindex', vp, changedPaths,
+              { store, embedder, chunkOptions: coreChunkOptions }, true);
           } catch (err) {
             console.error('[main] watcher reindex failed:', err);
           }
@@ -3526,7 +3672,13 @@ app.whenReady().then(async () => {
 
   // Init core in background — don't block window creation
   void initCore(config).then(() => {
-    win.webContents.send('core:ready');
+    // 🔴 `coreReady` 를 <확인하고> 보낸다 (코덱스 16차 P2). `initCore` 는 남의 DB 를
+    //    발견하면 엔진을 세우지 않고 <정상 resolve> 하므로, 무조건 보내면 렌더러가
+    //    준비됐다고 믿고 빈 stats 를 본 뒤 자동 색인을 시도한다 — 화면의 상태와
+    //    실제 상태가 갈리고, 사용자는 <왜 안 되는지>를 볼 수 없다.
+    //    ★위 `did-finish-load` 는 이미 이 확인을 하고 있었다. 두 자리 중 하나만 했다.
+    if (coreReady) win.webContents.send('core:ready');
+    else console.error('[main] core:ready 를 보내지 않는다 — 엔진이 서지 않았다(위 사유 참조).');
     // W1-15: start after core init so the first change-batch can reindex
     // immediately. Events still flow if core failed (reindex is guarded).
     startVaultWatcher(config);

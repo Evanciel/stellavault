@@ -11,6 +11,21 @@ import { compileWiki } from './wiki-compiler.js';
 import { autoLink } from './auto-linker.js';
 import { DEFAULT_FOLDERS, type FolderNames } from '../config.js';
 
+/** 경로 구분자. 리터럴 역슬래시는 편집 도구가 이스케이프를 먹는다. */
+const BACKSLASH = String.fromCharCode(92);
+
+/**
+ * 볼트 상대경로를 만든다 — <언제나 슬래시>다.
+ *
+ * 🔴 export 인 이유는 재사용이 아니라 <측정>이다. 이 정규화가 없으면 윈도우에서만
+ *    깨지는데, CI 는 리눅스라 `join()` 이 이미 슬래시를 내므로 <시험이 아무것도
+ *    증명하지 못한다>(코덱스 8차 P2). 함수를 꺼내면 역슬래시를 직접 먹여
+ *    <어느 플랫폼에서든> 판별력 있게 잴 수 있다.
+ */
+export function toVaultPath(folder: string, filename: string): string {
+  return join(folder, filename).split(BACKSLASH).join('/');
+}
+
 /** HTML 엔티티 디코딩 */
 function decodeHtmlEntities(text: string): string {
   return text
@@ -80,7 +95,13 @@ export function ingest(
   const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const slug = title.slice(0, 50).replace(/[^a-zA-Z0-9가-힣\s]/g, '').replace(/\s+/g, '-').toLowerCase();
   const filename = `${timestamp}-${slug}.md`;
-  const filePath = join(folder, filename);
+  // 🔴 항상 슬래시로 정규화한다. join() 은 윈도우에서 역슬래시를 내는데, 이 값이
+  //    documents 의 <id 에도 file_path 에도> 그대로 들어간다. 파일 스캐너는 같은 파일을
+  //    슬래시로 정규화해 <다른 id·다른 file_path> 로 쓰므로, 같은 노트가 두 행이 된다
+  //    (UNIQUE(file_path) 도 서로 다른 문자열이라 안 걸린다).
+  //    색인기가 그 중복을 치우긴 하지만, 근원을 안 고치면 ingest 마다 다시 생긴다
+  //    (코덱스 6b, 2026-08-21 — indexer/index.ts 의 idsForRelPath 주석 참조).
+  const filePath = toVaultPath(folder, filename);
   const fullPath = resolve(vaultPath, filePath);
 
   // path traversal 방지
@@ -177,7 +198,13 @@ export function promoteNote(
   const newDir = resolve(vaultPath, folderMap[targetStage]);
   if (!existsSync(newDir)) mkdirSync(newDir, { recursive: true });
 
-  const newPath = join(folderMap[targetStage], basename(filePath));
+  // 🔴 반환값은 <볼트 상대경로>다. 구분자를 정규화해 둔다 — 저장소 형식이 슬래시이고,
+  //    이 값이 화면·로그·다음 색인의 입력으로 흘러가기 때문이다.
+  // ⚠️ 예전 주석은 "호출부가 이것으로 id 를 만든다" 고 적었는데 <사실이 아니다>
+  //    (코덱스 10차 P2). 저장소 안의 유일한 호출부는 이 경로를 <출력만> 한다.
+  //    그리고 promoteNote 는 파일을 옮길 뿐 DB 행을 갱신하지 않는다 — 옮긴 결과가
+  //    색인에 반영되는 것은 <다음 색인>이다. 여기서 정규화한다고 옛 행이 사라지지 않는다.
+  const newPath = toVaultPath(folderMap[targetStage], basename(filePath));
   const newFullPath = resolve(vaultPath, newPath);
 
   if (!newFullPath.startsWith(resolve(vaultPath))) {

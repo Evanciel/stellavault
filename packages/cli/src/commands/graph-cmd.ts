@@ -2,11 +2,12 @@
 // Plan SC: SC-04 — stellavault graph → 브라우저 3초
 
 import chalk from 'chalk';
-import { loadConfig, createKnowledgeHub, createApiServer } from '@stellavault/core';
+import { loadConfig, createKnowledgeHub, createApiServer, runMaintenanceIfOwned } from '@stellavault/core';
 import { spawn } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 /**
  * Locate the bundled graph UI (produced by scripts/bundle-cli.mjs).
@@ -50,9 +51,26 @@ export async function graphCommand() {
   const config = loadConfig();
   const hub = createKnowledgeHub(config);
 
+  // 🔴 여는 것 자체가 WAL·스키마를 쓴다 — 그 전에 묻는다 (코덱스 15차 P1).
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'graph');
+
   console.error(chalk.dim('⏳ Initializing...'));
   await hub.store.initialize();
   await hub.embedder.initialize();
+  // 🔴 그래프는 `links` 테이블을 읽는다 — 옛 DB 는 백필이 돌아야 채워진다 (13차 P2).
+  // ⚠️ 규칙을 정확히 적는다 (코덱스 15차 P2): 유지보수를 부를 수 있는 것은 <색인기뿐>이
+  //    아니라 <소유가 확정된 DB 를 연 아무 명령>이다. 12차에 `initialize()` 에서 뺀 것은
+  //    "누가 부르느냐" 가 아니라 <소유를 묻기 전에 도는 것>을 막기 위해서였다.
+  //    한때 여기·serve 주석이 "색인기만 부른다" 라고 적어 두고 <바로 그 줄에서> 스스로
+  //    불렀다 — 문구가 구현과 반대였다.
+  // ⚠️ 이 호출이 <백필이 필요한 DB 전부>를 덮지는 않는다 (코덱스 14차 P2).
+  //    `runMaintenanceIfOwned` 는 각인이 <확정된> DB 에서만 돌고, 백필이 필요한 것은
+  //    대개 각인 이전의 옛 DB 다. 즉 정확히 필요한 집합이 빠진다.
+  //    ★그럼에도 각인 없는 DB 에서 돌리지 않는다 — 그 DB 가 이 볼트의 것인지 <모르고>,
+  //     백필은 쓰기다. 옛 DB 는 `stellavault index <볼트>` 를 한 번 돌리는 순간
+  //     각인되고 그 자리에서 백필도 함께 돈다. 그것이 이관 경로다.
+  //    (반환값을 안 본다: 안 돌았다고 그래프를 못 여는 것은 아니다. 링크가 빌 뿐이다.)
+  runMaintenanceIfOwned(hub.store, config.vaultPath ?? '');
 
   const stats = await hub.store.getStats();
   if (stats.documentCount === 0) {

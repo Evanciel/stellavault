@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore, scanVault } from '@stellavault/core';
 import type { CliCommand } from '../types.js';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function statusCommand(_opts: Record<string, never>, cmd: CliCommand) {
   const globalOpts = cmd?.parent?.opts?.() ?? {};
@@ -8,6 +9,9 @@ export async function statusCommand(_opts: Record<string, never>, cmd: CliComman
   const config = loadConfig();
 
   const store = createSqliteVecStore(config.dbPath);
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'status');
   await store.initialize();
   const stats = await store.getStats();
   const topics = await store.getTopics();

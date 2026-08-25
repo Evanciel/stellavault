@@ -98,9 +98,9 @@ jobs:
           # Baseline as of 2026-06-15 (see desktop-upgrade-proposal-v2 T1-2).
           # Shrunk 7->5: @xmldom/xmldom (->0.8.13) and fast-uri (->3.1.2) were patched
           # via root package.json `overrides` (non-major), so their advisories cleared.
-          # Remaining 5 stay: xlsx (no upstream fix) + the onnx/protobuf/transformers
-          # chain (only "fixable" via the moat-breaking @xenova/transformers 2.0.1 downgrade).
-          AUDIT_ALLOWLIST: 'xlsx @xenova/transformers onnx-proto onnxruntime-web protobufjs'
+          # Remaining 6 stay: xlsx (no upstream fix) + the onnx/protobuf/transformers/sharp
+          # chain (only "fixable" via the moat-breaking @xenova/transformers 1.4.2 downgrade).
+          AUDIT_ALLOWLIST: 'xlsx @xenova/transformers onnx-proto onnxruntime-web protobufjs sharp'
         run: |
           npm audit --production --json > audit.json || true
           node -e '

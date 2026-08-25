@@ -228,6 +228,9 @@ describe('동점 처리 (실측: 946개 파일이 378개 basename 중복 그룹)
   });
 });
 
+// 🔴 백필은 <스토어를 여는 것>이 아니라 <소유가 확인된 색인기>가 부른다 (코덱스 12차 P1).
+//    initialize() 안에 있던 시절에는, 남의 DB 를 열어보기만 해도 그 DB 에 썼다.
+//    ⚠️ 대가를 적어 둔다: 옛 DB 의 1회성 이관이 <다음 열기>가 아니라 <다음 색인>에 일어난다.
 describe('재인덱싱 없는 백필', () => {
   let dir: string;
   let dbPath: string;
@@ -257,11 +260,14 @@ describe('재인덱싱 없는 백필', () => {
     await legacy.close();
   }
 
-  it('열 때 한 번 채운다 — 볼트 파일 재스캔도 재임베딩도 없이', async () => {
+  it('색인기가 부를 때 한 번 채운다 — 볼트 파일 재스캔도 재임베딩도 없이', async () => {
     await seedLegacyDb();
 
     const reopened = createSqliteVecStore(dbPath, 4);
     await reopened.initialize();
+    // ★여는 것만으로는 <아무 일도 없다> — 그 자체가 이 회차의 수정이다.
+    expect(countLinks(reopened)).toBe(0);
+    reopened.runMaintenanceOnce();
     try {
       // 본문 링크 1 + frontmatter 링크 1. 펜스 안 [[tts:text]] 는 마스킹된다.
       expect(countLinks(reopened)).toBe(2);
@@ -275,6 +281,7 @@ describe('재인덱싱 없는 백필', () => {
     await seedLegacyDb();
     const first = createSqliteVecStore(dbPath, 4);
     await first.initialize();
+    first.runMaintenanceOnce();
     const marker = db(first)
       .prepare('SELECT value FROM stellavault_meta WHERE key = ?')
       .get('links_backfill_v1');
@@ -285,6 +292,7 @@ describe('재인덱싱 없는 백필', () => {
 
     const second = createSqliteVecStore(dbPath, 4);
     await second.initialize();
+    second.runMaintenanceOnce();
     try {
       expect(countLinks(second)).toBe(0);
     } finally {
@@ -297,13 +305,17 @@ describe('재인덱싱 없는 백필', () => {
 
     const first = createSqliteVecStore(dbPath, 4);
     await first.initialize();
+    first.runMaintenanceOnce();
     const after1 = countLinks(first);
+    // 🔴 0 === 0 으로 공허하게 통과하던 자리다 — 실제로 채워졌음을 먼저 못박는다.
+    expect(after1).toBeGreaterThan(0);
     // 마커만 지우고 links 는 남긴 채로 다시 돌린다
     db(first).prepare('DELETE FROM stellavault_meta').run();
     await first.close();
 
     const second = createSqliteVecStore(dbPath, 4);
     await second.initialize();
+    second.runMaintenanceOnce();
     try {
       expect(countLinks(second)).toBe(after1);
     } finally {
@@ -314,6 +326,7 @@ describe('재인덱싱 없는 백필', () => {
   it('링크가 하나도 없는 볼트도 마커를 남긴다 (COUNT(*)=0 게이트였다면 매번 전 문서 재독)', async () => {
     const empty = createSqliteVecStore(dbPath, 4);
     await empty.initialize();
+    empty.runMaintenanceOnce();
     try {
       expect(countLinks(empty)).toBe(0);
       const marker = db(empty)

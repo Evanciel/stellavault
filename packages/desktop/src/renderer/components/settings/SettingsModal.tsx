@@ -474,6 +474,18 @@ function AITab() {
   const [downloading, setDownloading] = useState(false);
   const [dlPct, setDlPct] = useState<number | null>(null);
   const isLocalOllama = ai.provider === 'openai-compatible' && isLocalProviderUrl(ai.baseURL ?? '');
+  // 모델 설치(pull). 새 모델이 나왔을 때 터미널을 열지 않아도 되게 하는 자리 — 목록을
+  // 코드에 박아두는 방식으로는 절대 따라잡히지 않는 부분이다.
+  const [pullName, setPullName] = useState('');
+  const [pulling, setPulling] = useState(false);
+  const [pullPct, setPullPct] = useState<number | null>(null);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullMsg, setPullMsg] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<string[]>([]);
+  const [browsing, setBrowsing] = useState(false);
+  // 출처가 둘이라 버튼 뜻이 갈린다: Ollama 는 <최신순 목록>, HF 는 <검색>이다.
+  // HF 는 GGUF 레포만 10만 개가 넘어서 목록으로는 아무것도 못 고른다.
+  const [source, setSource] = useState<'ollama' | 'huggingface'>('ollama');
 
   const refreshOllama = useCallback(async () => {
     if (!isLocalOllama) { setOllama(null); setCompat(null); return; }
@@ -506,6 +518,71 @@ function AITab() {
       off(); setDownloading(false); setDlPct(null);
     }
   }, [t, refreshOllama, loadModels]);
+
+  // 모델 설치. 몇 GB 를 받는 일이라 <먼저 이름이 실재하는지 묻고> 시작한다 — 오타 하나로
+  // 30분을 버리게 두지 않는다. exists 가 null 이면 "확인 못 했다"(오프라인 등)라서 막지 않고
+  // 그대로 진행한다: 확인에 실패했다고 멀쩡한 이름을 거절하면 그게 더 나쁜 고장이다.
+  const handlePullModel = useCallback(async () => {
+    const name = pullName.trim();
+    if (!name) return;
+    setPulling(true); setPullMsg(null); setPullPct(null); setPullStatus(null);
+    const off = onIpc('ollama:pull-progress', (p: unknown) => {
+      const d = p as { phase: string; status?: string; received?: number; total?: number };
+      setPullStatus(d.status ?? null);
+      setPullPct(d.total ? Math.round(((d.received ?? 0) / d.total) * 100) : null);
+    });
+    try {
+      const check = await ipc('ollama:model-exists', { model: name });
+      if (check.exists === false) {
+        setPullMsg(t('settings.ai.model.pull.notFound'));
+        return;
+      }
+      const r = await ipc('ollama:pull-model', { model: name, baseURL: ai.baseURL ?? '' });
+      if (r.ok) {
+        setPullMsg(t('settings.ai.model.pull.done'));
+        setPullName('');
+        await loadModels(true);          // 방금 받은 모델이 드롭다운에 뜨게
+        patchAi({ model: name });        // 받았으면 그걸 쓰겠다는 뜻이다
+      } else if (r.reason === 'aborted') {
+        setPullMsg(t('settings.ai.model.pull.aborted'));
+      } else if (r.reason === 'not-local') {
+        setPullMsg(t('settings.ai.model.pull.notLocal'));
+      } else {
+        setPullMsg(t('settings.ai.model.pull.failed'));
+      }
+    } catch {
+      setPullMsg(t('settings.ai.model.pull.failed'));
+    } finally {
+      off(); setPulling(false); setPullPct(null); setPullStatus(null);
+    }
+  }, [pullName, ai.baseURL, t, loadModels, patchAi]);
+
+  // 최신 모델 목록 가져오기. 내장 목록은 반드시 낡는다 — 이 버튼이 그 간극을 메운다.
+  // 실패하면 <조용히 비우지 않는다>: 사이트가 바뀐 것과 새 모델이 없는 것은 다른 말이다.
+  const handleBrowse = useCallback(async () => {
+    setBrowsing(true); setPullMsg(null);
+    try {
+      // HF 는 입력창의 글자를 <검색어>로 쓴다 — 그래서 이름을 덮어쓰지 않는다.
+      const r = await ipc('ollama:browse-models',
+        source === 'huggingface'
+          ? { source, query: pullName.trim() }
+          : { source, sort: 'newest' });
+      if (r.models.length > 0) {
+        setCatalog(r.models);
+        // Ollama 목록은 맨 위가 가장 최근이라 비어 있으면 채워준다. HF 는 사용자가 친 검색어를
+        // 지우면 안 되므로 건드리지 않는다.
+        if (source === 'ollama' && !pullName.trim()) setPullName(r.models[0]);
+      } else if (r.error) {
+        setPullMsg(t('settings.ai.model.pull.browseFailed'));
+      } else {
+        setPullMsg(t('settings.ai.model.pull.browseEmpty'));
+      }
+    } catch {
+      setPullMsg(t('settings.ai.model.pull.browseFailed'));
+    } finally {
+      setBrowsing(false);
+    }
+  }, [pullName, source, t]);
 
   // Debounced re-check as the provider / baseURL changes.
   useEffect(() => {
@@ -789,6 +866,97 @@ function AITab() {
               />
             )}
             {modelError && <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>{modelError}</div>}
+
+            {/* 새 모델 설치. 로컬 Ollama 일 때만 뜬다 — 원격 openai-compatible 호스트에는
+                받을 곳이 없다. 목록에서 고르는 게 아니라 <이름을 넣는> 이유는, Ollama 에
+                설치 가능한 모델 목록 API 가 없어서다. 이름을 받으면 어제 나온 모델도 오늘 된다. */}
+            {isLocalOllama && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 6 }}>
+                  {t(source === 'huggingface' ? 'settings.ai.model.pull.hintHf' : 'settings.ai.model.pull.hint')}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <select
+                    value={source}
+                    aria-label={t('settings.ai.model.pull.source')}
+                    onChange={(e) => {
+                      setSource(e.target.value as 'ollama' | 'huggingface');
+                      setCatalog([]);          // 출처가 바뀌면 앞 목록은 더 이상 그 출처의 것이 아니다
+                      setPullMsg(null);
+                    }}
+                    style={{ ...textInputStyle, width: 128, cursor: 'pointer' }}
+                  >
+                    <option value="ollama">Ollama</option>
+                    <option value="huggingface">Hugging Face</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={pullName}
+                    aria-label={t('settings.ai.model.pull.label')}
+                    placeholder={source === 'huggingface' ? 'qwen3' : 'gemma4:12b'}
+                    spellCheck={false}
+                    disabled={pulling}
+                    onChange={(e) => setPullName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !pulling) void handlePullModel(); }}
+                    list="sv-ollama-catalog"
+                    style={{ ...textInputStyle, width: 190 }}
+                  />
+                  {/* 가져온 목록은 datalist 로 붙인다 — 입력창 하나가 타이핑 자동완성과
+                      둘러보기를 겸한다. 목록에 없는 이름을 넣는 길도 그대로 열려 있다. */}
+                  <datalist id="sv-ollama-catalog">
+                    {catalog.map((m) => <option key={m} value={m} />)}
+                  </datalist>
+                  <button
+                    onClick={() => void handleBrowse()}
+                    disabled={browsing || pulling}
+                    title={t('settings.ai.model.pull.browseTitle')}
+                    style={{
+                      padding: '7px 10px', fontSize: 11,
+                      cursor: (browsing || pulling) ? 'default' : 'pointer',
+                      background: 'var(--hover)', border: '1px solid var(--border)',
+                      borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
+                      opacity: (browsing || pulling) ? 0.6 : 1,
+                    }}
+                  >
+                    {browsing ? '…' : t(source === 'huggingface' ? 'settings.ai.model.pull.search' : 'settings.ai.model.pull.browse')}
+                  </button>
+                  <button
+                    onClick={() => void (pulling ? ipc('ollama:pull-abort') : handlePullModel())}
+                    disabled={!pulling && !pullName.trim()}
+                    style={{
+                      padding: '7px 10px', fontSize: 11,
+                      cursor: (!pulling && !pullName.trim()) ? 'default' : 'pointer',
+                      background: 'var(--hover)', border: '1px solid var(--border)',
+                      borderRadius: 4, color: 'var(--ink-dim)', whiteSpace: 'nowrap',
+                      opacity: (!pulling && !pullName.trim()) ? 0.5 : 1,
+                    }}
+                  >
+                    {pulling ? t('settings.ai.model.pull.stop') : t('settings.ai.model.pull.button')}
+                  </button>
+                </div>
+                {pulling && (
+                  <div style={{ marginTop: 6 }}>
+                    {/* 총량을 모르는 단계(manifest 조회 등)가 있어서 퍼센트가 null 일 수 있다 —
+                        그때는 막대 대신 Ollama 가 준 단계 문구를 그대로 보여준다. */}
+                    {pullPct !== null && (
+                      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pullPct}%`, background: 'var(--accent, #6b8afd)' }} />
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginTop: 4 }}>
+                      {pullStatus ?? t('settings.ai.model.pull.working')}
+                      {pullPct !== null && ` · ${pullPct}%`}
+                    </div>
+                  </div>
+                )}
+                {catalog.length > 0 && !pulling && (
+                  <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginTop: 4 }}>
+                    {t(source === 'huggingface' ? 'settings.ai.model.pull.searched' : 'settings.ai.model.pull.browsed').replace('{n}', String(catalog.length))}
+                  </div>
+                )}
+                {pullMsg && <div style={{ fontSize: 10, color: 'var(--ink-dim)', marginTop: 4 }}>{pullMsg}</div>}
+              </div>
+            )}
           </Field>
 
           {/* P0-1 (hermes-port-audit §4): opt-in "review every vault write" gate. OFF by default —

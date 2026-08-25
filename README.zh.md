@@ -5,7 +5,7 @@
 **让 Claude 记住一切的本地优先第二大脑。**<br/>
 Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破坏、MCP 原生。
 
-[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-集成-21-个工具) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-700%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-集成-21-个工具) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
@@ -39,7 +39,7 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 
 - 🧠 **它会自我编译。** PDF、YouTube 链接、半成形的想法 — 丢进任何东西，它都会抽取进 `raw/`，再*编译*成概念与反向链接井然有序的 `_wiki/`。随积累自我整理的知识。
 - 🔍 **真正能找到的搜索。** 用**加权 RRF** 融合语义、精确关键词(BM25)以及你自己的 `[[wikilink]]` / `#标签`，再用 FSRS 记忆模型重排序，把你*正在用*的笔记顶上来。50+ 种语言、完全本地、零 API 密钥。
-- 🌌 **把你的思维变成 3D。** 实时神经网络图谱(React Three Fiber)— 聚类着色、星座、热力图、时间轴、多元宇宙 P2P 视图。一种*看见*自己所知形状的方式。
+- 🌌 **把你的思维变成 3D。** 实时神经网络图谱(React Three Fiber)— 可按文件夹下钻的聚类视图、逐笔记局部图、标签叠加层,以及让*你亲手写的*维基链接与 AI 相似度一眼可辨的双层边。可承载 1.7 万条笔记的完整仓库。一种*看见*自己所知形状的方式。
 - 🤖 **Claude 读取你的整个仓库。** 一流的 **MCP 服务器**(21 个工具): 在 Claude Code、Claude Desktop、Cursor、Windsurf、VS Code 中直接搜索、问答、起草、检查与分析。
 - ⏳ **它绝不*悄悄*遗忘。** FSRS 记忆衰减把你即将失去的真实笔记顶上来，还能检测整个仓库的知识缺口、矛盾与重复。
 - 🔒 **本地优先。仓库非破坏。零密钥。** 本地嵌入 + 设备端向量存储，原始文件**永不被修改**。除非你主动选择，任何数据都不会离开你的机器。
