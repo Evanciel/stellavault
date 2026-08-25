@@ -9,7 +9,25 @@
   "homepage": "https://github.com/Evanciel/stellavault",
   "bugs": "https://github.com/Evanciel/stellavault/issues",
   "mcpName": "io.github.Evanciel/stellavault",
-  "keywords": ["mcp", "mcp-server", "model-context-protocol", "claude", "claude-desktop", "anthropic", "cursor", "windsurf", "obsidian", "second-brain", "knowledge-graph", "vector-search", "zettelkasten", "fsrs", "rag", "ai", "3d-visualization"],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "claude",
+    "claude-desktop",
+    "anthropic",
+    "cursor",
+    "windsurf",
+    "obsidian",
+    "second-brain",
+    "knowledge-graph",
+    "vector-search",
+    "zettelkasten",
+    "fsrs",
+    "rag",
+    "ai",
+    "3d-visualization"
+  ],
   "license": "MIT",
   "author": "Evan",
   "type": "module",
@@ -50,7 +68,8 @@
     "@xmldom/xmldom": "^0.8.13",
     "fast-uri": "^3.1.2",
     "form-data": "^4.0.6",
-    "hono": "^4.12.26"
+    "hono": "^4.12.26",
+    "pdfjs-dist": "^6.2.108"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -68,6 +87,7 @@
     "officeparser": "^6.0.7",
     "open": "^11.0.0",
     "ora": "^9.3.0",
+    "pdfjs-dist": "^6.2.108",
     "sqlite-vec": "^0.1.7",
     "unpdf": "^1.4.0",
     "xlsx": "^0.18.5"

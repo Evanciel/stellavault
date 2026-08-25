@@ -81,3 +81,6 @@ audit_full.json
 audit_temp.json
 audit-tmp.json
 lstree.json
+
+# sync 데몬 런타임 산출물 — 충돌 사이드카는 커밋 대상이 아니다
+packages/sync/.sync-conflicts.json
