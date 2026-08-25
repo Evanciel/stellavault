@@ -299,6 +299,14 @@ export interface AppSettings {
   // the second brain files writes autonomously-with-undo by design (memory-relax philosophy);
   // this is the opt-in for users who want a confirm gate. Optional so older settings type-check.
   confirmWrites?: boolean;
+  // Thinking display (hermes absorb): opt-in — let local reasoning models (deepseek-r1/qwen3)
+  // think and stream their chain-of-thought as a collapsible block. Default OFF (gemma4 answers
+  // fastest with thinking suppressed). Optional so older settings type-check.
+  showThinking?: boolean;
+  // Quick capture (hermes absorb): global hotkey opens a tiny always-on-top input that files a
+  // thought straight into the vault via the audited capture funnel. Default ON; toggle takes
+  // effect on restart. Optional so older settings type-check.
+  quickCapture?: boolean;
 }
 
 // ─── Second-brain auto-capture (Design §6) ──────────────────────────────────
@@ -306,7 +314,7 @@ export interface AppSettings {
 // arg to 'vault:capture'; the DTOs below back the Capture/Review/Category panels
 // (centroids/embeddings are NEVER sent to the renderer).
 export type CaptureKind = 'file' | 'url' | 'text';
-export type CaptureSource = 'drop' | 'mcp' | 'clip';
+export type CaptureSource = 'drop' | 'mcp' | 'clip' | 'quick';
 export type CaptureStage = 'fleeting' | 'literature' | 'permanent';
 
 export interface CaptureRequest {
@@ -632,6 +640,8 @@ export interface IpcChannelMap {
 
   // ─── Second-brain auto-capture (Design §6.4) ───
   'vault:capture':      { args: [req: CaptureRequest]; result: { id: string } };
+  // Quick capture (hermes absorb): hide the always-on-top quick-capture window (Esc / after filing).
+  'capture:hide':       { args: []; result: void };
   'capture:list':       { args: [limit?: number]; result: CaptureItem[] };
   'capture:set-paused': { args: [paused: boolean]; result: void };
   'capture:counts':     { args: []; result: CaptureCounts };
@@ -646,7 +656,7 @@ export interface IpcChannelMap {
   // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
   // streamId). The API key NEVER appears in these args (main reads SecretStore).
   // sessionId routes the persisted assistant turn to the right session on done.
-  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean }]; result: void };
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean; showThinking?: boolean }]; result: void };
   'chat:abort': { args: [streamId: string]; result: void };
   // Steer-after-tool (P1-3): enqueue a free-text steer note onto a RUNNING agent stream — injected
   // before the next model turn WITHOUT aborting. MAIN owner-guards (wcId), length/queue-bounds, and
@@ -760,7 +770,10 @@ export interface IpcEventMap {
   // Context-fill vitals (P1-4): ONE pre-stream frame per send. fillPct/charsIn are TEXT-ONLY input
   // message fill vs budgetChars (CHAT_MAX_TOTAL_CHARS — the app's own hard cap), NOT a token count
   // and NOT a model context window; excludes system/RAG/coreMemory/image-attachment chars.
-  'chat:vitals': { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
+  'chat:vitals': { streamId: string; fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number };
+  // Thinking display (hermes absorb): reasoning-model chain-of-thought deltas — ephemeral,
+  // never persisted with the session. Emitted only when the request opted in (showThinking).
+  'chat:thinking': { streamId: string; delta: string };
   // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
   'chat:skill-invoke': { streamId: string; name: string };
   // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
