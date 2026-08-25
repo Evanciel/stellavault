@@ -42,7 +42,9 @@ describe('C — thinking deltas (parsers + body builders)', () => {
 
   it('agent native path honors showThinking (think flag + onThinking pass-through)', () => {
     const src = read('src/main/chat-engine.ts');
-    expect(src).toContain('toolset.schemas, !!opts.showThinking), signal, onDelta, opts.onThinking');
+    // post-#14: the native call lives in makeNativeAdapter; selectTransport threads opts through
+    expect(src).toContain('toolset.schemas, showThinking), signal, onDelta, onThinking');
+    expect(src).toContain('onDelta, !!opts.showThinking, opts.onThinking');
   });
 
   it('thinking rides its own allowlisted event and is NEVER persisted with the session', () => {
