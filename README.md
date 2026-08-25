@@ -5,7 +5,7 @@
 **The local-first second brain that Claude remembers.**<br/>
 Karpathy's self-compiling wiki × Zettelkasten — fully local, vault-safe, and MCP-native.
 
-[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-integration-21-tools) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-700%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-integration-21-tools) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
@@ -39,7 +39,7 @@ The result is one local-first knowledge tool — a full markdown editor, a 3D ne
 
 - 🧠 **It compiles itself.** Drop in a PDF, a YouTube link, or a half-formed thought — Stellavault extracts it to `raw/`, then *compiles* a clean `_wiki/` with concepts and backlinks. Knowledge that organizes itself as it grows.
 - 🔍 **Search that actually finds it.** Hybrid retrieval fuses semantic meaning, exact keywords (BM25), and your own `[[wikilinks]]` / `#tags` with **weighted RRF**, then re-ranks by an FSRS memory model so what you're *actually* using resurfaces. 50+ languages, fully local, zero API keys.
-- 🌌 **Your mind, in 3D.** A real-time neural graph (React Three Fiber) — cluster coloring, constellations, heatmaps, a timeline, and a multiverse P2P view. A way to *see* the shape of what you know.
+- 🌌 **Your mind, in 3D.** A real-time neural graph (React Three Fiber) — cluster view with folder drilldown, per-note local graphs, tag overlays, and two-class edges that keep *your* wikilinks visually distinct from AI-inferred similarity. Scales to a full 17k-note vault. A way to *see* the shape of what you know.
 - 🤖 **Claude reads your entire vault.** A first-class **MCP server** (21 tools): Claude can search, ask, draft, lint, and analyze your knowledge from Claude Code, Claude Desktop, Cursor, Windsurf, or VS Code.
 - ⏳ **It never *silently* forgets.** FSRS memory decay surfaces the real notes you're about to lose — plus gap, contradiction, and duplicate detection across the whole vault.
 - 🔒 **Local-first. Vault-safe. Zero keys.** Local embeddings, an on-device vector store, and your original files are **never modified**. Nothing leaves your machine unless you opt in.
