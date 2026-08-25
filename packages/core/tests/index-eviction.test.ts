@@ -1207,6 +1207,14 @@ describe('indexFiles 도 DB 짝짓기를 본다 (코덱스 10차 P1)', () => {
     //    먼저 삭제를 막아서, 경계 검사가 사라져도 시험이 초록으로 남는다 —
     //    처음에 그렇게 짰다가 변이가 살아남는 것을 보고 알았다.
     const lowered = vault.toLowerCase();
+
+    // 🔴 이 시험이 재는 상황은 <대소문자를 무시하는 파일시스템>에서만 성립한다(Windows·macOS
+    //    기본). 구분하는 파일시스템에서는 소문자 경로가 아예 다른 디렉터리라, 파일이 "없다"는
+    //    판정도 그것을 지우는 것도 옳다 — 여기서 삭제를 0 으로 요구하면 옳은 동작을 실패로 만든다.
+    //    mkdtemp 의 무작위 접미사에 대문자가 섞이느냐에 따라 갈려서 리눅스 CI 에서 빨갛게 떴다.
+    //    플랫폼 이름으로 가르지 않고 <실제로 그 경로가 열리는지> 로 판정한다.
+    if (lowered !== vault && !existsSync(lowered)) return;
+
     store.setMeta(VAULT_OWNER_KEY, resolvePath(lowered));
 
     const r = await indexFiles(lowered, [join(lowered, 'keep.md')], { store, embedder });
