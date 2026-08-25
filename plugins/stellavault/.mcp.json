@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "stellavault": {
+      "command": "npx",
+      "args": ["-y", "stellavault@latest", "serve"]
+    }
+  }
+}
