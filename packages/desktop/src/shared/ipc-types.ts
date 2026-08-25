@@ -34,6 +34,14 @@ export interface DecayItem {
   filePath: string;
 }
 
+// Proactive review brief (③ v2) — the COMPACT, read-only payload behind the chat
+// empty-state "review" chips. Titles / cluster names ONLY: never a documentId,
+// filePath, retrievability, or severity (no-secret invariant — see chat:proactive-brief).
+export interface ProactiveBrief {
+  decaying: { title: string }[];
+  weakLinks: { a: string; b: string }[];
+}
+
 // Search panel (W1-4) — options for 'search:query'.
 // mode 'keyword' disables the semantic signal (BM25 + entity only);
 // pathPrefix is a vault-relative folder prefix (forward slashes), filtered post-hoc.
@@ -471,8 +479,20 @@ export interface IpcChannelMap {
   // Core
   'core:search':        { args: [query: string, limit?: number]; result: SearchResult[] };
   'core:get-stats':     { args: []; result: VaultStats };
-  'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
+  // 🔴 `foreignDb`·`ownershipUnverified` 를 함께 돌려준다 (코덱스 14차 P2).
+  //    둘만 빠져 있으면 UI 는 "0개 색인" 을 <빈 볼트>로 읽는다 — 그것이 이 사고에서
+  //    init 이 사용자 볼트에 샘플 노트를 쓸 뻔했던 바로 그 오독이다.
+  // 🔴 `ok` 는 <이 실행이 무언가를 이뤘는가>다 (코덱스 16차 P2). 한때 main 이
+  //    `summarizeIndexRun(...).ok` 를 계산해 놓고 <응답에서 버렸다> — 그래서
+  //    `allFailed`(전부 실패)가 렌더러에는 성공으로 도착했다. 계산한 것을 안 보내면
+  //    계산하지 않은 것과 같다.
+  'core:index':         { args: []; result: {
+    indexed: number; totalChunks: number; failed: number;
+    foreignDb: boolean; ownershipUnverified: boolean; note: string; ok: boolean;
+  } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
+  // ③ v2 — read-only proactive review brief (titles/cluster-names only) for the chat empty-state.
+  'chat:proactive-brief': { args: []; result: ProactiveBrief };
 
   // Search panel (W1-4) — full hybrid/keyword search with tag + path filters.
   'search:query':       { args: [query: string, opts?: SearchQueryOpts]; result: SearchResult[] };
@@ -513,6 +533,12 @@ export interface IpcChannelMap {
   // Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md).
   'graph:clusters':       { args: [opts?: { mode?: string }]; result: ClusterLevelGraph };
   'graph:expand-cluster': { args: [opts: { mode?: string; clusterId: number }]; result: ClusterMembersGraph };
+  // 그래프 상한 밖의 노트도 "주변 보기"가 되게 하는 경로 — 링크 테이블만 읽는다(임베딩 없음).
+  'graph:note-links':     { args: [opts: { filePath: string; depth?: number }]; result: {
+    found: boolean; isolated: boolean; truncated: number;
+    nodes: Array<{ id: string; title: string; filePath: string; hop: number }>;
+    edges: Array<{ source: string; target: string; weight: number; kind: 'link' }>;
+  } };
   // Startup race guard — renderer queries this on mount (see App.tsx).
   'core:get-ready':       { args: []; result: boolean };
 
@@ -545,6 +571,16 @@ export interface IpcChannelMap {
   // The renderer passes only provider + optional baseURL (needed for openai-compatible/Ollama).
   // A compromised renderer can no longer pass an arbitrary key to trigger outbound requests.
   'ai:list-models':     { args: [opts: { provider: string; baseURL?: string }]; result: string[] };
+  // 설치 가능한 모델 목록 API 가 Ollama 에 없어서(검색 API 404, 목록은 HTML) 카탈로그 대신
+  // <이름 확인 + 설치> 로 간다. exists 가 3값인 것에 주의 — null 은 "확인 못 했다" 다.
+  // 목록 API 가 없어 공개 라이브러리 페이지를 읽는다 — 그래서 <깨질 수 있다>. models 가 비고
+  // error 가 있으면 사이트가 바뀐 것이다: UI 는 빈 목록이 아니라 그 사실을 말해야 한다.
+  'ollama:browse-models': { args: [opts?: { source?: 'ollama' | 'huggingface'; query?: string; sort?: 'newest' | 'popular' }];
+                            result: { models: string[]; error?: string } };
+  'ollama:model-exists': { args: [opts: { model: string }]; result: { exists: boolean | null } };
+  'ollama:pull-model':   { args: [opts: { model: string; baseURL?: string }];
+                           result: { ok: true } | { ok: false; reason: string } };
+  'ollama:pull-abort':   { args: []; result: { aborted: boolean } };
   // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
   // the plaintext key NEVER returns to the renderer after being stored.
   'ai:set-secret':   { args: [provider: string, key: string]; result: void };
@@ -758,6 +794,9 @@ export interface IpcEventMap {
   // ALLOWLISTED PROJECTION — carries ONLY {status, user_code, verification_url, expiresIn}. The
   // device_auth_id + tokens live in a separate MAIN-ONLY object and are NEVER sent here.
   'oauth:progress': { status: 'pending' | 'authorized' | 'error'; user_code?: string; verification_url?: string; expiresIn?: number; message?: string };
+  // Ollama 설치 진행률 — 런타임(다운로드)과 모델(pull) 둘 다. e.sender 로만 보낸다.
+  'ollama:download-progress': { phase: 'fetching' | 'downloading' | 'extracting' | 'done'; received?: number; total?: number };
+  'ollama:pull-progress':     { phase: 'verifying' | 'pulling' | 'done'; status?: string; received?: number; total?: number };
 }
 
 // Helper types for typed invoke/on

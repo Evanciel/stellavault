@@ -111,15 +111,23 @@ export async function doctorCommand() {
     });
   }
 
-  // 7. Embedder model cached
-  const cacheDir = join(homedir(), '.cache', 'onnxruntime');
-  const hfCache = join(homedir(), '.cache', 'huggingface');
-  const xenovaCache = join(homedir(), '.cache', 'xenova');
-  const modelCached =
-    existsSync(cacheDir) ||
-    existsSync(hfCache) ||
-    existsSync(xenovaCache) ||
-    existsSync(join(homedir(), '.cache', 'transformers'));
+  // 7. Embedder model cached. The model can live in several places depending on how it was run:
+  //  - STELLAVAULT_MODEL_CACHE override
+  //  - ~/.stellavault/model-cache (Electron / asar-redirect default — local-embedder.ts)
+  //  - @xenova/transformers' own <pkg>/.cache (plain Node default)
+  //  - the generic ~/.cache/* dirs
+  // The old check only looked at ~/.cache/*, so a perfectly-indexed vault still reported
+  // "not downloaded yet" (false negative). Cover the real locations.
+  const modelCacheCandidates: Array<string | undefined> = [
+    process.env.STELLAVAULT_MODEL_CACHE,
+    join(homedir(), '.stellavault', 'model-cache'),
+    join(homedir(), '.cache', 'onnxruntime'),
+    join(homedir(), '.cache', 'huggingface'),
+    join(homedir(), '.cache', 'xenova'),
+    join(homedir(), '.cache', 'transformers'),
+    join(process.cwd(), 'node_modules', '@xenova', 'transformers', '.cache'),
+  ];
+  const modelCached = modelCacheCandidates.some((p) => !!p && existsSync(p));
   checks.push({
     name: 'Embedding model cached',
     pass: modelCached,

@@ -36,6 +36,7 @@ import { CaptureHost } from './components/decisions/CaptureHost.js'; // T3-5/T3-
 import { DropOverlay } from './components/layout/DropOverlay.js'; // second-brain global drop-to-capture
 import { ipc, onIpc } from './lib/ipc-client.js';
 import './theme.css';
+import { runFullIndex } from './lib/run-index.js';
 
 // i18n keys per panel — resolved reactively via useT() at render time.
 const PANEL_TITLE_KEYS: Record<string, MsgKey> = {
@@ -140,7 +141,10 @@ export function App() {
     const markReady = () => {
       setCoreReady(true);
       void ipc('core:get-stats').then((stats) => {
-        if (stats && stats.documentCount === 0) void ipc('core:index');
+        // 🔴 자동 첫 색인도 거부될 수 있다 — 그때 토스트가 뜬다 (코덱스 15차 P2).
+        if (stats && stats.documentCount === 0) {
+          void runFullIndex().catch(err => console.error('[app] 자동 첫 색인 실패:', err));
+        }
       }).catch(() => { /* stats unavailable — user can still reindex manually */ });
     };
     // Listen for the event AND query current state on mount — initCore now resolves

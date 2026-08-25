@@ -41,7 +41,17 @@ export interface GraphEdge {
   source: string;
   target: string;
   weight: number;
+  /**
+   * 어떤 종류의 연결인가. `'link'` = 사용자가 손으로 쓴 `[[위키링크]]`,
+   * `'semantic'` = 임베딩 코사인 유사도. **없으면 semantic 이다** — 링크 엣지가
+   * 생기기 전에 만들어진 payload 가 그대로 유효해야 하므로.
+   *
+   * 이 구분이 두 계층 렌더링의 전부다. "내가 그은 것"이 "모델이 그럴 것 같다고
+   * 한 것"과 같아 보이면 안 된다. (packages/core types/graph.ts GraphEdge 와 미러)
+   */
+  kind?: 'link' | 'semantic';
 }
+
 
 export interface HoverInfo {
   index: number;
@@ -258,6 +268,12 @@ export function buildBaseBuffers(nodes: GraphNode[]): BaseBuffers {
 }
 
 // Adjacency (index-based) for hover neighbor highlight.
+// 순수 로직(파티션·컬러 버퍼·drawRange)은 DOM 없는 모듈로 뺐다 — 이 파일은 모듈 로드
+// 시점에 canvas 텍스처를 만들어서(circleTexture) node 환경에서 import 조차 못 한다.
+// 기존 import 경로가 깨지지 않게 여기서 그대로 재수출한다.
+export { partitionEdges, edgeDrawRange, buildEdgeColors } from './graph-edges-core.js';
+export type { EdgeFilter } from './graph-edges-core.js';
+
 export function buildNeighborSets(nodes: GraphNode[], edges: GraphEdge[]): Map<number, Set<number>> {
   const idToIndex = new Map(nodes.map((n, i) => [n.id, i]));
   const sets = new Map<number, Set<number>>();

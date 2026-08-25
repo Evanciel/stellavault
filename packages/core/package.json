@@ -10,6 +10,10 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./links": {
+      "import": "./dist/links/wikilink.js",
+      "types": "./dist/links/wikilink.d.ts"
+    },
     "./intelligence/youtube-extractor": {
       "import": "./dist/intelligence/youtube-extractor.js",
       "types": "./dist/intelligence/youtube-extractor.d.ts"
@@ -60,6 +64,7 @@
     "mammoth": "^1.12.0",
     "multer": "^2.2.0",
     "officeparser": "^6.0.7",
+    "pdfjs-dist": "^6.2.108",
     "sqlite-vec": "^0.1.7",
     "unpdf": "^1.4.0",
     "xlsx": "^0.18.5"

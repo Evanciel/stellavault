@@ -110,7 +110,15 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
           source: 'ingest',
           type: result.stage,
         };
-        await store.upsertDocument(doc);
+        // 🔴 upsertDocument 가 아니다 — 이 라우터에는 <임베더가 없어> 청크를 못 굽는다.
+        //    그런데 upsertDocument 는 INSERT OR REPLACE 라 cascade 로 <기존 청크를 날린다>.
+        //    같은 초·같은 제목을 다시 ingest 하면 id 가 충돌하고, 그 순간 이미 구워져
+        //    검색되던 문서가 <다음 전체 색인 전까지 검색 불가>가 된다.
+        //    ★`stellavault graph` 는 watcher 없이 API 만 띄우므로 그 "다음" 이 안 올 수 있다.
+        //    → 청크를 남기고 content_hash 만 비운다. 낡은 청크로라도 검색되는 편이
+        //      안 보이는 것보다 낫고, 다음 색인이 같은 id 로 다시 굽는다.
+        //    (코덱스 8차 P1, 2026-08-21)
+        await store.upsertDocumentPreservingChunks(doc);
       } catch (indexErr) {
         console.error('[ingest] Auto-index failed:', indexErr instanceof Error ? indexErr.message : indexErr);
       }
@@ -223,7 +231,15 @@ export function createIngestRouter(opts: IngestRouterOptions): Router {
               source: 'upload',
               type: result.stage,
             };
-            await store.upsertDocument(doc);
+            // 🔴 upsertDocument 가 아니다 — 이 라우터에는 <임베더가 없어> 청크를 못 굽는다.
+            //    그런데 upsertDocument 는 INSERT OR REPLACE 라 cascade 로 <기존 청크를 날린다>.
+            //    같은 초·같은 제목을 다시 ingest 하면 id 가 충돌하고, 그 순간 이미 구워져
+            //    검색되던 문서가 <다음 전체 색인 전까지 검색 불가>가 된다.
+            //    ★`stellavault graph` 는 watcher 없이 API 만 띄우므로 그 "다음" 이 안 올 수 있다.
+            //    → 청크를 남기고 content_hash 만 비운다. 낡은 청크로라도 검색되는 편이
+            //      안 보이는 것보다 낫고, 다음 색인이 같은 id 로 다시 굽는다.
+            //    (코덱스 8차 P1, 2026-08-21)
+            await store.upsertDocumentPreservingChunks(doc);
           } catch (indexErr) {
             console.error('[ingest/file] Auto-index failed:', indexErr instanceof Error ? indexErr.message : indexErr);
           }

@@ -12,9 +12,11 @@ import * as THREE from 'three';
 import { ipc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { useAppStore } from '../../stores/app-store.js';
+import { runFullIndex } from '../../lib/run-index.js';
 import {
   type CoreGraphNode, type GraphNode, type GraphEdge, type HoverInfo,
   MAX_GLOBAL_NODES, DEEP_SPACE_BG,
+  partitionEdges, buildEdgeColors,
   mapCoreNodes, readAccentColor, normalizePath, bfsFilter,
   buildBaseBuffers, buildNeighborSets, applyHoverToBuffers,
   makePointsMaterial, StarFieldLite, GraphErrorBoundary,
@@ -113,17 +115,10 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
 
   // Index pairs for the dim + lit edge buffers (shared layout: link k →
   // floats k*6..k*6+5). Computed once per node/edge set.
-  const linkPairs = useMemo(() => {
-    const idToIndex = new Map(nodes.map((n, i) => [n.id, i]));
-    const pairs: Array<[number, number]> = [];
-    for (const e of edges) {
-      const a = idToIndex.get(e.source);
-      const b = idToIndex.get(e.target);
-      if (a == null || b == null || a === b) continue;
-      pairs.push([a, b]);
-    }
-    return pairs;
-  }, [nodes, edges]);
+  // link-먼저 파티션 — 패널에는 필터 UI 가 없지만 색 구분은 그대로 받는다.
+  // (손으로 그은 위키링크 = 앰버, 추론된 유사도 = 스틸블루)
+  const { pairs: linkPairs, linkCount } = useMemo(() => partitionEdges(nodes, edges), [nodes, edges]);
+  const edgeColors = useMemo(() => buildEdgeColors(linkPairs.length, linkCount), [linkPairs, linkCount]);
 
   // Static dim-edge positions (panel nodes don't move — no sim).
   const edgePositions = useMemo(() => {
@@ -191,8 +186,9 @@ function GraphScene({ nodes, edges, accent, fitSignal, onNodeClick, onHover }: {
         <lineSegments key={`edges-${linkPairs.length}`} raycast={() => null} frustumCulled={false}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[edgePositions, 3]} />
+            <bufferAttribute attach="attributes-color" args={[edgeColors, 4]} />
           </bufferGeometry>
-          <lineBasicMaterial color="#4466aa" transparent opacity={0.16} depthWrite={false} />
+          <lineBasicMaterial vertexColors transparent opacity={1} depthWrite={false} />
         </lineSegments>
       )}
 
@@ -382,7 +378,7 @@ export function GraphPanel() {
           onClick={async () => {
             setIndexing(true);
             try {
-              await ipc('core:index');
+              await runFullIndex();
               const data = await ipc('graph:build', 'semantic') as unknown as { nodes: CoreGraphNode[]; edges: GraphEdge[] };
               setAllNodes(mapCoreNodes(data.nodes ?? []));
               setAllEdges((data.edges ?? []) as GraphEdge[]);

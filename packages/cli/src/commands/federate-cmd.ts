@@ -11,6 +11,7 @@ import {
   isFederationExperimentalEnabled,
 } from '@stellavault/core';
 import type { SharingLevel } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function federateJoinCommand(options: { name?: string }) {
   // Experimental gate (codex ship condition): federation is off-by-default.
@@ -37,6 +38,9 @@ export async function federateJoinCommand(options: { name?: string }) {
 
   // 로컬 스토어 초기화 (검색 응답용)
   const store = createSqliteVecStore(config.dbPath);
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'federate join');
   await store.initialize();
 
   const embedder = createLocalEmbedder(config.embedding.localModel);

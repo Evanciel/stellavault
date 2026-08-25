@@ -2,6 +2,7 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, detectDuplicates } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 export async function duplicatesCommand(options: { threshold?: string }) {
   const config = loadConfig();
@@ -9,6 +10,9 @@ export async function duplicatesCommand(options: { threshold?: string }) {
   const threshold = parseFloat(options.threshold ?? '0.88');
 
   console.error(chalk.dim('⏳ Scanning for duplicates...'));
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'duplicates');
   await hub.store.initialize();
   await hub.embedder.initialize();
 

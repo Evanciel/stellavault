@@ -2,6 +2,7 @@
 
 import chalk from 'chalk';
 import { loadConfig, createKnowledgeHub, DecayEngine } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 interface AccessStat { access_type: string; cnt: number }
 interface TopDoc { document_id: string; title: string; cnt: number }
@@ -13,6 +14,9 @@ export async function digestCommand(options: { days?: string; visual?: boolean }
   const hub = createKnowledgeHub(config);
   const days = parseInt(options.days ?? '7', 10);
 
+  // 🔴 DB 를 <열기 전에> 각인을 묻는다. `initialize()` 는 여는 것만으로
+  //    WAL 전환·CREATE TABLE·ALTER TABLE 을 남의 DB 에 실행한다.
+  refuseForeignDbEarly(config.dbPath, config.vaultPath ?? '', 'digest');
   await hub.store.initialize();
   const db = hub.store.getDb() as any;
   if (!db) { console.error(chalk.red('❌ Cannot access database')); process.exit(1); }

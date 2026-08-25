@@ -28,7 +28,7 @@
 // subscription is attached ONCE on mount (before any chat:send can fire) and
 // torn down on unmount, where every in-flight stream is also aborted.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { ipc, onIpc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { useStickToBottom } from '../../lib/use-stick-to-bottom.js';
@@ -40,7 +40,7 @@ import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { applyTemplate, type SlashCommand } from './commands.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
-import type { ChatMessage, ChatCitation, ChatAttachment, ReflectionCandidate } from '../../../shared/ipc-types.js';
+import type { ChatMessage, ChatCitation, ChatAttachment, ReflectionCandidate, ProactiveBrief } from '../../../shared/ipc-types.js';
 
 const MAX_CONCURRENT = 2;
 
@@ -127,6 +127,14 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [planSteps, setPlanSteps] = useState<string[]>([]);
   const [planDone, setPlanDone] = useState(0);
   const [input, setInput] = useState('');
+  // ③ v2: proactive review brief for the empty-state chips (forgetting / weak links). Fetched once
+  // on mount when this session starts empty; read-only, falls back to static suggestions if empty.
+  const [brief, setBrief] = useState<ProactiveBrief | null>(null);
+  useEffect(() => {
+    if (initialMessages.length > 0) return; // only a fresh/empty session gets the proactive brief
+    void ipc('chat:proactive-brief').then(setBrief).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Steer-after-tool (P1-3): free text the user types WHILE the agent runs; sent via chat:steer to
   // the last live stream and injected before its next model turn (never aborts). Cleared only after
   // the invoke resolves, so a too-late/no-op steer stays in the box for the user to resend.
@@ -682,16 +690,34 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
                 {t(`panel.ai.intro.${introIdx}.body` as never)}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-                {[0, 1, 2].map((s) => {
-                  const label = t(`panel.ai.suggest.${s}` as never);
-                  return (
-                    <button key={s} onClick={() => { setInput(label); }}
-                      style={{ padding: '7px 13px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--ink-dim)', fontSize: 12.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; }}
-                    >{label}</button>
-                  );
-                })}
+                {(() => {
+                  const chipStyle = { padding: '7px 13px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--ink-dim)', fontSize: 12.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' } as const;
+                  const onEnter = (e: ReactMouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; };
+                  const onLeave = (e: ReactMouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; };
+                  // ③ v2: data-driven proactive chips (forgetting / weak links) — what a generic
+                  // agent + plain Obsidian can't surface. Clicking one SENDS the prompt straight to
+                  // the agent (reuses dispatchTurn). Falls back to the static suggestions when the
+                  // brief is empty (unindexed / fresh vault) so the empty-state is never blank.
+                  const dataChips: { key: string; label: string; prompt: string }[] = [];
+                  for (const d of brief?.decaying ?? []) dataChips.push({ key: `d:${d.title}`, label: `📉 ${t('panel.ai.proactive.forgetting')}: ${d.title}`, prompt: t('panel.ai.proactive.reviewPrompt').replace('{title}', d.title) });
+                  for (const w of brief?.weakLinks ?? []) dataChips.push({ key: `w:${w.a}:${w.b}`, label: `🔗 ${t('panel.ai.proactive.weakLink')}: ${w.a} ↔ ${w.b}`, prompt: t('panel.ai.proactive.connectPrompt').replace('{a}', w.a).replace('{b}', w.b) });
+                  const chips = dataChips.slice(0, 3);
+                  if (chips.length > 0) {
+                    return chips.map((c) => (
+                      <button key={c.key} title={c.label}
+                        onClick={() => dispatchTurn([...messages, { id: crypto.randomUUID(), role: 'user', text: c.prompt, ts: Date.now() }])}
+                        style={{ ...chipStyle, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        onMouseEnter={onEnter} onMouseLeave={onLeave}
+                      >{c.label}</button>
+                    ));
+                  }
+                  return [0, 1, 2].map((s) => {
+                    const label = t(`panel.ai.suggest.${s}` as never);
+                    return (
+                      <button key={s} onClick={() => { setInput(label); }} style={chipStyle} onMouseEnter={onEnter} onMouseLeave={onLeave}>{label}</button>
+                    );
+                  });
+                })()}
               </div>
             </div>
           ) : (

@@ -6,6 +6,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGraphStore } from '../stores/graph-store.js';
 import { useHeatmap } from '../hooks/useHeatmap.js';
+import { PALETTE_RGB } from '../lib/palette.js';
 
 // 원형 포인트 텍스처 생성
 function createCircleTexture(): THREE.Texture {
@@ -31,24 +32,9 @@ function createCircleTexture(): THREE.Texture {
 
 const circleTexture = createCircleTexture();
 
-// 선명한 15색 팔레트
-const PALETTE = [
-  [0.49, 0.23, 0.93], // #7c3aed 보라
-  [0.93, 0.27, 0.60], // #ec4899 핑크
-  [0.96, 0.62, 0.04], // #f59e0b 노랑
-  [0.06, 0.72, 0.51], // #10b981 초록
-  [0.23, 0.51, 0.96], // #3b82f6 파랑
-  [0.94, 0.27, 0.27], // #ef4444 빨강
-  [0.02, 0.71, 0.83], // #06b6d4 시안
-  [0.52, 0.80, 0.09], // #84cc16 라임
-  [0.98, 0.57, 0.09], // #f97316 오렌지
-  [0.55, 0.36, 0.96], // #8b5cf6 인디고
-  [0.08, 0.72, 0.65], // #14b8a6 틸
-  [0.91, 0.47, 0.98], // #e879f9 퓨시아
-  [0.92, 0.80, 0.03], // #eab308 골드
-  [0.13, 0.83, 0.93], // #22d3ee 스카이
-  [0.98, 0.45, 0.52], // #fb7185 코랄
-] as number[][];
+// 클러스터 팔레트는 lib/palette.ts 단일 소스에서 온다(과거엔 이 파일 · ClusterLabels ·
+// ClusterPlanets · core 에 각각 복사본이 있어 하나만 고치면 조용히 어긋났다).
+const PALETTE = PALETTE_RGB;
 
 export function GraphNodes() {
   const pointsRef = useRef<THREE.Points>(null);
@@ -175,6 +161,18 @@ export function GraphNodes() {
       let r = pal[0], g = pal[1], b = pal[2];
       let sz = 4 + node.size * 3;
       let gsz = 12 + node.size * 8;
+
+      // Super-node = a PLANET (lit sphere drawn by <ClusterPlanets/>), so the flat Points sprite
+      // shrinks to a tiny bright core hidden inside the sphere — it stays ONLY so the existing
+      // Points raycaster keeps hover/drilldown working (threshold-based, independent of size).
+      // A modest halo reads as the planet's atmosphere glow. Brightness lift keeps the core warm.
+      if (node.isCluster) {
+        r = Math.min(r * 0.55 + 0.45, 1);
+        g = Math.min(g * 0.55 + 0.45, 1);
+        b = Math.min(b * 0.55 + 0.45, 1);
+        sz *= 0.32;
+        gsz *= 0.45;
+      }
 
       // Design Ref: §2.3 — F06 히트맵 오버레이 (decay와 상호 배타)
       if (showHeatmap && heatmapColors && !hasPulse && !hasActive) {
@@ -376,11 +374,11 @@ export function GraphNodes() {
         <pointsMaterial
           vertexColors
           transparent
-          opacity={isLight ? 0.06 : 0.25}
+          opacity={isLight ? 0.06 : 0.2}
           depthWrite={false}
           blending={isLight ? THREE.NormalBlending : THREE.AdditiveBlending}
           sizeAttenuation
-          size={isLight ? 10 : 18}
+          size={isLight ? 10 : 13}
           map={circleTexture}
           alphaTest={0.05}
         />

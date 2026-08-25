@@ -5,13 +5,15 @@ import { Router } from 'express';
 import type { VectorStore } from '../../store/types.js';
 import type { GraphData } from '../../types/graph.js';
 import type { DecayEngine } from '../../intelligence/decay-engine.js';
-import { buildGraphData } from '../graph-data.js';
+import { buildGraphData, type ClusteredGraph } from '../graph-data.js';
 
 interface AnalyticsRouterOptions {
   store: VectorStore;
   vaultName: string;
   decayEngine?: DecayEngine;
-  graphCaches: Map<string, { data: GraphData; generatedAt: string; cachedAt: number }>;
+  // clustered? matches server.ts GraphCacheEntry; this router keys by bare mode and never
+  // reads it, but the shared Map type must stay assignable.
+  graphCaches: Map<string, { data: GraphData; clustered?: ClusteredGraph; generatedAt: string; cachedAt: number }>;
   GRAPH_CACHE_TTL: number;
 }
 

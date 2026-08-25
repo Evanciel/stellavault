@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import ora from 'ora';
 import chalk from 'chalk';
 import { loadConfig, createSqliteVecStore, createLocalEmbedder, indexVault, createSearchEngine } from '@stellavault/core';
+import { refuseForeignDbEarly } from '../db-guard.js';
 
 function ask(rl: ReturnType<typeof createInterface>, question: string, defaultVal?: string): Promise<string> {
   const suffix = defaultVal ? ` ${chalk.dim(`(${defaultVal})`)}` : '';
@@ -46,7 +47,10 @@ export async function initCommand() {
 
     console.log(chalk.green(`  ✓ Vault: ${vaultPath}\n`));
 
-    // Save config
+    // 🔴🔴 설정을 <여기서 쓰지 않는다> (코덱스 13차 P1). 소유권 거부는 색인 <뒤>에
+    //   판정되는데, 설정을 먼저 쓰면 거부되고 exit 1 로 끝나도 <잘못된 볼트/DB 짝>이
+    //   `~/.stellavault.json` 에 영구히 남는다. 그 뒤로는 그것이 기본값처럼 쓰인다.
+    //   ★`indexCommand` 에서 고친 "검사 전 자동 등록" 과 <같은 결함>이 여기 남아 있었다.
     const configDir = join(homedir(), '.stellavault');
     mkdirSync(configDir, { recursive: true });
     const dbPath = join(configDir, 'index.db');
@@ -59,8 +63,6 @@ export async function initCommand() {
       search: { defaultLimit: 10, rrfK: 60 },
       mcp: { mode: 'stdio', port: 3333 },
     };
-    writeFileSync(join(homedir(), '.stellavault.json'), JSON.stringify(configData, null, 2), 'utf-8');
-    console.log(chalk.dim(`  Config saved: ~/.stellavault.json`));
 
     // Step 2: Indexing
     console.log('');
@@ -69,6 +71,8 @@ export async function initCommand() {
 
     const spinner = ora({ text: '  Loading embedding model (first run downloads ~30MB, please wait)...', indent: 2 }).start();
 
+    // 🔴 여는 것 자체가 WAL·스키마를 쓴다 — 그 전에 묻는다 (코덱스 15차 P1).
+    refuseForeignDbEarly(dbPath, vaultPath, 'init');
     const store = createSqliteVecStore(dbPath);
     await store.initialize();
 
@@ -87,10 +91,38 @@ export async function initCommand() {
       },
     });
 
-    spinner.succeed(chalk.green(`  Indexed ${result.indexed} docs, ${result.totalChunks} chunks (${(result.elapsedMs / 1000).toFixed(1)}s)`));
+    // 🔴 초록 완료 표시는 <소유 판정 뒤로> 미룬다 (코덱스 14차 P2). 여기서 먼저 찍으면
+    //    거부된 실행도 "✔ Indexed 0 docs" 라는 <성공 모양>으로 한 줄 남고, 그 줄은
+    //    바로 아래 빨간 문단보다 스크롤에서 먼저 눈에 든다.
+    const doneLine = `  Indexed ${result.indexed} docs, ${result.totalChunks} chunks (${(result.elapsedMs / 1000).toFixed(1)}s)`;
 
-    // If vault was empty, seed 3 sample notes so the first search and graph aren't blank.
-    if (result.indexed === 0) {
+    // 🔴🔴 소유권 거부를 <빈 볼트>로 오인하지 않는다 (코덱스 10차 P1).
+    //   indexVault 는 "이 DB 는 남의 것" 일 때 indexed: 0 으로 돌아온다. 그 값만 보면
+    //   여기서 "볼트가 비었다" 로 읽고 사용자의 <내용이 가득한 볼트>에 샘플 노트 3개를
+    //   써 넣는다 — 되돌리기 번거로운 쓰기다.
+    if (result.foreignDb || result.ownershipUnverified) {
+      spinner.fail(chalk.red('  색인하지 않았다'));
+      console.log(chalk.red(
+        '\n  🔴 이 DB 가 이 볼트의 것이라는 증거가 없어 색인하지 않았다. 샘플 노트도 만들지 않는다.',
+      ));
+      console.log(chalk.dim('     설정도 저장하지 않았다 — 잘못된 볼트/DB 짝이 남지 않게.'));
+      console.log(chalk.dim('     STELLAVAULT_DB_PATH 를 이 볼트 전용 경로로 지정하고 다시 실행하라.\n'));
+      await store.close();
+      process.exit(1);
+    }
+
+    spinner.succeed(chalk.green(doneLine));
+
+    // 🟢 여기서부터는 이 DB 가 이 볼트의 것이다 — 이제 설정을 남긴다.
+    writeFileSync(join(homedir(), '.stellavault.json'), JSON.stringify(configData, null, 2), 'utf-8');
+    console.log(chalk.dim(`  Config saved: ~/.stellavault.json`));
+
+    // 🔴🔴 <빈 볼트>의 기준은 `indexed === 0` 이 아니라 `totalFiles === 0` 이다
+    //   (코덱스 11차 P1). indexed 는 "이번에 새로 구운 수" 라, 전부 unchanged 이거나
+    //   전부 실패해도 0 이다. 그 값으로 판정하면 <내용이 가득한 볼트>에 샘플 노트
+    //   3개를 써 넣는다 — 사용자 폴더에 대한 되돌리기 번거로운 쓰기다.
+    //   ★위에서 소유권 거부는 이미 걸러 냈고, 여기서 남은 오판이 이것이었다.
+    if (result.totalFiles === 0) {
       console.log(chalk.yellow('\n  Your vault is empty — creating 3 starter notes so you can explore.\n'));
 
       const rawDir = join(vaultPath, 'raw');

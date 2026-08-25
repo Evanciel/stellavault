@@ -5,7 +5,7 @@
 **Claude が記憶するローカルファーストなセカンドブレイン。**<br/>
 Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完全ローカル、ボールト非破壊、MCP ネイティブ。
 
-[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-連携-21ツール) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-700%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-連携-21ツール) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh.md)
 
@@ -39,7 +39,7 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 
 - 🧠 **自らをコンパイルします。** PDF、YouTube リンク、走り書きのメモ — 何でも放り込めば `raw/` に抽出し、概念とバックリンクが整理された綺麗な `_wiki/` へと *コンパイル* します。積み重なるほど自ら整理される知識。
 - 🔍 **本当に見つかる検索。** 意味(セマンティック)+ 正確なキーワード(BM25)+ あなたの `[[ウィキリンク]]` / `#タグ` を **重み付き RRF** で融合し、FSRS 記憶モデルで再ランキングして *いま使っている* ノートを浮上させます。50+ 言語、完全ローカル、APIキー 0。
-- 🌌 **あなたの思考を 3D で。** リアルタイムのニューラルグラフ(React Three Fiber)— クラスタ色分け、コンステレーション、ヒートマップ、タイムライン、マルチバース P2P ビュー。知っていることの *かたち* を目で見る方法。
+- 🌌 **あなたの思考を 3D で。** リアルタイムのニューラルグラフ(React Three Fiber)— フォルダへ掘り下げられるクラスタビュー、ノートごとのローカルグラフ、タグオーバーレイ、そして*自分で書いた*ウィキリンクと AI 類似度を見分けられる 2 層エッジ。1.7 万ノートのボルト全量まで。知っていることの *かたち* を目で見る方法。
 - 🤖 **Claude がボールト全体を読みます。** ファーストクラスの **MCP サーバー**(21 ツール): Claude Code・Claude Desktop・Cursor・Windsurf・VS Code から検索・質問・ドラフト・点検・分析を直接。
 - ⏳ **決して *静かに* 忘れません。** FSRS 記憶減衰が失いかけている本当のノートを浮上させ、ボールト全体の知識ギャップ・矛盾・重複まで検出します。
 - 🔒 **ローカルファースト。ボールト非破壊。キー 0。** ローカル埋め込み + オンデバイスのベクトルストア、元のファイルは **決して変更されません。** オプトインしない限り、何も端末を離れません。

@@ -93,13 +93,28 @@ export function loadConfig(configPath?: string): StellavaultConfig {
     }
   }
 
-  return { ...DEFAULT_CONFIG };
+  // 🔴 설정 파일이 <없을> 때도 같은 문을 지난다. 여기서 바로 돌려주면 위 환경변수
+  //    처리를 건너뛰어, "설정 파일이 있으면 통하고 없으면 안 통하는" 규칙이 된다.
+  return mergeConfig(DEFAULT_CONFIG, {});
 }
 
 function mergeConfig(defaults: StellavaultConfig, overrides: Partial<StellavaultConfig>): StellavaultConfig {
+  // 🔴🔴 `STELLAVAULT_DB_PATH` 는 <여기서> 이긴다 (2026-08-22).
+  //
+  //   오랫동안 이 환경변수를 <`index` 명령 하나만> 읽었다(`resolveDbPath`). 그래서
+  //   소유권 가드가 찍는 안내문 —
+  //       "STELLAVAULT_DB_PATH=<다른경로.db> stellavault <명령>"
+  //   — 이 나머지 명령에서는 <통하지 않는 조언>이었다. 사용자가 시킨 대로 해도
+  //   같은 DB 를 계속 열고, 왜 안 되는지 알 길이 없다.
+  //   ★막다른 길을 안내하는 오류 메시지는 <없는 것보다 나쁘다>.
+  //
+  //   ⚠️ 실측으로 알았다: 15개 명령에 가드를 붙인 뒤 이 환경변수로 <남의 DB> 를
+  //      가리켜 거부를 확인하려 했더니 전부 통과했다. 코드가 아니라 <내 시험이>
+  //      틀린 것이었지만, 그 실패가 이 진짜 결함을 드러냈다.
+  const envDbPath = process.env.STELLAVAULT_DB_PATH?.trim();
   return {
     vaultPath: overrides.vaultPath ?? defaults.vaultPath,
-    dbPath: overrides.dbPath ?? defaults.dbPath,
+    dbPath: envDbPath || overrides.dbPath || defaults.dbPath,
     folders: { ...defaults.folders, ...overrides.folders },
     embedding: { ...defaults.embedding, ...overrides.embedding },
     chunking: { ...defaults.chunking, ...overrides.chunking },
