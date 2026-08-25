@@ -73,6 +73,45 @@ describe('redactSecrets', () => {
     expect(out.ai?.baseURL).toBe('https://api.openai.com');
   });
 
+  // ─── Track B: positive-allowlist construction drops ANY injected token sibling ───
+  it('an injected ai.refresh_token / access_token / id_token is DROPPED (allowlist, not denylist)', () => {
+    const raw = {
+      ai: {
+        provider: 'openai-chatgpt',
+        model: 'gpt-5',
+        // attacker/buggy injection of token siblings into the stored settings:
+        refresh_token: 'rt-LEAK',
+        access_token: 'at-LEAK',
+        id_token: 'eyJ-LEAK',
+        oauthToken: 'tok-LEAK',
+      },
+    } as unknown as AppSettings;
+
+    // Even WITHOUT passing an oauth status, the allowlist construction must drop the tokens —
+    // they are not in the named field set, so they never reach the output (not merely "removed by name").
+    const out = redactSecrets(raw, () => false, true);
+    const json = JSON.stringify(out);
+    expect(json).not.toContain('rt-LEAK');
+    expect(json).not.toContain('at-LEAK');
+    expect(json).not.toContain('eyJ-LEAK');
+    expect(json).not.toContain('tok-LEAK');
+    expect(json).not.toMatch(/refresh_token|access_token|"id_token"|oauthToken/);
+    expect(out.ai?.provider).toBe('openai-chatgpt');
+    expect(out.ai?.hasToken).toBe(false);
+  });
+
+  it('the non-secret OAuth status (hasToken/accountId/plan/expiresAt/experimental) IS reflected', () => {
+    const raw = { ai: { provider: 'openai-chatgpt', model: 'gpt-5' } } as unknown as AppSettings;
+    const out = redactSecrets(raw, () => false, true, {
+      hasToken: true, accountId: 'acct-9', plan: 'pro', expiresAt: 1700, experimental: true,
+    });
+    expect(out.ai?.hasToken).toBe(true);
+    expect(out.ai?.oauthAccountId).toBe('acct-9');
+    expect(out.ai?.oauthPlan).toBe('pro');
+    expect(out.ai?.oauthExpiresAt).toBe(1700);
+    expect(out.ai?.oauthExperimental).toBe(true);
+  });
+
   it('non-ai settings (theme, editor, etc.) pass through unchanged', () => {
     const raw = {
       theme: 'light',
