@@ -1182,8 +1182,11 @@ export interface AgentLoopCtx {
   onMemoryWrite?: (id: string, text: string) => void; // autonomous core_memory_append → undo toast
   onPlan?: (steps: string[], done: number) => void;
   onSkill?: (name: string) => void; // P3: invoke_skill → chat:skill-invoke surface
-  /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
-  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** Resolves true if the user APPROVES a write tool; loop pauses on the await.
+   *  Deny-with-reason (hermes absorb): a broker may instead resolve an object verdict —
+   *  `{ approved: false, reason }` feeds the reason back to the model as the tool result so it
+   *  course-corrects instead of guessing why. Plain booleans stay valid (existing brokers). */
+  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean | { approved: boolean; reason?: string }>;
   /** Steer-after-tool (P1-3): returns queued user notes to inject before the NEXT model turn. */
   drainSteer?: () => string[];
   succeed: (citations: ChatCitation[], fullText: string) => void;
@@ -1343,10 +1346,21 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       // FAIL-CLOSED — never auto-applied — rather than silently written.
       if (ctx.toolset.isWrite(name)) {
         if (ctx.onToolConfirm) {
-          const approved = await ctx.onToolConfirm(name, args);
+          const verdict = await ctx.onToolConfirm(name, args);
           if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+          const approved = typeof verdict === 'object' && verdict !== null ? verdict.approved === true : verdict === true;
           if (!approved) {
-            messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
+            // Deny-with-reason (hermes absorb): the user's stated reason is fed back as the tool
+            // result so the model course-corrects THIS turn instead of guessing or retrying the
+            // same write. Reason text is user-authored chat-trust input; bounded upstream.
+            const reason = typeof verdict === 'object' && verdict !== null && typeof verdict.reason === 'string'
+              ? verdict.reason.trim().slice(0, 500) : '';
+            messages.push({
+              role: 'tool', tool_name: name,
+              content: reason
+                ? `User declined the write. Reason: ${reason}\n(adjust your approach based on this reason — do not retry the same write unchanged)`
+                : 'User declined the write.',
+            });
             continue;
           }
         } else if (ctx.toolset.forceConfirm?.(name)) {
@@ -1366,7 +1380,13 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       }
       // SP-G: a write tool's note path (result.filePath for create_note; the arg path for
       // append/link) so the renderer can make the "Filed" row open the note.
-      const writePath = String(
+      // An {error} result carries NO writePath and reports ok=false — a failed write must never
+      // render as a clickable "Filed" row (recovery payloads like create_note's duplicate
+      // filePath are for the MODEL, not the strip).
+      const resultErr = result != null && typeof (result as Record<string, unknown>).error === 'string'
+        && ((result as Record<string, unknown>).error as string).length > 0;
+      if (resultErr) toolOk = false;
+      const writePath = resultErr ? '' : String(
         (result as Record<string, unknown>)?.filePath ?? (args as Record<string, unknown>)?.filePath ?? '',
       );
       // plan-act-REFLECT: a READ tool that came back empty/errored is a dead end. Track it and

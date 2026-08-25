@@ -653,7 +653,7 @@ export interface IpcChannelMap {
   // injection+secret-screens the text before it enters the loop; a stale/missing stream is a no-op.
   'chat:steer': { args: [streamId: string, text: string]; result: void };
   // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
-  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
+  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean; reason?: string }]; result: void };
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
   // Reflection follow-up (§A): run the distill loop READ-ONLY (deny-all confirm broker, no

@@ -279,7 +279,7 @@ function ensureSingleInstanceLock(): boolean {
 // renderer's chat:tool-approve resolves it. Keyed by streamId; owner-checked by wcId.
 // Cleaned up on resolve / abort / chat:send finally so a blocked await never leaks the
 // cap-of-2 slot. Default on any teardown = DENY.
-const pendingApprovals = new Map<string, { resolve: (v: boolean) => void; wcId: number }>();
+const pendingApprovals = new Map<string, { resolve: (v: boolean, reason?: string) => void; wcId: number }>();
 const CHAT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAT_MAX_MESSAGES = 100;
 const CHAT_MAX_MSG_CHARS = 24_000;
@@ -1544,13 +1544,18 @@ function registerIpcHandlers(config: AppConfig) {
       agentOpts.onToolConfirm = (name: string, args: Record<string, unknown>) => {
         const mustPrompt = !!req.confirmWrites || isAgentForceConfirmTool(name);
         if (!mustPrompt) return Promise.resolve(true); // regular write, auto-apply mode
-        return new Promise<boolean>((resolve) => {
+        // Deny-with-reason (hermes absorb): the renderer may attach a short reason to a denial;
+        // the loop feeds it back to the model so it course-corrects instead of guessing.
+        return new Promise<boolean | { approved: boolean; reason?: string }>((resolve) => {
           if (controller.signal.aborted) { resolve(false); return; }
           const onAbort = () => { pendingApprovals.delete(req.streamId); resolve(false); };
           controller.signal.addEventListener('abort', onAbort, { once: true });
           pendingApprovals.set(req.streamId, {
             wcId,
-            resolve: (val: boolean) => { controller.signal.removeEventListener('abort', onAbort); resolve(val); },
+            resolve: (val: boolean, reason?: string) => {
+              controller.signal.removeEventListener('abort', onAbort);
+              resolve(val || !reason ? val : { approved: false, reason });
+            },
           });
           // SEC-7: a force-confirm memory write shows the FULL before/after fact + provenance
           // (resolved in main), not just the raw {id,old,new} diff — so the user sees the
@@ -1628,13 +1633,15 @@ function registerIpcHandlers(config: AppConfig) {
   // Agent (SP-D): the renderer approves/denies a pending write tool. Owner-checked by
   // wcId so another window can't approve someone else's write. The renderer can ONLY
   // approve/deny — it never names a tool or its args (the model + main decide that).
-  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean }): void => {
+  ipcMain.handle('chat:tool-approve', (e, payload: { streamId?: string; approve?: boolean; reason?: string }): void => {
     const sid = typeof payload?.streamId === 'string' ? payload.streamId : '';
     const pa = pendingApprovals.get(sid);
     if (!pa) return; // unknown / already-resolved
     if (pa.wcId !== e.sender.id) return; // not the owning window
     pendingApprovals.delete(sid);
-    pa.resolve(payload?.approve === true);
+    // reason rides ONLY on a denial (approve path ignores it); bounded here at the trust boundary.
+    const reason = typeof payload?.reason === 'string' ? payload.reason.trim().slice(0, 500) : undefined;
+    pa.resolve(payload?.approve === true, reason || undefined);
   });
 
   // Agent MEMORY management (P2, §6 / INT-8): the renderer lists / inspects / deletes durable

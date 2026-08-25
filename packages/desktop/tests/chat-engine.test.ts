@@ -427,7 +427,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     signal: opts.signal ?? new AbortController().signal,
     onDelta: (d: string) => calls.deltas.push(d),
     onToolCall: (n: string) => calls.toolCall.push(n),
-    onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
+    onToolResult: (n: string, ok: boolean, _s: string, filePath?: string) => { calls.toolResult.push({ n, ok }); opts.onToolResultPath?.(filePath); },
     onPlan: (steps: string[], done: number) => calls.plan.push({ steps, done }),
     onSkill: (n: string) => calls.skill.push(n), // P3
     onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
@@ -554,6 +554,49 @@ describe('runAgentLoop — agent loop invariants', () => {
     );
     expect(denied.execute).toHaveLength(0);
     expect(denied.succeed[0].t).toBe('ok, skipped');
+  });
+
+  it('deny-with-reason: an object verdict feeds the reason into the tool result for the model', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'adjusted' })],
+      { onToolConfirm: async () => ({ approved: false, reason: 'wrong folder — file under Projects' }) },
+    );
+    expect(c.execute).toHaveLength(0); // still denied
+    // the NEXT model call sees the declined-with-reason tool message
+    const next = c.stepFull[1];
+    const toolMsg = next.find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toContain('User declined the write.');
+    expect(toolMsg.content).toContain('wrong folder — file under Projects');
+    expect(toolMsg.content).toContain('do not retry the same write unchanged');
+  });
+
+  it('deny-with-reason: object approve verdict executes; reason-less object denial stays terse', async () => {
+    const ok = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'done' })],
+      { onToolConfirm: async () => ({ approved: true }) },
+    );
+    expect(ok.execute).toHaveLength(1);
+
+    const denied = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'skipped' })],
+      { onToolConfirm: async () => ({ approved: false }) },
+    );
+    expect(denied.execute).toHaveLength(0);
+    const toolMsg = denied.stepFull[1].find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toBe('User declined the write.');
+  });
+
+  it('an {error} tool result reports ok=false and NEVER carries a Filed writePath', async () => {
+    const paths: Array<string | undefined> = [];
+    const c = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'end' })],
+      {
+        toolResult: { error: 'a note with that title already exists', filePath: 'Inbox/existing.md' },
+        onToolResultPath: (p: string | undefined) => paths.push(p),
+      },
+    );
+    expect(c.toolResult[0].ok).toBe(false); // an errored write must not render as ✓/Filed
+    expect(paths[0]).toBeUndefined();       // recovery filePath is for the MODEL, not the strip
   });
 
   it('aborted streamStep → fail("aborted") exactly once, no succeed', async () => {

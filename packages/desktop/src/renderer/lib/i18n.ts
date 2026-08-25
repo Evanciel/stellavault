@@ -310,6 +310,7 @@ export const messages = {
   "panel.ai.agentWriteConfirm": { en: "The agent wants to write to your vault:", ko: "에이전트가 볼트에 쓰려고 합니다:" },
   "panel.ai.agentApprove": { en: "Approve", ko: "승인" },
   "panel.ai.agentDeny": { en: "Deny", ko: "거부" },
+  "panel.ai.agentDenyReason": { en: "Why? (optional — helps the agent adjust)", ko: "이유 (선택 — 에이전트가 방향을 수정합니다)" },
   "panel.ai.planProgress": { en: "Plan · {done}/{total}", ko: "계획 · {done}/{total}" },
   "panel.ai.agentSteps": { en: "{n} actions", ko: "{n}개 작업" },
   "panel.ai.agentWorking": { en: "Working…", ko: "작업 중…" },

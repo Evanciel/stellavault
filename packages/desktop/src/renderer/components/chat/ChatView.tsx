@@ -97,6 +97,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [agentOn, setAgentOn] = useState(false);
   const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean; filePath?: string }>>([]);
   const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
+  const [denyReason, setDenyReason] = useState(''); // optional reason attached to a Deny (hermes absorb)
   // Auto-distill (SP-I, Karpathy ingest): after each answer, fold the conversation into the
   // wiki. autoDistillRef/messagesRef are read inside the mount-once chat:done handler.
   const [autoDistill, setAutoDistill] = useState(false);
@@ -444,11 +445,14 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Approve/deny a write tool the agent requested.
-  const respondConfirm = useCallback((approve: boolean) => {
+  const respondConfirm = useCallback((approve: boolean, reason?: string) => {
     setConfirm((cur) => {
-      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve }).catch(() => {});
+      // Deny-with-reason (hermes absorb): a short reason rides the denial so the agent
+      // course-corrects instead of guessing. Approve ignores the field.
+      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve, reason: approve ? undefined : (reason || undefined) }).catch(() => {});
       return null;
     });
+    setDenyReason('');
   }, []);
 
   // ─── Abort ALL in-flight streams on unmount ───
@@ -848,13 +852,21 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
             <div style={{ fontSize: 11, color: 'var(--ink-dim)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 8 }}>
               {confirm.argsPreview}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={() => respondConfirm(true)} style={{ padding: '5px 16px', fontSize: 12, fontWeight: 600, background: 'var(--accent)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>
                 {t('panel.ai.agentApprove')}
               </button>
-              <button onClick={() => respondConfirm(false)} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <button onClick={() => respondConfirm(false, denyReason.trim())} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
                 {t('panel.ai.agentDeny')}
               </button>
+              <input
+                value={denyReason}
+                onChange={(e) => setDenyReason(e.target.value.slice(0, 500))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && denyReason.trim()) respondConfirm(false, denyReason.trim()); }}
+                placeholder={t('panel.ai.agentDenyReason')}
+                aria-label={t('panel.ai.agentDenyReason')}
+                style={{ flex: 1, minWidth: 0, padding: '5px 8px', fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink)' }}
+              />
             </div>
           </div>
         </div>
