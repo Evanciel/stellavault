@@ -40,6 +40,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'graph:build',
   'graph:clusters',
   'graph:expand-cluster',
+  'graph:note-links',   // 상한 밖 노트의 위키링크 이웃 (읽기 전용)
   'backlinks:find',
   'window:minimize',
   'window:maximize',
@@ -84,6 +85,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'mcp:status',
   // Second-brain auto-capture (Design §6.4)
   'vault:capture',
+  'capture:hide',   // quick-capture window (hermes absorb): Esc / after-filing hide
   'capture:list',
   'capture:set-paused',
   'capture:counts',
@@ -100,6 +102,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   'chat:load-session',
   'chat:rename-session',
   'chat:delete-session',
+  'chat:proactive-brief', // ③ v2: read-only review-brief for the empty-state chips (invoke only)
   // Agent (SP-D): approve/deny a write tool the MAIN model requested (renderer can ONLY
   // approve/deny — it can never name a tool to run).
   'chat:tool-approve',
@@ -133,6 +136,10 @@ const ALLOWED_CHANNELS = new Set<string>([
   'ollama:version',
   'ollama:compat',
   'ollama:download',
+  'ollama:browse-models', // 공개 라이브러리에서 최신 모델 목록 (읽기 전용)
+  'ollama:model-exists',  // 레지스트리에 그 이름이 있나 (몇 GB 받기 전에 묻는다)
+  'ollama:pull-model',    // 로컬 Ollama 에 모델 설치
+  'ollama:pull-abort',
 ]);
 
 const ALLOWED_EVENTS = new Set<string>([
@@ -150,6 +157,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:chunk',
   'chat:done',
   'chat:error',
+  'chat:thinking',        // thinking display (hermes absorb): ephemeral reasoning deltas
   // Agent (SP-D): tool-activity transparency + write-approval handshake
   'chat:tool-call',
   'chat:tool-result',
@@ -164,6 +172,7 @@ const ALLOWED_EVENTS = new Set<string>([
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast (one-way)
   // Ollama auto-download byte progress (e.sender targeted)
   'ollama:download-progress',
+  'ollama:pull-progress',
 ]);
 
 const api = {

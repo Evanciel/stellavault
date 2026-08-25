@@ -56,6 +56,7 @@ const CHAT_INVOKE_CHANNELS = [
   'chat:pick-images',  // SP2: pick image file(s) for a chat attachment
   'chat:pick-media',   // SP4: pick audio/video → cloud transcript attachment
   'chat:export-note',  // part5: save the conversation verbatim as a vault note
+  'chat:proactive-brief', // ③ v2: read-only review brief for the empty-state chips (invoke only)
 ];
 const CHAT_EVENTS = [
   'chat:chunk', 'chat:done', 'chat:error',
@@ -66,6 +67,7 @@ const CHAT_EVENTS = [
   'chat:skill-invoke', // P3: invoke_skill loaded a skill
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast
   'chat:vitals',       // P1-4: context-fill bar frame (pre-stream)
+  'chat:thinking',     // wave2 C: opt-in reasoning stream (renderer-only, never persisted)
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {

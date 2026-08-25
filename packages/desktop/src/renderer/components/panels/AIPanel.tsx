@@ -11,6 +11,7 @@ import { useT } from '../../lib/i18n.js';
 import { ChatPanel } from '../chat/ChatPanel.js';
 import { MemorySkillsPanel } from './MemorySkillsPanel.js';
 import type { SearchResult, VaultStats, DecayItem } from '../../../shared/ipc-types.js';
+import { runFullIndex } from '../../lib/run-index.js';
 
 type Tab = 'ask' | 'search' | 'express' | 'decay' | 'stats' | 'chat' | 'manage';
 
@@ -587,7 +588,8 @@ function VaultStatsView() {
 
       <button
         onClick={async () => {
-          const result = await ipc('core:index');
+          // 🔴 거부(남의 DB·소유 미확인)를 <조용히 삼키지> 않는다 (코덱스 15차 P2).
+          try { await runFullIndex(); } catch (err) { console.error('[ai] index failed:', err); }
           setStats(null); // Refresh
         }}
         style={{

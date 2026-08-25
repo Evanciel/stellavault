@@ -5,7 +5,7 @@
 **Claude가 기억하는 로컬 우선 세컨드 브레인.**<br/>
 Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트 비파괴, MCP 네이티브.
 
-[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-연동-21개-도구) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-700%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-연동-21개-도구) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
@@ -39,7 +39,7 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 
 - 🧠 **스스로 컴파일됩니다.** PDF, 유튜브 링크, 어설픈 메모 한 줄 — 무엇이든 던지면 `raw/`로 추출한 뒤 개념과 백링크가 정리된 깔끔한 `_wiki/`로 *컴파일*합니다. 쌓일수록 스스로 정리되는 지식.
 - 🔍 **진짜로 찾아내는 검색.** 의미(시맨틱) + 정확한 키워드(BM25) + 당신의 `[[위키링크]]` / `#태그`를 **가중 RRF**로 융합하고, FSRS 기억 모델로 재정렬해 *지금 쓰고 있는* 노트를 위로 띄웁니다. 50+ 언어, 완전 로컬, API 키 0개.
-- 🌌 **당신의 머릿속을 3D로.** 실시간 신경망 그래프(React Three Fiber) — 클러스터 색상, 별자리, 히트맵, 타임라인, 멀티버스 P2P 뷰. 아는 것의 *형태*를 눈으로 보는 방법.
+- 🌌 **당신의 머릿속을 3D로.** 실시간 신경망 그래프(React Three Fiber) — 폴더 드릴다운이 되는 클러스터 뷰, 노트별 로컬 그래프, 태그 오버레이, 그리고 *직접 쓴* 위키링크와 AI 유사도를 눈으로 구분하는 2계층 엣지. 노트 1만 7천 개 볼트 전량까지. 아는 것의 *형태*를 눈으로 보는 방법.
 - 🤖 **Claude가 볼트 전체를 읽습니다.** 일급 **MCP 서버**(21개 도구): Claude Code·Claude Desktop·Cursor·Windsurf·VS Code에서 검색·질의·초안·점검·분석을 바로.
 - ⏳ **절대 *조용히* 잊지 않습니다.** FSRS 기억 감쇠가 곧 잃을 진짜 노트를 띄우고, 볼트 전반의 지식 공백·모순·중복까지 탐지합니다.
 - 🔒 **로컬 우선. 볼트 비파괴. 키 0개.** 로컬 임베딩 + 온디바이스 벡터 스토어, 원본 파일은 **절대 수정되지 않습니다.** 당신이 옵트인하지 않는 한 아무것도 기기를 떠나지 않습니다.

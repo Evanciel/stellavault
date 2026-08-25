@@ -5,7 +5,7 @@
 **The local-first second brain that Claude remembers.**<br/>
 Karpathy's self-compiling wiki × Zettelkasten — fully local, vault-safe, and MCP-native.
 
-[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-integration-21-tools) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-700%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-2761e8?logo=anthropic&logoColor=white)](#mcp-integration-21-tools) [![npm](https://img.shields.io/npm/v/stellavault)](https://www.npmjs.com/package/stellavault) [![CI](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanciel/stellavault/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-1200%2B%20passing-brightgreen)]() [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)]() [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
@@ -39,7 +39,7 @@ The result is one local-first knowledge tool — a full markdown editor, a 3D ne
 
 - 🧠 **It compiles itself.** Drop in a PDF, a YouTube link, or a half-formed thought — Stellavault extracts it to `raw/`, then *compiles* a clean `_wiki/` with concepts and backlinks. Knowledge that organizes itself as it grows.
 - 🔍 **Search that actually finds it.** Hybrid retrieval fuses semantic meaning, exact keywords (BM25), and your own `[[wikilinks]]` / `#tags` with **weighted RRF**, then re-ranks by an FSRS memory model so what you're *actually* using resurfaces. 50+ languages, fully local, zero API keys.
-- 🌌 **Your mind, in 3D.** A real-time neural graph (React Three Fiber) — cluster coloring, constellations, heatmaps, a timeline, and a multiverse P2P view. A way to *see* the shape of what you know.
+- 🌌 **Your mind, in 3D.** A real-time neural graph (React Three Fiber) — cluster view with folder drilldown, per-note local graphs, tag overlays, and two-class edges that keep *your* wikilinks visually distinct from AI-inferred similarity. Scales to a full 17k-note vault. A way to *see* the shape of what you know.
 - 🤖 **Claude reads your entire vault.** A first-class **MCP server** (21 tools): Claude can search, ask, draft, lint, and analyze your knowledge from Claude Code, Claude Desktop, Cursor, Windsurf, or VS Code.
 - ⏳ **It never *silently* forgets.** FSRS memory decay surfaces the real notes you're about to lose — plus gap, contradiction, and duplicate detection across the whole vault.
 - 🔒 **Local-first. Vault-safe. Zero keys.** Local embeddings, an on-device vector store, and your original files are **never modified**. Nothing leaves your machine unless you opt in.
@@ -242,10 +242,37 @@ plus **FSRS recency** and session-adaptive reranking (see [Search & Ranking](#se
 ## 3D Visualization
 
 - Neural graph with cluster coloring (React Three Fiber)
+- **Cluster view (default)** — a large vault folds into a small galaxy of labeled cluster
+  super-nodes; an in-viewer `[Cluster | All nodes]` toggle switches to the dense raw view
+  without reload, and clicking a super-node drills into that cluster's members
 - Constellation view (MST star patterns)
 - Heatmap overlay + Timeline slider + Decay overlay
 - Multiverse view — your vault as a universe in a P2P network
 - Dark/Light theme
+
+### Graph viewer scaling
+
+The 3D graph renderer is bounded by two environment knobs (set them in the environment
+before launching `stellavault graph`):
+
+| Env var | Default | Applies to | What it caps |
+| --- | --- | --- | --- |
+| `GRAPH_NODE_CAP` | `1500` | **raw / "All nodes"** view | # of (most-recent) notes rendered as individual nodes. |
+| `GRAPH_CLUSTER_CAP` | `3000` | **cluster** view (default) | # of notes folded into the galaxy before clustering. |
+
+**Why the caps matter.** Edge construction is an inline **O(n²) all-pairs cosine** loop —
+`n·(n-1)/2` pairs, each over 384 dims (see `packages/core/src/api/graph-data.ts`, the
+`neighbors` loop). At `cap=3000` that is ~4.5M pairs (the multi-second build the 5-minute
+server cache absorbs); raising toward 13000 is ~84M pairs = **minutes** of build plus a
+multi-GB intermediate array that **freezes the single-threaded Express handler** (there is no
+worker). The raw "All nodes" path is the expensive direction (it runs the full cap), so the
+server clamps the requested `?cap` per view (raw ≤ 4000, cluster ≤ 6000, rounded) to bound
+both build cost and cache cardinality.
+
+**Even the default cluster view is cheap to RENDER, not to BUILD.** The first uncached fetch
+of either view runs the scoped-embedding load + the O(n²) cosine pass + k-means + a force
+settle on a single thread, stalling the handler for seconds. The viewer shows a loading state
+on the toggle so the tap isn't silently swallowed during that cold build.
 
 <table>
   <tr>

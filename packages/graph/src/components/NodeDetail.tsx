@@ -7,6 +7,7 @@ import { useGraphStore } from '../stores/graph-store.js';
 import { t } from '../lib/i18n.js';
 import { useNodeDetail } from './useNodeDetail.js';
 import { NodeEditForm } from './NodeEditForm.js';
+import { enterLocalGraph } from '../lib/scene-actions.js';
 
 export function NodeDetail() {
   const {
@@ -101,6 +102,20 @@ export function NodeDetail() {
             }}
           >
             Open in Obsidian
+          </button>
+
+          {/* 이 노트 주변만 — 17,342개 전체 위에서 한 노트의 이웃을 읽는 것은 불가능하다.
+              서버 왕복 없이 이미 로드된 엣지 위에서 N홉 BFS 로 잘라낸다. */}
+          <button
+            onClick={() => enterLocalGraph(selectedNodeId)}
+            style={{
+              width: '100%', padding: '7px', marginBottom: '14px',
+              background: isDark ? 'rgba(100, 200, 160, 0.08)' : 'rgba(40, 150, 110, 0.05)',
+              border: `1px solid ${isDark ? 'rgba(100, 200, 160, 0.18)' : 'rgba(40, 150, 110, 0.14)'}`,
+              borderRadius: '5px', color: isDark ? '#66ccaa' : '#2a8866', fontSize: '11px', cursor: 'pointer',
+            }}
+          >
+            {t('node.localGraph')}
           </button>
 
           {/* Edit / Delete buttons */}

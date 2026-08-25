@@ -20,6 +20,7 @@
 //  - idle timer resets on EVERY data frame (ping + thinking_delta included), not only text.
 
 import { net } from 'electron';
+import { assertExactHost } from './outbound-fetch.js';
 import { sourcesBlock, type LlmConfig } from './llm-synthesizer.js';
 import { DEFAULT_MODELS, OPENAI_BASE_URL, OLLAMA_BASE_URL, ANTHROPIC_VERSION, isLocalProviderUrl, modelSupportsToolsStatic } from '../shared/ai-providers.js';
 import { modelSupportsTools } from './ollama-manager.js';
@@ -93,6 +94,9 @@ export interface ChatRequestSpec {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  /** The provider host the key/Bearer may EVER reach — pinned (exact, case-folded) on the
+   *  net.request before any auth header is set, so a redirect/DNS swap can't exfiltrate it. */
+  pinHost: string;
 }
 
 // ── SP2 image attachments ─────────────────────────────────────────────────────
@@ -136,7 +140,7 @@ function openaiMessageContent(m: ChatMessage): { role: string; content: unknown 
   return { role: m.role, content: m.text };
 }
 
-export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[]): ChatRequestSpec {
+export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[], o?: { showThinking?: boolean }): ChatRequestSpec {
   const model = cfg.model || DEFAULT_MODELS[cfg.provider];
   // belt + braces: a 'system' role must NEVER come from the renderer-supplied turns.
   // SP4: fold audio/video transcripts into each user turn's text so all providers see them.
@@ -147,6 +151,7 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
     case 'anthropic':
       return {
         url: 'https://api.anthropic.com/v1/messages',
+        pinHost: 'api.anthropic.com',
         headers: { 'anthropic-version': ANTHROPIC_VERSION, 'x-api-key': cfg.apiKey },
         // NO temperature/top_p/top_k/budget_tokens/thinking — all 400 on fable-5/opus-4.8.
         body: {
@@ -168,9 +173,14 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
       // tells the local server to skip thinking and answer directly (gemma4:e4b → 2.4s, clean).
       // Scoped to LOCAL servers only: the real OpenAI API + remote OpenAI-compat hosts
       // (Groq/OpenRouter) may reject the value, and non-reasoning models simply ignore it.
-      const skipThinking = cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL || '');
+      // showThinking (opt-in) lifts the suppression so reasoning models (deepseek-r1/qwen3)
+      // may think — their reasoning streams via the parser's thinkingDeltas.
+      const skipThinking = cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL || '') && !o?.showThinking;
       return {
         url: `${base}/chat/completions`,
+        // pin to the host of the configured base (api.openai.com for 'openai'; the user's
+        // host for 'openai-compatible'). new URL throws on a malformed base → caught upstream.
+        pinHost: new URL(base).hostname,
         headers: key ? { authorization: `Bearer ${key}` } : {},
         body: {
           model,
@@ -185,6 +195,7 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
       return {
         // key in HEADER (x-goog-api-key), never the URL.
         url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+        pinHost: 'generativelanguage.googleapis.com',
         headers: { 'x-goog-api-key': cfg.apiKey },
         body: {
           systemInstruction: { parts: [{ text: system }] },
@@ -210,6 +221,10 @@ export interface FrameResult {
   deltas: string[];
   done: boolean;
   refusal?: boolean;
+  // Thinking display (hermes absorb, v0.19 "show reasoning live"): reasoning-model chain-of-
+  // thought deltas, surfaced ONLY when the user opted in (showThinking). Ephemeral — never
+  // persisted to the session; rendered as a collapsible dim block in the streaming bubble.
+  thinkingDeltas?: string[];
 }
 
 /** Split a frame block into trimmed, non-empty lines. A "frame" is the text between
@@ -271,6 +286,7 @@ export function parseAnthropicSse(frame: string): FrameResult {
 export function parseOpenAiSse(frame: string): FrameResult {
   const lines = frameLines(frame);
   const deltas: string[] = [];
+  const thinkingDeltas: string[] = [];
   let done = false;
   for (const line of lines) {
     if (!line.startsWith('data:')) continue;
@@ -288,8 +304,13 @@ export function parseOpenAiSse(frame: string): FrameResult {
     }
     const content = obj?.choices?.[0]?.delta?.content;
     if (typeof content === 'string' && content.length > 0) deltas.push(content);
+    // Reasoning deltas (thinking display): Ollama's OpenAI-compat layer emits `reasoning`;
+    // DeepSeek-style APIs emit `reasoning_content`. Collected always (cheap), surfaced only
+    // when the caller wired onThinking (user opt-in).
+    const reasoning = obj?.choices?.[0]?.delta?.reasoning ?? obj?.choices?.[0]?.delta?.reasoning_content;
+    if (typeof reasoning === 'string' && reasoning.length > 0) thinkingDeltas.push(reasoning);
   }
-  return { deltas, done };
+  return { deltas, done, ...(thinkingDeltas.length > 0 ? { thinkingDeltas } : {}) };
 }
 
 /** Gemini SSE (?alt=sse): `data: <json>` lines; candidates[0].content.parts[].text. */
@@ -412,6 +433,8 @@ export interface OllamaFrameResult {
   deltas: string[];
   toolCalls: OllamaToolCall[];
   done: boolean;
+  /** Thinking display (opt-in): `message.thinking` deltas — present only when think:true. */
+  thinkingDeltas?: string[];
 }
 
 /** Parse ONE native /api/chat NDJSON line — one JSON object per line, '\n'-delimited
@@ -432,6 +455,8 @@ export function parseOllamaChatChunk(line: string): OllamaFrameResult {
   if (obj?.error) throw new ChatStreamError(String(obj.error), 'generic');
   const msg = obj?.message ?? {};
   const deltas: string[] = [];
+  const thinkingDeltas: string[] = [];
+  if (typeof msg.thinking === 'string' && msg.thinking.length > 0) thinkingDeltas.push(msg.thinking);
   const c = msg.content;
   if (typeof c === 'string') {
     if (c.length > 0) deltas.push(c);
@@ -451,7 +476,7 @@ export function parseOllamaChatChunk(line: string): OllamaFrameResult {
           },
         }))
     : [];
-  return { deltas, toolCalls, done: obj?.done === true };
+  return { deltas, toolCalls, done: obj?.done === true, ...(thinkingDeltas.length > 0 ? { thinkingDeltas } : {}) };
 }
 
 function parserFor(provider: LlmConfig['provider']): (frame: string) => FrameResult {
@@ -623,6 +648,12 @@ export interface ChatStreamOptions {
   // only, §4.5) — NOT injected into the cloud/single-shot path. '' / undefined → no skill section.
   skillCatalogue?: string;
   onSkill?: (name: string) => void; // invoke_skill → chat:skill-invoke surface
+  // Thinking display (hermes absorb): opt-in. When true, local reasoning models are ALLOWED to
+  // think (think:true on native; reasoning_effort:'none' suppressed on openai-compat) and their
+  // chain-of-thought streams via onThinking → chat:thinking. Default OFF preserves the measured
+  // gemma4 fast-path (thinking suppressed). Ephemeral — never persisted to the session.
+  showThinking?: boolean;
+  onThinking?: (delta: string) => void;
   onDelta: (delta: string) => void;
   onDone: (citations: ChatCitation[], fullText: string) => void;
   onError: (message: string, category?: ErrorCategory) => void;
@@ -729,6 +760,9 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
           '- Never call the same tool with the same arguments twice.',
           '- Before your FINAL answer, silently confirm every plan step is addressed; if one is not, do that step first. Then give the final answer.',
           '- You may create_note / append_note / link_note to grow the vault as you converse. Prefer SMALL atomic notes and connect related notes with [[wiki-links]]. After writing, tell the user what you created or linked.',
+          // Proactive review (Stella-vs-hermes §3.3): a vault-native edge a generic agent + plain
+          // Obsidian cannot do. Scoped tight so it never nags: only on an OPEN/vague opener, once.
+          "- PROACTIVE: if the user opens with a vague/open prompt (a greeting, \"what should I do/review?\", or no concrete task), you MAY call learning_path (notes they're forgetting) or detect_gaps (weak links) ONCE and offer 1-2 specific things to revisit or connect — surfacing what they'd otherwise forget. SKIP this entirely when the user has a concrete task, and NEVER repeat it within a conversation.",
         ].join('\n');
     // §6.6 auto-switch: native (local Ollama) OR frontier (anthropic/openai + key + tools-model).
     const transport = await selectTransport(cfg, opts, agentSystem, signal, onDelta);
@@ -759,7 +793,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
 
   let spec: ChatRequestSpec;
   try {
-    spec = buildChatBody(cfg, system, messages);
+    spec = buildChatBody(cfg, system, messages, { showThinking: opts.showThinking });
   } catch (err) {
     fail(String((err as Error)?.message ?? 'failed to build request'), 'generic');
     return;
@@ -777,6 +811,13 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
     fail('unsupported AI endpoint protocol', 'generic');
     return;
   }
+  // Host PIN before any key/Bearer header: the credential may ONLY reach the provider host.
+  try {
+    assertExactHost(u.hostname, spec.pinHost);
+  } catch {
+    fail('AI endpoint host mismatch', 'generic');
+    return;
+  }
   const protocol: 'http:' | 'https:' = u.protocol;
 
   const parse = parserFor(cfg.provider);
@@ -788,6 +829,9 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined,
       path: u.pathname + u.search,
+      // redirect:'error' — a 3xx hard-fails instead of replaying the x-api-key/Bearer/
+      // x-goog-api-key to the redirect host (Electron's default 'follow' would exfiltrate it).
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
     request.setHeader('accept', 'text/event-stream');
@@ -888,6 +932,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
               finish();
               return;
             }
+            for (const t of res.thinkingDeltas ?? []) opts.onThinking?.(t);
             for (const d of res.deltas) { fullText += d; onDelta(d); }
             if (res.done) {
               succeed(citations, fullText);
@@ -985,6 +1030,7 @@ export function streamOnceNative(
   body: unknown,
   signal: AbortSignal,
   onDelta: (d: string) => void,
+  onThinking?: (d: string) => void,
 ): Promise<StreamOnceResult> {
   return new Promise<StreamOnceResult>((resolve, reject) => {
     // Already-aborted signal: the 'abort' event already fired in the past, so a listener would
@@ -999,6 +1045,9 @@ export function streamOnceNative(
     const request = net.request({
       method: 'POST', protocol, hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined, path: u.pathname + u.search,
+      // redirect:'error' — never follow a 3xx (this native path is local/keyless today, but a
+      // redirect must never be auto-followed off the configured host).
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
 
@@ -1052,6 +1101,7 @@ export function streamOnceNative(
             bad(new ChatStreamError(redactForLog(String((err as Error)?.message ?? 'stream error')), cat));
             return true;
           }
+          for (const t of res.thinkingDeltas ?? []) onThinking?.(t);
           for (const d of res.deltas) { fullText += d; onDelta(d); }
           for (const tc of res.toolCalls) toolCalls.push(tc);
           if (res.done) { ok({ text: fullText, toolCalls, aborted: false, refusal: false }); return true; }
@@ -1434,8 +1484,10 @@ function streamOnceFrontier(
 }
 
 // makeNativeAdapter wraps the current native thunk with ZERO behavior change.
-const makeNativeAdapter = (cfg: LlmConfig, toolset: AgentToolset, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void): AgentTransport => ({
-  streamStep: (msgs) => streamOnceNative(nativeChatUrl(cfg.baseURL ?? ''), buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, false), signal, onDelta),
+// wave2 C: showThinking/onThinking thread through so the opt-in reasoning stream also works
+// when the agent loop runs via the transport auto-switch (think flag + thinking drain).
+const makeNativeAdapter = (cfg: LlmConfig, toolset: AgentToolset, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void, showThinking = false, onThinking?: (d: string) => void): AgentTransport => ({
+  streamStep: (msgs) => streamOnceNative(nativeChatUrl(cfg.baseURL ?? ''), buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, showThinking), signal, onDelta, onThinking),
 });
 
 function makeFrontierAdapter(provider: 'anthropic' | 'openai', cfg: LlmConfig, toolset: AgentToolset, agentSystem: string, signal: AbortSignal, onDelta: (d: string) => void): AgentTransport {
@@ -1468,7 +1520,7 @@ export async function selectTransport(cfg: LlmConfig, opts: ChatStreamOptions, a
   // load-bearing: isLocalProviderUrl('') is TRUE (defaults to the Ollama URL), so without it an
   // anthropic/openai cfg (baseURL='') would spuriously probe localhost before reaching frontier.
   if (cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL ?? '') && await modelSupportsTools(cfg.baseURL ?? '', model))
-    return makeNativeAdapter(cfg, opts.toolset, agentSystem, signal, onDelta);
+    return makeNativeAdapter(cfg, opts.toolset, agentSystem, signal, onDelta, !!opts.showThinking, opts.onThinking);
   if ((cfg.provider === 'anthropic' || cfg.provider === 'openai') && (cfg.apiKey ?? '').trim() && modelSupportsToolsStatic(cfg.provider, model))
     return makeFrontierAdapter(cfg.provider, cfg, opts.toolset, agentSystem, signal, onDelta);
   return null;
@@ -1529,8 +1581,11 @@ export interface AgentLoopCtx {
   onMemoryWrite?: (id: string, text: string) => void; // autonomous core_memory_append → undo toast
   onPlan?: (steps: string[], done: number) => void;
   onSkill?: (name: string) => void; // P3: invoke_skill → chat:skill-invoke surface
-  /** Resolves true if the user APPROVES a write tool; loop pauses on the await. */
-  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** Resolves true if the user APPROVES a write tool; loop pauses on the await.
+   *  Deny-with-reason (hermes absorb): a broker may instead resolve an object verdict —
+   *  `{ approved: false, reason }` feeds the reason back to the model as the tool result so it
+   *  course-corrects instead of guessing why. Plain booleans stay valid (existing brokers). */
+  onToolConfirm?: (name: string, args: Record<string, unknown>) => Promise<boolean | { approved: boolean; reason?: string }>;
   /** Steer-after-tool (P1-3): returns queued user notes to inject before the NEXT model turn. */
   drainSteer?: () => string[];
   succeed: (citations: ChatCitation[], fullText: string) => void;
@@ -1690,10 +1745,21 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       // FAIL-CLOSED — never auto-applied — rather than silently written.
       if (ctx.toolset.isWrite(name)) {
         if (ctx.onToolConfirm) {
-          const approved = await ctx.onToolConfirm(name, args);
+          const verdict = await ctx.onToolConfirm(name, args);
           if (ctx.signal.aborted) { ctx.fail('aborted', 'aborted'); return; }
+          const approved = typeof verdict === 'object' && verdict !== null ? verdict.approved === true : verdict === true;
           if (!approved) {
-            messages.push({ role: 'tool', tool_name: name, content: 'User declined the write.' });
+            // Deny-with-reason (hermes absorb): the user's stated reason is fed back as the tool
+            // result so the model course-corrects THIS turn instead of guessing or retrying the
+            // same write. Reason text is user-authored chat-trust input; bounded upstream.
+            const reason = typeof verdict === 'object' && verdict !== null && typeof verdict.reason === 'string'
+              ? verdict.reason.trim().slice(0, 500) : '';
+            messages.push({
+              role: 'tool', tool_name: name,
+              content: reason
+                ? `User declined the write. Reason: ${reason}\n(adjust your approach based on this reason — do not retry the same write unchanged)`
+                : 'User declined the write.',
+            });
             continue;
           }
         } else if (ctx.toolset.forceConfirm?.(name)) {
@@ -1713,7 +1779,13 @@ export async function runAgentLoop(ctx: AgentLoopCtx): Promise<void> {
       }
       // SP-G: a write tool's note path (result.filePath for create_note; the arg path for
       // append/link) so the renderer can make the "Filed" row open the note.
-      const writePath = String(
+      // An {error} result carries NO writePath and reports ok=false — a failed write must never
+      // render as a clickable "Filed" row (recovery payloads like create_note's duplicate
+      // filePath are for the MODEL, not the strip).
+      const resultErr = result != null && typeof (result as Record<string, unknown>).error === 'string'
+        && ((result as Record<string, unknown>).error as string).length > 0;
+      if (resultErr) toolOk = false;
+      const writePath = resultErr ? '' : String(
         (result as Record<string, unknown>)?.filePath ?? (args as Record<string, unknown>)?.filePath ?? '',
       );
       // plan-act-REFLECT: a READ tool that came back empty/errored is a dead end. Track it and

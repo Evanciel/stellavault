@@ -4,7 +4,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import { extname } from 'node:path';
 import type { Embedder } from './embedder.js';
 import type { VectorStore } from '../store/types.js';
-import { indexVault } from './index.js';
+import { indexVault, type IndexResult } from './index.js';
 import type { ChunkOptions } from './chunker.js';
 
 export interface WatcherOptions {
@@ -13,7 +13,13 @@ export interface WatcherOptions {
   embedder: Embedder;
   chunkOptions?: Partial<ChunkOptions>;
   debounceMs?: number;
-  onReindex?: (result: { indexed: number; skipped: number }) => void;
+  /**
+   * 🔴 결과를 <통째로> 넘긴다. 예전에는 두 필드만 뽑아 넘겨서, 감시자가 만든
+   *    미룬 삭제(deferredDeletes)와 "남의 DB 라 아무것도 안 했다"(foreignDb)가
+   *    호출부에 <도달하지 못했다> — 배치가 조용히 아무 일도 안 해도 로그는
+   *    "0 indexed, 0 unchanged" 로 정상처럼 보였다 (코덱스 10차 P2).
+   */
+  onReindex?: (result: IndexResult) => void;
 }
 
 export function createWatcher(options: WatcherOptions): { start(): void; stop(): void } {
@@ -36,7 +42,7 @@ export function createWatcher(options: WatcherOptions): { start(): void; stop():
         pendingReindex = false; // 시작 직전 reset — 이번 iteration 안에서
                                 // 새 이벤트가 오면 또 true 가 됨
         const result = await indexVault(vaultPath, { store, embedder, chunkOptions });
-        onReindex?.({ indexed: result.indexed, skipped: result.skipped });
+        onReindex?.(result);          // 🔴 깎지 않는다 — 여기서 미룬 삭제가 사라졌다
       } while (pendingReindex);
     } finally {
       reindexing = false;

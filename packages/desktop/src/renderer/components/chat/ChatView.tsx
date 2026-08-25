@@ -28,7 +28,7 @@
 // subscription is attached ONCE on mount (before any chat:send can fire) and
 // torn down on unmount, where every in-flight stream is also aborted.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { ipc, onIpc } from '../../lib/ipc-client.js';
 import { useT } from '../../lib/i18n.js';
 import { useStickToBottom } from '../../lib/use-stick-to-bottom.js';
@@ -40,7 +40,7 @@ import { AGENT_WRITE_TOOLS, shouldAutoRevealGraph } from './autoreveal.js';
 import { applyTemplate, type SlashCommand } from './commands.js';
 import { MessageBubble, type BubbleState } from './MessageBubble.js';
 import { Composer } from './Composer.js';
-import type { ChatMessage, ChatCitation, ChatAttachment, ReflectionCandidate } from '../../../shared/ipc-types.js';
+import type { ChatMessage, ChatCitation, ChatAttachment, ReflectionCandidate, ProactiveBrief } from '../../../shared/ipc-types.js';
 
 const MAX_CONCURRENT = 2;
 
@@ -97,6 +97,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [agentOn, setAgentOn] = useState(false);
   const [toolLog, setToolLog] = useState<Array<{ id: string; kind: 'call' | 'result'; name: string; text: string; ok?: boolean; filePath?: string }>>([]);
   const [confirm, setConfirm] = useState<{ streamId: string; name: string; argsPreview: string } | null>(null);
+  const [denyReason, setDenyReason] = useState(''); // optional reason attached to a Deny (hermes absorb)
   // Auto-distill (SP-I, Karpathy ingest): after each answer, fold the conversation into the
   // wiki. autoDistillRef/messagesRef are read inside the mount-once chat:done handler.
   const [autoDistill, setAutoDistill] = useState(false);
@@ -127,12 +128,25 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   const [planSteps, setPlanSteps] = useState<string[]>([]);
   const [planDone, setPlanDone] = useState(0);
   const [input, setInput] = useState('');
+  // ③ v2: proactive review brief for the empty-state chips (forgetting / weak links). Fetched once
+  // on mount when this session starts empty; read-only, falls back to static suggestions if empty.
+  const [brief, setBrief] = useState<ProactiveBrief | null>(null);
+  useEffect(() => {
+    if (initialMessages.length > 0) return; // only a fresh/empty session gets the proactive brief
+    void ipc('chat:proactive-brief').then(setBrief).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Steer-after-tool (P1-3): free text the user types WHILE the agent runs; sent via chat:steer to
   // the last live stream and injected before its next model turn (never aborts). Cleared only after
   // the invoke resolves, so a too-late/no-op steer stays in the box for the user to resend.
   const [steerInput, setSteerInput] = useState('');
   // Context-fill vitals (P1-4): one pre-stream frame per send (text-only input fill vs the hard cap).
-  const [vitals, setVitals] = useState<{ fillPct: number; charsIn: number; budgetChars: number } | null>(null);
+  // trimmedCount (guaranteed-tail trim): how many oldest turns were folded out of this model call.
+  const [vitals, setVitals] = useState<{ fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number } | null>(null);
+  // Thinking display (hermes absorb): msgId → accumulated reasoning text. Renderer-only,
+  // ephemeral (never persisted with the session; lost on remount by design).
+  const [thinkingMap, setThinkingMap] = useState<Record<string, string>>({});
+  const showThinking = useSettingsStore((s) => s.settings.showThinking);
   // capMessage = transient note when the main handler rejects a 3rd stream.
   const [capMessage, setCapMessage] = useState(false);
   // activeCount drives Stop/Composer affordances; mirrors streamMapRef.size.
@@ -282,6 +296,15 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
       );
     });
 
+    // Thinking display (hermes absorb): reasoning deltas accumulate in a renderer-only map
+    // (msgId → text) — EPHEMERAL, never merged into the message (sessions persist without it).
+    const offThinking = onIpc('chat:thinking', (p: unknown) => {
+      const e = p as { streamId: string; delta: string };
+      const msgId = streamMapRef.current.get(e.streamId);
+      if (!msgId) return;
+      setThinkingMap((prev) => ({ ...prev, [msgId]: (prev[msgId] ?? '') + e.delta }));
+    });
+
     const offDone = onIpc('chat:done', (p: unknown) => {
       const e = p as { streamId: string; citations?: ChatCitation[] };
       const msgId = streamMapRef.current.get(e.streamId);
@@ -386,12 +409,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     // Context-fill vitals (P1-4): one pre-stream frame per send; stream-filtered so two concurrent
     // streams never cross-contaminate the bar. Session-switch reset is automatic (key remount).
     const offVitals = onIpc('chat:vitals', (p: unknown) => {
-      const e = p as { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
+      const e = p as { streamId: string; fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number };
       if (!ownsStream(e.streamId)) return;
-      setVitals({ fillPct: e.fillPct, charsIn: e.charsIn, budgetChars: e.budgetChars });
+      setVitals({ fillPct: e.fillPct, charsIn: e.charsIn, budgetChars: e.budgetChars, trimmedCount: e.trimmedCount });
     });
 
     return () => {
+      offThinking();
       offChunk();
       offDone();
       offError();
@@ -442,11 +466,14 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Approve/deny a write tool the agent requested.
-  const respondConfirm = useCallback((approve: boolean) => {
+  const respondConfirm = useCallback((approve: boolean, reason?: string) => {
     setConfirm((cur) => {
-      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve }).catch(() => {});
+      // Deny-with-reason (hermes absorb): a short reason rides the denial so the agent
+      // course-corrects instead of guessing. Approve ignores the field.
+      if (cur) void ipc('chat:tool-approve', { streamId: cur.streamId, approve, reason: approve ? undefined : (reason || undefined) }).catch(() => {});
       return null;
     });
+    setDenyReason('');
   }, []);
 
   // ─── Abort ALL in-flight streams on unmount ───
@@ -483,13 +510,13 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
     syncActiveCount();
     // P0-2: never send agentOn to a non-local model — the engine would drop it to single-shot
     // anyway; gating here keeps the wire honest. P0-1: forward the review-every-write opt-in.
-    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn: agentOn && agentCapable, confirmWrites: !!confirmWrites }).catch(() => {
+    void ipc('chat:send', { messages: clean, streamId: newStreamId, sessionId, ragOn, agentOn: agentOn && agentCapable, confirmWrites: !!confirmWrites, showThinking: !!showThinking }).catch(() => {
       setCapMessage(true);
       streamMapRef.current.delete(newStreamId);
       syncActiveCount();
       setMessages((prev) => prev.filter((m) => m.id !== assistantTurn.id));
     });
-  }, [atCap, ragOn, agentOn, agentCapable, confirmWrites, sessionId, syncActiveCount]);
+  }, [atCap, ragOn, agentOn, agentCapable, confirmWrites, showThinking, sessionId, syncActiveCount]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -688,16 +715,34 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
                 {t(`panel.ai.intro.${introIdx}.body` as never)}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-                {[0, 1, 2].map((s) => {
-                  const label = t(`panel.ai.suggest.${s}` as never);
-                  return (
-                    <button key={s} onClick={() => { setInput(label); }}
-                      style={{ padding: '7px 13px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--ink-dim)', fontSize: 12.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; }}
-                    >{label}</button>
-                  );
-                })}
+                {(() => {
+                  const chipStyle = { padding: '7px 13px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--ink-dim)', fontSize: 12.5, cursor: 'pointer', transition: 'border-color 120ms, color 120ms' } as const;
+                  const onEnter = (e: ReactMouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--ink)'; };
+                  const onLeave = (e: ReactMouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--ink-dim)'; };
+                  // ③ v2: data-driven proactive chips (forgetting / weak links) — what a generic
+                  // agent + plain Obsidian can't surface. Clicking one SENDS the prompt straight to
+                  // the agent (reuses dispatchTurn). Falls back to the static suggestions when the
+                  // brief is empty (unindexed / fresh vault) so the empty-state is never blank.
+                  const dataChips: { key: string; label: string; prompt: string }[] = [];
+                  for (const d of brief?.decaying ?? []) dataChips.push({ key: `d:${d.title}`, label: `📉 ${t('panel.ai.proactive.forgetting')}: ${d.title}`, prompt: t('panel.ai.proactive.reviewPrompt').replace('{title}', d.title) });
+                  for (const w of brief?.weakLinks ?? []) dataChips.push({ key: `w:${w.a}:${w.b}`, label: `🔗 ${t('panel.ai.proactive.weakLink')}: ${w.a} ↔ ${w.b}`, prompt: t('panel.ai.proactive.connectPrompt').replace('{a}', w.a).replace('{b}', w.b) });
+                  const chips = dataChips.slice(0, 3);
+                  if (chips.length > 0) {
+                    return chips.map((c) => (
+                      <button key={c.key} title={c.label}
+                        onClick={() => dispatchTurn([...messages, { id: crypto.randomUUID(), role: 'user', text: c.prompt, ts: Date.now() }])}
+                        style={{ ...chipStyle, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        onMouseEnter={onEnter} onMouseLeave={onLeave}
+                      >{c.label}</button>
+                    ));
+                  }
+                  return [0, 1, 2].map((s) => {
+                    const label = t(`panel.ai.suggest.${s}` as never);
+                    return (
+                      <button key={s} onClick={() => { setInput(label); }} style={chipStyle} onMouseEnter={onEnter} onMouseLeave={onLeave}>{label}</button>
+                    );
+                  });
+                })()}
               </div>
             </div>
           ) : (
@@ -712,6 +757,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
                 key={m.id}
                 message={m}
                 variant={variant}
+                thinking={thinkingMap[m.id]}
                 state={bubbleStateFor(m, i === messages.length - 1)}
                 errorLabel={i === messages.length - 1 && error ? errorLabel : undefined}
                 onRetry={i === messages.length - 1 && error ? retry : undefined}
@@ -828,13 +874,21 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
             <div style={{ fontSize: 11, color: 'var(--ink-dim)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 8 }}>
               {confirm.argsPreview}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={() => respondConfirm(true)} style={{ padding: '5px 16px', fontSize: 12, fontWeight: 600, background: 'var(--accent)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>
                 {t('panel.ai.agentApprove')}
               </button>
-              <button onClick={() => respondConfirm(false)} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
+              <button onClick={() => respondConfirm(false, denyReason.trim())} style={{ padding: '5px 16px', fontSize: 12, background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink-dim)', cursor: 'pointer' }}>
                 {t('panel.ai.agentDeny')}
               </button>
+              <input
+                value={denyReason}
+                onChange={(e) => setDenyReason(e.target.value.slice(0, 500))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && denyReason.trim()) respondConfirm(false, denyReason.trim()); }}
+                placeholder={t('panel.ai.agentDenyReason')}
+                aria-label={t('panel.ai.agentDenyReason')}
+                style={{ flex: 1, minWidth: 0, padding: '5px 8px', fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--ink)' }}
+              />
             </div>
           </div>
         </div>
@@ -983,6 +1037,7 @@ export function ChatView({ sessionId, initialMessages, onSaved, onNewSession, on
             <div style={{ height: '100%', width: `${vitals.fillPct}%`, background: vitals.fillPct > 85 ? '#e5484d' : 'var(--accent-2)', transition: 'width 120ms' }} />
           </div>
           <div style={{ fontSize: 9, color: 'var(--ink-faint)', marginTop: 2, textAlign: 'right' }}>
+            {(vitals.trimmedCount ?? 0) > 0 ? `✂ ${t('panel.ai.vitalsTrimmed', { n: vitals.trimmedCount! })} · ` : ''}
             {`${vitals.fillPct}% · ${vitals.charsIn.toLocaleString()}/${vitals.budgetChars.toLocaleString()}`}
           </div>
         </div>

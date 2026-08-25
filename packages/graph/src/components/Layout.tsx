@@ -20,6 +20,10 @@ import { QuickCapture } from './QuickCapture.js';
 import { OnboardingGuide } from './OnboardingGuide.js';
 import { t } from '../lib/i18n.js';
 
+// Match the ONLY existing mobile breakpoint convention (IngestPanel.tsx:8). Computed once at
+// module load — does not react to rotation (acceptable parity with IngestPanel).
+const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+
 export function Layout() {
   // ALL hooks must be called before any conditional return
   const viewMode = useGraphStore((s) => s.viewMode);
@@ -29,6 +33,9 @@ export function Layout() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const mode = useGraphStore((s) => s.mode);
   const setMode = useGraphStore((s) => s.setMode);
+  const view = useGraphStore((s) => s.view);
+  const setView = useGraphStore((s) => s.setView);
+  const reloadGalaxy = useGraphStore((s) => s.reloadGalaxy);
   const theme = useGraphStore((s) => s.theme);
   const toggleTheme = useGraphStore((s) => s.toggleTheme);
   const showDecay = useGraphStore((s) => s.showDecayOverlay);
@@ -64,6 +71,73 @@ export function Layout() {
       setMotionLoading(false);
     }
   };
+
+  // [Cluster | All nodes] view toggle + '← All clusters' home affordance. Clones the
+  // semantic/folder segmented-control look. Disabled while loading during a swap (spinner +
+  // dimmed) so a tap during the multi-second cold build isn't silently swallowed.
+  const viewToggle = (
+    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+      <div style={{
+        display: 'flex', gap: '2px',
+        background: isDark ? 'rgba(100, 120, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+        borderRadius: '6px', padding: '2px',
+        opacity: loading ? 0.5 : 1,
+        pointerEvents: loading ? 'none' : 'auto',
+      }}>
+        {(['cluster', 'raw'] as const).map((v) => {
+          const active = view === v;
+          return (
+            <button
+              key={v}
+              // Clicking the ALREADY-active 'cluster' while drilled into a cluster reloads the
+              // galaxy (un-drills); otherwise just switch view. (Drilldown keeps view='cluster',
+              // so a plain setView('cluster') would be a no-op and feel dead.)
+              onClick={() => {
+                if (loading) return;
+                if (v === view) { if (v === 'cluster') reloadGalaxy(); }
+                else setView(v);
+              }}
+              disabled={loading}
+              style={{
+                padding: '4px 12px', fontSize: '11px', border: 'none', borderRadius: '4px',
+                cursor: loading ? 'default' : 'pointer',
+                background: active
+                  ? (isDark ? 'rgba(100, 120, 255, 0.3)' : 'rgba(0, 0, 0, 0.08)')
+                  : 'transparent',
+                color: active ? (isDark ? '#c0d0ff' : '#2a2a4a') : (isDark ? '#556' : '#888'),
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {v === 'cluster' ? t('btn.clusterView') : t('btn.allNodes')}
+            </button>
+          );
+        })}
+      </div>
+      {loading && (
+        <span style={{
+          width: '10px', height: '10px', borderRadius: '50%',
+          border: `2px solid ${isDark ? 'rgba(120,140,255,0.3)' : 'rgba(0,0,0,0.2)'}`,
+          borderTopColor: isDark ? '#88aaff' : '#4466aa',
+          display: 'inline-block', animation: 'sv-spin 0.7s linear infinite',
+        }} />
+      )}
+      {/* Single home affordance — re-fetch the galaxy (also resets drilldown). */}
+      <button
+        onClick={() => { if (!loading) reloadGalaxy(); }}
+        disabled={loading}
+        title={t('btn.allClusters')}
+        style={{
+          padding: '4px 8px', fontSize: '11px',
+          border: `1px solid ${isDark ? 'rgba(100,120,255,0.15)' : 'rgba(0,0,0,0.12)'}`,
+          borderRadius: '4px', cursor: loading ? 'default' : 'pointer',
+          background: isDark ? 'rgba(100,120,255,0.06)' : 'rgba(0,0,0,0.03)',
+          color: isDark ? '#aab' : '#555', opacity: loading ? 0.5 : 1,
+        }}
+      >
+        ← {t('btn.allClusters')}
+      </button>
+    </div>
+  );
 
   // 멀티버스 모드면 멀티버스 뷰 렌더링
   if (viewMode === 'multiverse') {
@@ -106,6 +180,9 @@ export function Layout() {
         <div style={{
           marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center',
         }}>
+          {/* Desktop: view toggle top-right in header. Mobile: relocated to a fixed
+              bottom-center pill below (above the StatusBar). */}
+          {!isMobile && viewToggle}
           <MotionToggle active={motionActive} loading={motionLoading} onToggle={toggleMotion} isDark={isDark} />
           <div style={{
             display: 'flex', gap: '2px',
@@ -187,7 +264,9 @@ export function Layout() {
         </div>
         {loading && (
           <span style={{ fontSize: '11px', color: '#88aaff' }}>
-            {mode === 'semantic' ? 'Mapping neural connections...' : 'Loading folder structure...'}
+            {view === 'cluster'
+              ? 'Folding into galaxy...'
+              : (mode === 'semantic' ? 'Loading all nodes...' : 'Loading folder structure...')}
           </span>
         )}
       </div>
@@ -216,6 +295,26 @@ export function Layout() {
       <IngestPanel />
       <QuickCapture />
       <OnboardingGuide />
+
+      {/* Mobile: fixed bottom-center pill ABOVE the StatusBar (bottom:44px ≈ StatusBar height
+          + gap). zIndex:50 keeps it over the full-bleed R3F canvas (which only acts when
+          canvas.contains(e.target), so an overlaid fixed div is safe from tap capture). May
+          overlap the IngestPanel bottom-sheet when that is open — both are user-toggled. */}
+      {isMobile && (
+        <div style={{
+          position: 'fixed', bottom: '44px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 50,
+          padding: '4px', borderRadius: '8px',
+          background: isDark ? 'rgba(10,10,20,0.92)' : 'rgba(255,255,255,0.95)',
+          border: `1px solid ${isDark ? 'rgba(100,120,255,0.2)' : 'rgba(0,0,0,0.1)'}`,
+          backdropFilter: 'blur(8px)',
+          boxShadow: isDark ? 'none' : '0 2px 12px rgba(0,0,0,0.12)',
+        }}>
+          {viewToggle}
+        </div>
+      )}
+
+      <style>{`@keyframes sv-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

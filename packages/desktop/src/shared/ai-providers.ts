@@ -7,7 +7,7 @@ export type AiProvider = 'none' | 'anthropic' | 'openai' | 'openai-compatible' |
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-fable-5';
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
-export const DEFAULT_OLLAMA_MODEL = 'llama3.1';
+export const DEFAULT_OLLAMA_MODEL = 'gemma4';
 
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const OLLAMA_BASE_URL = 'http://localhost:11434/v1';
@@ -57,7 +57,7 @@ export const PROVIDER_META: Record<AiProvider, ProviderMeta> = {
   'openai-compatible': {
     label: 'Local (Ollama / LM Studio)', needsKey: false, needsBaseURL: true,
     keyPlaceholder: '(often blank for local)',
-    modelHint: `Model name as served (e.g. ${DEFAULT_OLLAMA_MODEL}, mistral, qwen2.5). Or click "Load" to list installed models.`,
+    modelHint: `Model name as served (e.g. ${DEFAULT_OLLAMA_MODEL}, qwen3, mistral-small). "Load" lists what you already have; "Find latest" lists what is new.`,
     keyHint: 'Optional — local servers (Ollama, LM Studio) need no key. Required for Groq / OpenRouter / DeepSeek.',
   },
 };
@@ -70,7 +70,13 @@ export const MODELS_BY_PROVIDER: Record<AiProvider, string[]> = {
   anthropic: ['claude-fable-5', 'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'o1', 'gpt-4.1', 'gpt-4.1-mini'],
   google: ['gemini-2.0-flash', 'gemini-2.0-pro-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-  'openai-compatible': ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
+  // ⚠️ 이건 <카탈로그가 아니라 출발점>이다. Ollama 에는 설치 가능한 모델 목록 API 가 없어서
+  //    (ollama.com/api/search 404, 목록은 HTML) 여기 박아두면 반드시 낡는다 — 실제로 이 줄은
+  //    llama3.1/qwen2.5/mistral/phi3 에서 멈춰 있었고, 정작 이 프로젝트가 쓰는 gemma4 가 없었다.
+  //    그래서 최신성은 목록이 아니라 두 경로가 책임진다: 설치된 것은 "Load"(/v1/models), 새로
+  //    나온 것은 이름을 넣어 설치(ollama:pull-model). 아래는 2026-08-25 registry.ollama.ai 로
+  //    존재를 확인한 것들이다.
+  'openai-compatible': ['gemma4', 'qwen3', 'llama3.3', 'deepseek-r1', 'phi4', 'mistral-small'],
 };
 
 /** True when `baseURL` (or the Ollama default when blank) targets a LOOPBACK host —

@@ -52,10 +52,44 @@ export async function extractFileContent(filePath: string): Promise<ExtractedCon
   }
 }
 
+// unpdf 의 <번들> pdfjs 대신 우리가 고정한 pdfjs-dist 를 쓰게 한다. 이유:
+//  · unpdf 는 pdfjs 를 dist 안에 인라인해서 npm audit 에 안 보인다 — 그 사본이 5.6.205 로
+//    GHSA-hq66-cqwq-w95j(악성 PDF → 임의 JS 실행) 범위 안이었고, unpdf <최신판도> 6.1.200 을
+//    번들해 여전히 범위 안이다(패치판은 6.2.108 뿐). override 는 번들 사본에 닿지 않는다.
+//  · 이 추출은 샌드박스 렌더러가 아니라 Node 컨텍스트에서 돈다 — 뚫리면 사용자 권한이다.
+// 한 번만 갈아끼우면 되고, 실패하면 (구버전 unpdf 등) 번들 사본 + eval 차단으로 내려간다.
+let pdfjsSwapped: Promise<boolean> | null = null;
+function ensurePatchedPdfjs(unpdf: { definePDFJSModule?: (m: () => Promise<unknown>) => Promise<void> }): Promise<boolean> {
+  pdfjsSwapped ??= (async () => {
+    try {
+      // pdfjs 6.x 는 Promise.try(ES2025, Node 23+)를 쓴다. 이 패키지의 엔진 하한은 Node 20 이라
+      // 그대로면 20/22 사용자의 PDF 추출이 <행으로> 죽는다(워커 메시지 핸들러 안의 unhandled
+      // rejection 이라 catch 에도 안 걸린다 — 실측: vitest 30s 타임아웃). 표준 시맨틱대로 심는다.
+      type PromiseTry = { try?: <T>(fn: (...a: unknown[]) => T, ...args: unknown[]) => Promise<Awaited<T>> };
+      const P = Promise as PromiseConstructor & PromiseTry;
+      P.try ??= function <T>(this: unknown, fn: (...a: unknown[]) => T, ...args: unknown[]): Promise<Awaited<T>> {
+        return new Promise<Awaited<T>>((resolve) => resolve(fn.apply(this, args) as Awaited<T>));
+      };
+      // legacy 빌드다 — 메인 빌드는 브라우저 최신 V8 전용이라(Uint8Array.toHex 등) Node 에서
+      // 'hashOriginal.toHex is not a function' 으로 죽는다(실측). pdfjs 도 Node 는 legacy 를 쓰라고 경고한다.
+      await unpdf.definePDFJSModule?.(() => import('pdfjs-dist/legacy/build/pdf.mjs'));
+      return true;
+    } catch {
+      return false; // 번들 사본으로 동작은 한다 — 아래 isEvalSupported:false 가 알려진 벡터를 막는다
+    }
+  })();
+  return pdfjsSwapped;
+}
+
 async function extractPdf(buffer: Buffer, filePath: string): Promise<ExtractedContent> {
   try {
-    const { extractText } = await import('unpdf');
-    const result = await extractText(new Uint8Array(buffer));
+    const unpdf = await import('unpdf');
+    const { extractText, getDocumentProxy } = unpdf;
+    await ensurePatchedPdfjs(unpdf);
+    // isEvalSupported:false — 알려진 익스플로잇이 폰트 코드의 eval 경로다. 어느 pdfjs 가 로드됐든
+    // 이 문은 닫아 둔다(텍스트 추출에 eval 이 필요한 경우는 없다).
+    const doc = await getDocumentProxy(new Uint8Array(buffer), { isEvalSupported: false } as Parameters<typeof getDocumentProxy>[1]);
+    const result = await extractText(doc);
     const text = Array.isArray(result.text) ? result.text.join('\n\n') : (result.text ?? '');
     return {
       text,

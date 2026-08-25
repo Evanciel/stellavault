@@ -131,6 +131,17 @@ describe('pure SSE parsers', () => {
 
 // ── buildChatBody ───────────────────────────────────────────────────────────
 describe('buildChatBody', () => {
+  it('pins the per-provider credential host (pinHost)', async () => {
+    const { buildChatBody } = await import('../src/main/chat-engine.js');
+    expect(buildChatBody(ANTHROPIC_CFG, 'SYS', userMsg('hi')).pinHost).toBe('api.anthropic.com');
+    expect(buildChatBody(OPENAI_CFG, 'SYS', userMsg('hi')).pinHost).toBe('api.openai.com');
+    expect(buildChatBody(GEMINI_CFG, 'SYS', userMsg('hi')).pinHost).toBe('generativelanguage.googleapis.com');
+    const localCfg = { provider: 'openai-compatible' as const, apiKey: '', model: 'x', baseURL: 'http://localhost:11434/v1' };
+    expect(buildChatBody(localCfg, 'SYS', userMsg('hi')).pinHost).toBe('localhost');
+    const remoteCfg = { provider: 'openai-compatible' as const, apiKey: 'k', model: 'x', baseURL: 'https://api.groq.com/openai/v1' };
+    expect(buildChatBody(remoteCfg, 'SYS', userMsg('hi')).pinHost).toBe('api.groq.com');
+  });
+
   it('anthropic: no sampling/thinking params; model from default; system top-level', async () => {
     const { buildChatBody, CHAT_MAX_TOKENS } = await import('../src/main/chat-engine.js');
     const spec = buildChatBody(ANTHROPIC_CFG, 'SYS', userMsg('hi'));
@@ -427,7 +438,7 @@ async function runLoop(steps: Step[], opts: any = {}) {
     signal: opts.signal ?? new AbortController().signal,
     onDelta: (d: string) => calls.deltas.push(d),
     onToolCall: (n: string) => calls.toolCall.push(n),
-    onToolResult: (n: string, ok: boolean) => calls.toolResult.push({ n, ok }),
+    onToolResult: (n: string, ok: boolean, _s: string, filePath?: string) => { calls.toolResult.push({ n, ok }); opts.onToolResultPath?.(filePath); },
     onPlan: (steps: string[], done: number) => calls.plan.push({ steps, done }),
     onSkill: (n: string) => calls.skill.push(n), // P3
     onToolConfirm: opts.onToolConfirm, // undefined → auto-apply (writes don't pause)
@@ -554,6 +565,49 @@ describe('runAgentLoop — agent loop invariants', () => {
     );
     expect(denied.execute).toHaveLength(0);
     expect(denied.succeed[0].t).toBe('ok, skipped');
+  });
+
+  it('deny-with-reason: an object verdict feeds the reason into the tool result for the model', async () => {
+    const c = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'adjusted' })],
+      { onToolConfirm: async () => ({ approved: false, reason: 'wrong folder — file under Projects' }) },
+    );
+    expect(c.execute).toHaveLength(0); // still denied
+    // the NEXT model call sees the declined-with-reason tool message
+    const next = c.stepFull[1];
+    const toolMsg = next.find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toContain('User declined the write.');
+    expect(toolMsg.content).toContain('wrong folder — file under Projects');
+    expect(toolMsg.content).toContain('do not retry the same write unchanged');
+  });
+
+  it('deny-with-reason: object approve verdict executes; reason-less object denial stays terse', async () => {
+    const ok = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'done' })],
+      { onToolConfirm: async () => ({ approved: true }) },
+    );
+    expect(ok.execute).toHaveLength(1);
+
+    const denied = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'skipped' })],
+      { onToolConfirm: async () => ({ approved: false }) },
+    );
+    expect(denied.execute).toHaveLength(0);
+    const toolMsg = denied.stepFull[1].find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toBe('User declined the write.');
+  });
+
+  it('an {error} tool result reports ok=false and NEVER carries a Filed writePath', async () => {
+    const paths: Array<string | undefined> = [];
+    const c = await runLoop(
+      [step({ toolCalls: [tc('log_decision', { title: 't' })] }), step({ text: 'end' })],
+      {
+        toolResult: { error: 'a note with that title already exists', filePath: 'Inbox/existing.md' },
+        onToolResultPath: (p: string | undefined) => paths.push(p),
+      },
+    );
+    expect(c.toolResult[0].ok).toBe(false); // an errored write must not render as ✓/Filed
+    expect(paths[0]).toBeUndefined();       // recovery filePath is for the MODEL, not the strip
   });
 
   it('aborted streamStep → fail("aborted") exactly once, no succeed', async () => {
@@ -726,6 +780,29 @@ describe('chatStream', () => {
     await p;
     expect(deltas).toEqual(['Hel', 'lo']);
     expect(full).toBe('Hello');
+  });
+
+  it('sets redirect:error + pins the host on the key-bearing request (no key replay on a 3xx)', async () => {
+    const { chatStream } = await import('../src/main/chat-engine.js');
+    const controller = new AbortController();
+    let err: { msg: string; cat?: string } | null = null;
+    const p = chatStream({
+      cfg: ANTHROPIC_CFG, messages: userMsg('hi'), ragOn: false, signal: controller.signal,
+      onDelta: () => {}, onDone: () => {}, onError: (m: string, c?: string) => { err = { msg: m, cat: c }; },
+    });
+    await tick();
+    const req = lastReq();
+    // The request that carries x-api-key hard-fails redirects + is host-pinned.
+    expect(req.opts.redirect).toBe('error');
+    expect(req.opts.hostname).toBe('api.anthropic.com');
+    expect(req.headers['x-api-key']).toBe(ANTHROPIC_CFG.apiKey);
+    // Electron emits 'error' on a 3xx under redirect:'error'. The key must NOT be replayed:
+    // only ONE request is ever made, and it only ever went to api.anthropic.com.
+    req.emit('error', new Error('net::ERR_UNEXPECTED_REDIRECT'));
+    await p;
+    expect(err).not.toBeNull();
+    expect(reqs.length).toBe(1);
+    expect(reqs.every((r) => r.opts.hostname === 'api.anthropic.com')).toBe(true);
   });
 
   it('anthropic: ping resets idle, emits no delta', async () => {

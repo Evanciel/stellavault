@@ -328,6 +328,41 @@ function mapSearchHits(results: any[]): Array<{ title: string; filePath: string;
   }));
 }
 
+// ── Tool self-recovery (hermes absorb) ──
+// A small local model wastes whole turns on a miss it could recover from in-result: a path it
+// mistyped, a query one word too specific. Each recovery below is a bounded, read-only probe
+// whose output is title/filePath only — same trust surface as search_vault itself.
+
+/** A file-keyed tool missed (bad/mistyped path) → probe the index for the closest note titles. */
+async function probeDidYouMean(deps: AgentToolDeps, wantedPath: string, limit = 3): Promise<Array<{ title: string; filePath: string }>> {
+  try {
+    const stem = (wantedPath.split(/[\\/]/).pop() ?? '').replace(/\.md$/i, '').replace(/[-_]+/g, ' ').trim();
+    if (!stem) return [];
+    const results = await deps.searchEngine.search({ query: stem, limit });
+    return mapSearchHits(results).filter((h) => h.filePath).map(({ title, filePath }) => ({ title, filePath }));
+  } catch { return []; }
+}
+
+/** search_vault matched nothing → retry its 2 longest terms so the model gets material to adapt
+ *  with instead of a bare empty list (a dead end it usually answers past, wrongly). */
+async function probeRelaxedSearch(deps: AgentToolDeps, query: string, limit: number): Promise<Array<{ title: string; filePath: string; snippet: string; score: number }>> {
+  const terms = query.split(/\s+/).filter((t) => t.length >= 2);
+  if (terms.length < 2) return []; // single-term query: nothing to relax
+  const longest = [...terms].sort((a, b) => b.length - a.length).slice(0, 2);
+  const seen = new Set<string>();
+  const relaxed: Array<{ title: string; filePath: string; snippet: string; score: number }> = [];
+  for (const term of longest) {
+    try {
+      for (const h of mapSearchHits(await deps.searchEngine.search({ query: term, limit: 4 }))) {
+        if (h.filePath && !seen.has(h.filePath)) { seen.add(h.filePath); relaxed.push(h); }
+      }
+    } catch { /* probe is best-effort */ }
+  }
+  return relaxed.slice(0, limit);
+}
+
+const HINT_USE_SEARCH_PATH = 'pass the exact filePath from a search_vault result';
+
 /** Citations surfaced to the user's bubble from a tool result (search hits → clickable notes). */
 export function extractAgentCitations(name: string, result: unknown): ChatCitation[] {
   if (name !== 'search_vault') return [];
@@ -354,6 +389,14 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
           const id = r?.document?.id;
           if (id) void deps.decayEngine?.recordAccess?.({ documentId: id, type: 'mcp_query', timestamp: new Date().toISOString() }).catch(() => {});
         }
+        // Self-recovery: nothing matched the full query → retry its key terms. Honest labelling
+        // (the note names the term-level match) so the model refines instead of trusting blindly.
+        if (hits.length === 0) {
+          const relaxed = await probeRelaxedSearch(deps, query, num(args.limit) ?? 8);
+          if (relaxed.length > 0) {
+            return { results: relaxed, note: `no notes matched the full query "${query}" — these match its key terms instead; refine the query or read the closest note` };
+          }
+        }
         return { results: hits };
       }
       case 'read_note': {
@@ -367,16 +410,21 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
           const candidate = isAbsolute(filePath) ? filePath : join(deps.vaultPath, filePath);
           safe = assertInsideVault(deps.vaultPath, candidate); // throws on traversal
         } catch {
-          return { error: 'path is outside the vault' };
+          return { error: 'path is outside the vault', hint: HINT_USE_SEARCH_PATH };
         }
         try {
           const size = statSync(safe).size;
-          if (size > MAX_READ_BYTES) return { error: 'note too large to read inline' };
+          if (size > MAX_READ_BYTES) return { error: 'note too large to read inline', hint: 'use the search_vault snippet for this note instead' };
           const content = readFileSync(safe, 'utf-8');
           if (content.includes('\u0000')) return { error: 'binary file' };
           return { filePath, content };
         } catch {
-          return { error: 'note not found or unreadable' };
+          // Self-recovery: the model usually mistyped/guessed the path — hand it the closest
+          // real notes so the retry is one step, not a fresh search.
+          const didYouMean = await probeDidYouMean(deps, filePath);
+          return didYouMean.length > 0
+            ? { error: 'note not found or unreadable', didYouMean, hint: HINT_USE_SEARCH_PATH }
+            : { error: 'note not found or unreadable', hint: HINT_USE_SEARCH_PATH };
         }
       }
       case 'list_topics': {
@@ -395,7 +443,12 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         if (!filePath) return { error: 'filePath is required' };
         if (!deps.getRelatedByPath) return { error: 'related-notes unavailable' };
         try { return { related: await deps.getRelatedByPath(filePath, Math.min(Number(args.limit) || 5, 10)) }; }
-        catch { return { error: 'note not found in index' }; }
+        catch {
+          const didYouMean = await probeDidYouMean(deps, filePath);
+          return didYouMean.length > 0
+            ? { error: 'note not found in index', didYouMean, hint: HINT_USE_SEARCH_PATH }
+            : { error: 'note not found in index', hint: HINT_USE_SEARCH_PATH };
+        }
       }
       case 'detect_gaps': {
         if (!deps.detectGaps) return { gaps: [] };
@@ -456,7 +509,9 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         let safe: string;
         try { safe = assertInsideVault(deps.vaultPath, join(deps.vaultPath, rel)); }
         catch { return { error: 'target folder is outside the vault' }; }
-        if (existsSync(safe)) return { error: 'a note with that title already exists' };
+        // Self-recovery: duplicate title is the common create miss — hand back the existing
+        // note's path so the model can pivot to append_note in one step.
+        if (existsSync(safe)) return { error: 'a note with that title already exists', filePath: rel, hint: 'use append_note with this filePath to add to it instead' };
         const tags = Array.isArray(args.tags) ? (args.tags as unknown[]).map(String) : [];
         const md = [
           '---',
@@ -477,8 +532,13 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         if (!str(args.filePath) || !content) return { error: 'filePath and content are required' };
         let safe: string;
         try { safe = resolveInVault(deps.vaultPath, str(args.filePath)); }
-        catch { return { error: 'path is outside the vault' }; }
-        if (!existsSync(safe)) return { error: 'note not found' };
+        catch { return { error: 'path is outside the vault', hint: HINT_USE_SEARCH_PATH }; }
+        if (!existsSync(safe)) {
+          const didYouMean = await probeDidYouMean(deps, str(args.filePath));
+          return didYouMean.length > 0
+            ? { error: 'note not found', didYouMean, hint: HINT_USE_SEARCH_PATH }
+            : { error: 'note not found', hint: HINT_USE_SEARCH_PATH };
+        }
         try {
           const cur = readFileSync(safe, 'utf-8');
           writeFileSync(safe, `${cur.replace(/\s*$/, '')}\n\n${content}\n`, 'utf-8');
@@ -491,8 +551,13 @@ export function buildExecuteAgentTool(deps: AgentToolDeps): (name: string, args:
         if (!str(args.filePath) || !target) return { error: 'filePath and targetTitle are required' };
         let safe: string;
         try { safe = resolveInVault(deps.vaultPath, str(args.filePath)); }
-        catch { return { error: 'path is outside the vault' }; }
-        if (!existsSync(safe)) return { error: 'note not found' };
+        catch { return { error: 'path is outside the vault', hint: HINT_USE_SEARCH_PATH }; }
+        if (!existsSync(safe)) {
+          const didYouMean = await probeDidYouMean(deps, str(args.filePath));
+          return didYouMean.length > 0
+            ? { error: 'note not found', didYouMean, hint: HINT_USE_SEARCH_PATH }
+            : { error: 'note not found', hint: HINT_USE_SEARCH_PATH };
+        }
         const wiki = `[[${target}]]`;
         try {
           const cur = readFileSync(safe, 'utf-8');

@@ -1,6 +1,6 @@
 {
   "name": "@stellavault/desktop",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Stellavault Desktop — Knowledge management app (Electron)",
   "private": true,
   "main": ".vite/build/index.js",

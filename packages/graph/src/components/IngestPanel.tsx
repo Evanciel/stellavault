@@ -359,7 +359,9 @@ export function IngestPanel() {
                   useGraphStore.getState().setGraphData(graphData.data.nodes, graphData.data.edges, graphData.data.clusters);
                 }
               } else {
-                setResult(data.error || t('ingest.reindexFail'));
+                // 🔴 `note` 를 먼저 본다 (코덱스 14차 P2). 서버는 "남의 DB — 아무것도 안 했다"
+                //    같은 <구체적 사유>를 거기 담는다. `error` 는 409·500 응답 쪽이다.
+                setResult(data.note || data.error || t('ingest.reindexFail'));
                 setStatus('error');
               }
             } catch {

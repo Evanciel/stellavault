@@ -31,6 +31,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mcpAutoStart: false,
   // P0-1: review-every-write confirm gate OFF by default (autonomous filing + undo is shipped).
   confirmWrites: false,
+  // Thinking display (hermes absorb): OFF by default (gemma4 fast-path); opt-in for reasoning models.
+  showThinking: false,
+  // Quick capture (hermes absorb): global hotkey ON by default (restart to apply).
+  quickCapture: true,
 };
 
 interface SettingsState {

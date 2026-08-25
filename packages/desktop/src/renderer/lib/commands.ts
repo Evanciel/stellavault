@@ -6,6 +6,7 @@ import { useAppStore } from '../stores/app-store.js';
 import { useSettingsStore } from '../stores/settings-store.js';
 import { ipc } from './ipc-client.js';
 import { t } from './i18n.js';
+import { runFullIndex } from './run-index.js';
 
 export interface CommandDef {
   id: string;
@@ -359,7 +360,7 @@ export function registerBuiltinCommands(): void {
     },
     {
       id: 'vault.reindex', title: t('action.reindexVault'), category: 'Vault',
-      run: () => { void ipc('core:index'); },
+      run: () => { void runFullIndex().catch(err => console.error('[cmd] index failed:', err)); },
     },
     // ─── T3-7: Publish (local read-only PWA + dashboard) ───
     {

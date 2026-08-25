@@ -34,6 +34,14 @@ export interface DecayItem {
   filePath: string;
 }
 
+// Proactive review brief (③ v2) — the COMPACT, read-only payload behind the chat
+// empty-state "review" chips. Titles / cluster names ONLY: never a documentId,
+// filePath, retrievability, or severity (no-secret invariant — see chat:proactive-brief).
+export interface ProactiveBrief {
+  decaying: { title: string }[];
+  weakLinks: { a: string; b: string }[];
+}
+
 // Search panel (W1-4) — options for 'search:query'.
 // mode 'keyword' disables the semantic signal (BM25 + entity only);
 // pathPrefix is a vault-relative folder prefix (forward slashes), filtered post-hoc.
@@ -291,6 +299,14 @@ export interface AppSettings {
   // the second brain files writes autonomously-with-undo by design (memory-relax philosophy);
   // this is the opt-in for users who want a confirm gate. Optional so older settings type-check.
   confirmWrites?: boolean;
+  // Thinking display (hermes absorb): opt-in — let local reasoning models (deepseek-r1/qwen3)
+  // think and stream their chain-of-thought as a collapsible block. Default OFF (gemma4 answers
+  // fastest with thinking suppressed). Optional so older settings type-check.
+  showThinking?: boolean;
+  // Quick capture (hermes absorb): global hotkey opens a tiny always-on-top input that files a
+  // thought straight into the vault via the audited capture funnel. Default ON; toggle takes
+  // effect on restart. Optional so older settings type-check.
+  quickCapture?: boolean;
 }
 
 // ─── Second-brain auto-capture (Design §6) ──────────────────────────────────
@@ -298,7 +314,7 @@ export interface AppSettings {
 // arg to 'vault:capture'; the DTOs below back the Capture/Review/Category panels
 // (centroids/embeddings are NEVER sent to the renderer).
 export type CaptureKind = 'file' | 'url' | 'text';
-export type CaptureSource = 'drop' | 'mcp' | 'clip';
+export type CaptureSource = 'drop' | 'mcp' | 'clip' | 'quick';
 export type CaptureStage = 'fleeting' | 'literature' | 'permanent';
 
 export interface CaptureRequest {
@@ -458,8 +474,20 @@ export interface IpcChannelMap {
   // Core
   'core:search':        { args: [query: string, limit?: number]; result: SearchResult[] };
   'core:get-stats':     { args: []; result: VaultStats };
-  'core:index':         { args: []; result: { indexed: number; totalChunks: number } };
+  // 🔴 `foreignDb`·`ownershipUnverified` 를 함께 돌려준다 (코덱스 14차 P2).
+  //    둘만 빠져 있으면 UI 는 "0개 색인" 을 <빈 볼트>로 읽는다 — 그것이 이 사고에서
+  //    init 이 사용자 볼트에 샘플 노트를 쓸 뻔했던 바로 그 오독이다.
+  // 🔴 `ok` 는 <이 실행이 무언가를 이뤘는가>다 (코덱스 16차 P2). 한때 main 이
+  //    `summarizeIndexRun(...).ok` 를 계산해 놓고 <응답에서 버렸다> — 그래서
+  //    `allFailed`(전부 실패)가 렌더러에는 성공으로 도착했다. 계산한 것을 안 보내면
+  //    계산하지 않은 것과 같다.
+  'core:index':         { args: []; result: {
+    indexed: number; totalChunks: number; failed: number;
+    foreignDb: boolean; ownershipUnverified: boolean; note: string; ok: boolean;
+  } };
   'core:decay-top':     { args: [limit?: number]; result: DecayItem[] };
+  // ③ v2 — read-only proactive review brief (titles/cluster-names only) for the chat empty-state.
+  'chat:proactive-brief': { args: []; result: ProactiveBrief };
 
   // Search panel (W1-4) — full hybrid/keyword search with tag + path filters.
   'search:query':       { args: [query: string, opts?: SearchQueryOpts]; result: SearchResult[] };
@@ -500,6 +528,12 @@ export interface IpcChannelMap {
   // Wave 1 cluster-first LOD (docs/02-design/graph-scale-lod-redesign.md).
   'graph:clusters':       { args: [opts?: { mode?: string }]; result: ClusterLevelGraph };
   'graph:expand-cluster': { args: [opts: { mode?: string; clusterId: number }]; result: ClusterMembersGraph };
+  // 그래프 상한 밖의 노트도 "주변 보기"가 되게 하는 경로 — 링크 테이블만 읽는다(임베딩 없음).
+  'graph:note-links':     { args: [opts: { filePath: string; depth?: number }]; result: {
+    found: boolean; isolated: boolean; truncated: number;
+    nodes: Array<{ id: string; title: string; filePath: string; hop: number }>;
+    edges: Array<{ source: string; target: string; weight: number; kind: 'link' }>;
+  } };
   // Startup race guard — renderer queries this on mount (see App.tsx).
   'core:get-ready':       { args: []; result: boolean };
 
@@ -532,6 +566,16 @@ export interface IpcChannelMap {
   // The renderer passes only provider + optional baseURL (needed for openai-compatible/Ollama).
   // A compromised renderer can no longer pass an arbitrary key to trigger outbound requests.
   'ai:list-models':     { args: [opts: { provider: string; baseURL?: string }]; result: string[] };
+  // 설치 가능한 모델 목록 API 가 Ollama 에 없어서(검색 API 404, 목록은 HTML) 카탈로그 대신
+  // <이름 확인 + 설치> 로 간다. exists 가 3값인 것에 주의 — null 은 "확인 못 했다" 다.
+  // 목록 API 가 없어 공개 라이브러리 페이지를 읽는다 — 그래서 <깨질 수 있다>. models 가 비고
+  // error 가 있으면 사이트가 바뀐 것이다: UI 는 빈 목록이 아니라 그 사실을 말해야 한다.
+  'ollama:browse-models': { args: [opts?: { source?: 'ollama' | 'huggingface'; query?: string; sort?: 'newest' | 'popular' }];
+                            result: { models: string[]; error?: string } };
+  'ollama:model-exists': { args: [opts: { model: string }]; result: { exists: boolean | null } };
+  'ollama:pull-model':   { args: [opts: { model: string; baseURL?: string }];
+                           result: { ok: true } | { ok: false; reason: string } };
+  'ollama:pull-abort':   { args: []; result: { aborted: boolean } };
   // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
   // the plaintext key NEVER returns to the renderer after being stored.
   'ai:set-secret':   { args: [provider: string, key: string]; result: void };
@@ -596,6 +640,8 @@ export interface IpcChannelMap {
 
   // ─── Second-brain auto-capture (Design §6.4) ───
   'vault:capture':      { args: [req: CaptureRequest]; result: { id: string } };
+  // Quick capture (hermes absorb): hide the always-on-top quick-capture window (Esc / after filing).
+  'capture:hide':       { args: []; result: void };
   'capture:list':       { args: [limit?: number]; result: CaptureItem[] };
   'capture:set-paused': { args: [paused: boolean]; result: void };
   'capture:counts':     { args: []; result: CaptureCounts };
@@ -610,14 +656,14 @@ export interface IpcChannelMap {
   // 'chat:chunk'/'chat:done'/'chat:error' EVENTS (targeted to e.sender, filtered by
   // streamId). The API key NEVER appears in these args (main reads SecretStore).
   // sessionId routes the persisted assistant turn to the right session on done.
-  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean }]; result: void };
+  'chat:send':  { args: [req: { messages: ChatMessage[]; streamId: string; sessionId: string; ragOn: boolean; agentOn?: boolean; confirmWrites?: boolean; showThinking?: boolean }]; result: void };
   'chat:abort': { args: [streamId: string]; result: void };
   // Steer-after-tool (P1-3): enqueue a free-text steer note onto a RUNNING agent stream — injected
   // before the next model turn WITHOUT aborting. MAIN owner-guards (wcId), length/queue-bounds, and
   // injection+secret-screens the text before it enters the loop; a stale/missing stream is a no-op.
   'chat:steer': { args: [streamId: string, text: string]; result: void };
   // Agent (SP-D): renderer approves/denies a write tool the MAIN model requested.
-  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean }]; result: void };
+  'chat:tool-approve': { args: [payload: { streamId: string; approve: boolean; reason?: string }]; result: void };
   // Agent (SP-I): auto-distill a finished conversation into the wiki (Karpathy ingest).
   'chat:distill': { args: [req: { messages: ChatMessage[]; streamId: string; sessionId?: string }]; result: void };
   // Reflection follow-up (§A): run the distill loop READ-ONLY (deny-all confirm broker, no
@@ -724,12 +770,18 @@ export interface IpcEventMap {
   // Context-fill vitals (P1-4): ONE pre-stream frame per send. fillPct/charsIn are TEXT-ONLY input
   // message fill vs budgetChars (CHAT_MAX_TOTAL_CHARS — the app's own hard cap), NOT a token count
   // and NOT a model context window; excludes system/RAG/coreMemory/image-attachment chars.
-  'chat:vitals': { streamId: string; fillPct: number; charsIn: number; budgetChars: number };
+  'chat:vitals': { streamId: string; fillPct: number; charsIn: number; budgetChars: number; trimmedCount?: number };
+  // Thinking display (hermes absorb): reasoning-model chain-of-thought deltas — ephemeral,
+  // never persisted with the session. Emitted only when the request opted in (showThinking).
+  'chat:thinking': { streamId: string; delta: string };
   // P3 (§4.3): invoke_skill loaded a skill — one-way surface so the UI can show "used skill X".
   'chat:skill-invoke': { streamId: string; name: string };
   // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
   // shows a non-blocking "🧠 remembered: … (undo)" toast (undo → memory:delete by id).
   'chat:memory-written': { streamId: string; id: string; text: string };
+  // Ollama 설치 진행률 — 런타임(다운로드)과 모델(pull) 둘 다. e.sender 로만 보낸다.
+  'ollama:download-progress': { phase: 'fetching' | 'downloading' | 'extracting' | 'done'; received?: number; total?: number };
+  'ollama:pull-progress':     { phase: 'verifying' | 'pulling' | 'done'; status?: string; received?: number; total?: number };
 }
 
 // Helper types for typed invoke/on
