@@ -17,7 +17,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { app, net } from 'electron';
-import { OLLAMA_BASE_URL } from '../shared/ai-providers.js';
+import { OLLAMA_BASE_URL, isLocalProviderUrl } from '../shared/ai-providers.js';
 
 const PROBE_TIMEOUT_MS = 2_000;
 const START_TIMEOUT_MS = 20_000;
@@ -374,5 +374,196 @@ export async function downloadAndInstallOllama(
     return { ok: true, binPath, version: await ollamaVersionAt(binPath) };
   } catch (err) {
     return { ok: false, reason: (err as Error)?.message || 'unknown' };
+  }
+}
+
+// ─── 모델 설치 (ollama pull) ────────────────────────────────────────────────
+//
+// 위쪽 런타임 다운로드는 "렌더러가 아무것도 안 준다" 가 안전 근거였다. 여기는 다르다 —
+// 렌더러가 <모델 이름>을 준다. 그게 이 기능의 전부다(새 모델이 오늘 나오면 오늘 쓰는 것).
+// 그래서 그 문자열이 URL 경로와 요청 본문에 닿기 전에 좁은 문법으로 먼저 자른다.
+//
+// 이 구조를 고른 이유: Ollama 에는 "설치 가능한 모델 목록" API 가 없다(ollama.com/api/search
+// 는 404, 목록은 HTML 뿐이다). 목록을 코드에 박아두면 릴리스마다 손으로 갱신해야 하고 —
+// 실제로 llama3.1/qwen2.5 에서 멈춰 있었다 — 새 모델은 항상 한 박자 늦는다. 반대로 레지스트리는
+// <임의의 이름 하나>를 확인해 준다. 이름을 받아 확인하고 받으면, 카탈로그 없이도 안 밀린다.
+
+/** 모델 참조의 한 조각. 영숫자로 시작 — 그래서 `.` `..` 는 문법상 들어올 수 없다. */
+const MODEL_SEG = /^[a-z0-9][a-z0-9._-]*$/i;
+
+/** `[네임스페이스/]이름[:태그]` 인가. 경로 조각으로 쓰이므로 슬래시 2개·콜론 2개를 막는다. */
+export function isValidModelRef(ref: string): boolean {
+  if (!ref || ref.length > 128) return false;
+  const parts = ref.split(':');
+  if (parts.length > 2) return false;
+  if (parts[1] !== undefined && !MODEL_SEG.test(parts[1])) return false;
+  const segs = parts[0].split('/');
+  if (segs.length > 2) return false;
+  return segs.every((s) => MODEL_SEG.test(s));
+}
+
+const OLLAMA_REGISTRY = 'registry.ollama.ai';
+
+/**
+ * 응답이 핀한 호스트에서 온 것이 <맞는가>.
+ *
+ * ⚠️ electron 의 net.fetch 는 `response.url` 을 빈 문자열로 준다. 처음엔 그 값만 보고
+ *    판정했는데, 그러면 <모든> 조회가 "확인 못 함" 으로 떨어진다 — 실제로 라이브에서
+ *    카탈로그 0개 · 이름 확인 전부 null 로 관측하고 잡았다. 그래서 진짜 방어는 위의
+ *    `redirect: 'error'` 가 하고, 이 검사는 url 이 <실제로 있을 때만> 보조로 건다.
+ */
+function hostIsPinned(res: { url?: string }, host: string): boolean {
+  if (!res.url) return true;          // 값이 없으면 이 검사로는 아무 말도 할 수 없다
+  try {
+    return new URL(res.url).host.toLowerCase() === host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 그 이름의 모델이 공개 레지스트리에 <실제로> 있는가.
+ *
+ * 몇 GB 짜리 pull 을 시작하기 전에 "그런 모델 없다" 를 말할 수 있게 한다.
+ * ⚠️ 반환이 3값이다 — `false`("없다") 와 `null`("확인 못 했다") 는 다른 말이다. 오프라인일 때
+ *    없다고 단정하면, 멀쩡한 이름을 사용자가 못 받게 막는다.
+ */
+export async function modelExistsInRegistry(ref: string): Promise<boolean | null> {
+  if (!isValidModelRef(ref)) return false;
+  const [pathPart, tag = 'latest'] = ref.split(':');
+  // 네임스페이스가 없으면 공식 라이브러리다 — 도커 레지스트리 규약과 같은 모양.
+  const repo = pathPart.includes('/') ? pathPart : `library/${pathPart}`;
+  try {
+    const res = await net.fetch(`https://${OLLAMA_REGISTRY}/v2/${repo}/manifests/${tag}`, {
+      headers: { Accept: 'application/vnd.docker.distribution.manifest.v2+json' },
+      // 핀을 벗어나는 홉은 <따라가지 않는다>. 두 엔드포인트 모두 리다이렉트가 없으니
+      // 정상 경로를 막지도 않는다(실측 2026-08-25: redirects=0).
+      redirect: 'error',
+    });
+    if (!hostIsPinned(res, OLLAMA_REGISTRY)) return null;
+    if (res.status === 200) return true;
+    if (res.status === 401 || res.status === 404) return false;  // 비공개/없음 — 어느 쪽이든 못 받는다
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export type PullPhase = 'verifying' | 'pulling' | 'done';
+export interface PullProgress {
+  phase: PullPhase;
+  /** Ollama 가 주는 단계 문구 그대로 (예: "pulling manifest", "verifying sha256 digest"). */
+  status?: string;
+  received?: number;
+  total?: number;
+}
+export type PullResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * 로컬 Ollama 에 모델을 내려받는다. `POST /api/pull` 의 NDJSON 스트림을 진행률로 바꿔 흘린다.
+ *
+ * 🔴 로컬이 아니면 거부한다. openai-compatible 은 Groq·OpenRouter 같은 원격 호스트도 되는데,
+ *    거기엔 `/api/pull` 이 없을뿐더러 — 사용자가 넣은 임의 호스트로 POST 를 쏘는 자리가 된다.
+ */
+export async function pullModel(
+  baseURL: string,
+  ref: string,
+  onProgress?: (p: PullProgress) => void,
+  signal?: AbortSignal,
+): Promise<PullResult> {
+  if (!isValidModelRef(ref)) return { ok: false, reason: 'invalid-model' };
+  if (!isLocalProviderUrl(baseURL || OLLAMA_BASE_URL)) return { ok: false, reason: 'not-local' };
+  try {
+    const res = await net.fetch(`${nativeBase(baseURL)}/api/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: ref, stream: true }),
+      signal,
+    });
+    if (!res.ok || !res.body) return { ok: false, reason: `http-${res.status}` };
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let lastError = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      // NDJSON — 줄 단위로 끊고, 잘린 마지막 조각은 다음 청크에 이어 붙인다. 한 줄이
+      // 청크 경계에 걸리는 일은 수 GB 를 받는 동안 반드시 일어난다.
+      for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const j = JSON.parse(line) as
+            { status?: string; error?: string; completed?: number; total?: number };
+          // 에러는 스트림 <안>으로 온다 — HTTP 는 200 인 채로. 여기서 안 읽으면 성공이 된다.
+          if (j.error) { lastError = j.error; continue; }
+          onProgress?.({ phase: 'pulling', status: j.status, received: j.completed, total: j.total });
+        } catch { /* 깨진 줄 하나로 몇 GB 를 버리지 않는다 */ }
+      }
+    }
+    if (lastError) return { ok: false, reason: lastError };
+    onProgress?.({ phase: 'done' });
+    return { ok: true };
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') return { ok: false, reason: 'aborted' };
+    return { ok: false, reason: (err as Error)?.message || 'unknown' };
+  }
+}
+
+// ─── 카탈로그 둘러보기 ──────────────────────────────────────────────────────
+//
+// "이름을 알면 받는다" 만으로는 부족하다 — 사용자가 <무엇이 새로 나왔는지> 모르면 이름을
+// 넣을 수가 없다. 그런데 Ollama 에는 목록 API 가 없다(ollama.com/api/search 는 404).
+// 남은 길은 라이브러리 페이지를 읽는 것뿐이라, 그렇게 한다. 대신 <깨질 수 있다>는 전제로 짠다:
+//   · 뽑아내는 것은 `/library/<이름>` 링크의 이름 하나뿐 — 원격 HTML 에서 앱으로 넘어오는
+//     것이 모델명 문자집합([a-z0-9._-])을 벗어날 수 없다. 페이지 내용은 데이터지 지시가 아니다.
+//   · 0개가 나오면 <조용히 빈 목록>이 아니라 실패로 보고한다. 사이트가 개편됐을 때 "새 모델이
+//     하나도 없다" 처럼 보이는 것이 이 기능에서 제일 나쁜 고장이다.
+//   · 실패해도 내장 목록과 직접 입력은 그대로 산다. 이건 편의지 유일한 경로가 아니다.
+
+const OLLAMA_SITE = 'ollama.com';
+const BROWSE_MAX = 300;
+const BROWSE_TTL_MS = 30 * 60_000;
+/** 페이지가 아무리 커져도 읽는 양을 묶는다(현재 ~800KB). */
+const BROWSE_MAX_BYTES = 4 * 1024 * 1024;
+
+const browseCache = new Map<string, { at: number; models: string[] }>();
+
+export type BrowseSort = 'newest' | 'popular';
+export interface BrowseResult { models: string[]; error?: string }
+
+/** 공개 라이브러리에서 모델 이름을 가져온다. newest 는 페이지 순서가 곧 최신순이다. */
+export async function browseRegistry(sort: BrowseSort = 'newest'): Promise<BrowseResult> {
+  const cached = browseCache.get(sort);
+  if (cached && Date.now() - cached.at < BROWSE_TTL_MS) return { models: cached.models };
+  try {
+    const url = `https://${OLLAMA_SITE}/library${sort === 'newest' ? '?sort=newest' : ''}`;
+    const res = await net.fetch(url, { headers: { Accept: 'text/html' }, redirect: 'error' });
+    if (!hostIsPinned(res, OLLAMA_SITE)) return { models: [], error: 'redirected' };
+    if (!res.ok) return { models: [], error: `http-${res.status}` };
+
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > BROWSE_MAX_BYTES) return { models: [], error: 'too-large' };
+    const html = new TextDecoder().decode(buf);
+
+    // 페이지 순서를 그대로 살린다 — newest 정렬의 의미가 순서에 들어 있다.
+    const seen = new Set<string>();
+    for (const m of html.matchAll(/href="\/library\/([a-z0-9][a-z0-9._-]*)"/gi)) {
+      const name = m[1].toLowerCase();
+      if (isValidModelRef(name)) seen.add(name);
+      if (seen.size >= BROWSE_MAX) break;
+    }
+    const models = [...seen];
+    // 0개 = 마크업이 바뀐 것이다. 빈 목록으로 돌려주면 "새 모델 없음" 으로 읽힌다.
+    if (models.length === 0) return { models: [], error: 'no-matches' };
+
+    browseCache.set(sort, { at: Date.now(), models });
+    return { models };
+  } catch (err) {
+    return { models: [], error: (err as Error)?.message || 'unknown' };
   }
 }

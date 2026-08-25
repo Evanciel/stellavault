@@ -558,6 +558,16 @@ export interface IpcChannelMap {
   // The renderer passes only provider + optional baseURL (needed for openai-compatible/Ollama).
   // A compromised renderer can no longer pass an arbitrary key to trigger outbound requests.
   'ai:list-models':     { args: [opts: { provider: string; baseURL?: string }]; result: string[] };
+  // 설치 가능한 모델 목록 API 가 Ollama 에 없어서(검색 API 404, 목록은 HTML) 카탈로그 대신
+  // <이름 확인 + 설치> 로 간다. exists 가 3값인 것에 주의 — null 은 "확인 못 했다" 다.
+  // 목록 API 가 없어 공개 라이브러리 페이지를 읽는다 — 그래서 <깨질 수 있다>. models 가 비고
+  // error 가 있으면 사이트가 바뀐 것이다: UI 는 빈 목록이 아니라 그 사실을 말해야 한다.
+  'ollama:browse-models': { args: [opts?: { sort?: 'newest' | 'popular' }];
+                            result: { models: string[]; error?: string } };
+  'ollama:model-exists': { args: [opts: { model: string }]; result: { exists: boolean | null } };
+  'ollama:pull-model':   { args: [opts: { model: string; baseURL?: string }];
+                           result: { ok: true } | { ok: false; reason: string } };
+  'ollama:pull-abort':   { args: []; result: { aborted: boolean } };
   // T4: write-only key IPC. No ai:get-secret / read-secret exists by design —
   // the plaintext key NEVER returns to the renderer after being stored.
   'ai:set-secret':   { args: [provider: string, key: string]; result: void };
@@ -756,6 +766,9 @@ export interface IpcEventMap {
   // Memory-relax push audit (Part 1 §4): an AUTONOMOUS core_memory_append landed — the renderer
   // shows a non-blocking "🧠 remembered: … (undo)" toast (undo → memory:delete by id).
   'chat:memory-written': { streamId: string; id: string; text: string };
+  // Ollama 설치 진행률 — 런타임(다운로드)과 모델(pull) 둘 다. e.sender 로만 보낸다.
+  'ollama:download-progress': { phase: 'fetching' | 'downloading' | 'extracting' | 'done'; received?: number; total?: number };
+  'ollama:pull-progress':     { phase: 'verifying' | 'pulling' | 'done'; status?: string; received?: number; total?: number };
 }
 
 // Helper types for typed invoke/on

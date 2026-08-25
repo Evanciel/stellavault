@@ -47,6 +47,9 @@ import {
   getOllamaVersion,
   checkCompat,
   downloadAndInstallOllama,
+  pullModel,
+  modelExistsInRegistry,
+  browseRegistry,
 } from './ollama-manager.js';
 import {
   saveSession as chatSaveSession,
@@ -2373,6 +2376,41 @@ function registerIpcHandlers(config: AppConfig) {
       if (!e.sender.isDestroyed()) e.sender.send('ollama:download-progress', p);
     }),
   );
+
+  // ─── 모델 설치 ───
+  // 런타임 다운로드와 달리 여기는 렌더러가 <이름>을 준다. 검증은 ollama-manager 안에
+  // 있고(isValidModelRef → 로컬 URL 확인), 여기서는 <한 번에 하나만> 돈다는 것만 지킨다.
+  // 몇 GB 씩 받는 일이라 동시 실행은 디스크와 대역을 갈라 먹기만 한다.
+  let modelPull: { controller: AbortController; model: string } | null = null;
+
+  ipcMain.handle('ollama:browse-models', (_e, arg?: { sort?: string }) =>
+    browseRegistry(arg?.sort === 'popular' ? 'popular' : 'newest'),
+  );
+
+  ipcMain.handle('ollama:model-exists', async (_e, arg: { model?: string }) => ({
+    exists: await modelExistsInRegistry(String(arg?.model ?? '')),
+  }));
+
+  ipcMain.handle('ollama:pull-model', async (e, arg: { model?: string; baseURL?: string }) => {
+    if (modelPull) return { ok: false as const, reason: 'busy' };
+    const controller = new AbortController();
+    modelPull = { controller, model: String(arg?.model ?? '') };
+    try {
+      return await pullModel(
+        arg?.baseURL ?? '',
+        modelPull.model,
+        (p) => { if (!e.sender.isDestroyed()) e.sender.send('ollama:pull-progress', p); },
+        controller.signal,
+      );
+    } finally {
+      modelPull = null;
+    }
+  });
+
+  ipcMain.handle('ollama:pull-abort', () => {
+    modelPull?.controller.abort();
+    return { aborted: modelPull !== null };
+  });
   ipcMain.handle('ai:clear-secret', (_e, provider: string): void => {
     if (!isValidProvider(provider)) return; // I-1: unknown provider → no-op
     secretStore?.clearSecret(provider);
