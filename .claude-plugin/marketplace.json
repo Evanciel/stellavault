@@ -1,0 +1,23 @@
+{
+  "name": "stellavault",
+  "owner": {
+    "name": "Evanciel",
+    "url": "https://github.com/Evanciel"
+  },
+  "description": "Stellavault — local-first second brain plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "stellavault",
+      "source": "./plugins/stellavault",
+      "displayName": "Stellavault",
+      "description": "Give Claude long-term memory of your markdown vault: local semantic search (zero API keys), FSRS memory decay, vault-grounded answers, and decision logging.",
+      "version": "0.9.0",
+      "author": { "name": "Evanciel" },
+      "homepage": "https://evanciel.github.io/stellavault/",
+      "repository": "https://github.com/Evanciel/stellavault",
+      "license": "MIT",
+      "category": "knowledge",
+      "keywords": ["obsidian", "second-brain", "mcp", "semantic-search", "fsrs", "zettelkasten"]
+    }
+  ]
+}

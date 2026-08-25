@@ -9,7 +9,7 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 
 [English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh.md)
 
-[**🤖 Claude / Cursor に追加**](#mcp-連携-21ツール) · [**⬇ デスクトップアプリ**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ クイックスタート**](#インストール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
+[**🤖 Claude / Cursor に追加**](#mcp-連携-21ツール) · [**⬇ デスクトップアプリ**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0) · [**⚡ クイックスタート**](#インストール) · [**🌐 ライブデモ**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -17,6 +17,13 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 >
 > ```bash
 > npx -y stellavault setup    # Claude Code / Desktop、Cursor、Windsurf、VS Code に MCP サーバーを接続
+> ```
+>
+> **Claude Code ユーザーなら:** プラグインとしてインストール — MCP サーバーに加え `/vault-ask`・`/vault-review`・`/vault-decision` スキルが 2 コマンドで使えます:
+>
+> ```
+> /plugin marketplace add Evanciel/stellavault
+> /plugin install stellavault@stellavault
 > ```
 
 **自らをコンパイルするセカンドブレイン。** Stellavault は、知識はどう生き、どう育つべきかについての 2 つの思想を一つに溶け込ませました:
@@ -68,8 +75,8 @@ Karpathy の自己コンパイル型 wiki × ツェッテルカステン — 完
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-win32-x64-0.3.0.zip"><br/><b>⬇ Windows 版をダウンロード</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-linux-x64-0.3.0.zip"><br/><b>⬇ Linux 版をダウンロード</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-win32-x64-0.5.0.zip"><br/><b>⬇ Windows 版をダウンロード</b><br/><sub>x64 · 258 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-linux-x64-0.5.0.zip"><br/><b>⬇ Linux 版をダウンロード</b><br/><sub>x64 · 237 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>近日公開</sub></td>
   </tr>
 </table>
@@ -451,7 +458,7 @@ MIT — 全ソースコードを監査(audit)できます。
 
 ## リンク
 
-- **[⬇ デスクトップアプリをダウンロード](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0)**
+- **[⬇ デスクトップアプリをダウンロード](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0)**
 - [ランディングページ](https://evanciel.github.io/stellavault/)
 - [Obsidian プラグイン](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)

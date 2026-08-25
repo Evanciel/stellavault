@@ -9,7 +9,7 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh.md)
 
-[**🤖 Claude / Cursor에 추가**](#mcp-연동-21개-도구) · [**⬇ 데스크톱 앱**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 빠른 시작**](#설치) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
+[**🤖 Claude / Cursor에 추가**](#mcp-연동-21개-도구) · [**⬇ 데스크톱 앱**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0) · [**⚡ 빠른 시작**](#설치) · [**🌐 라이브 데모**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -17,6 +17,13 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 >
 > ```bash
 > npx -y stellavault setup    # Claude Code / Desktop, Cursor, Windsurf, VS Code에 MCP 서버 연결
+> ```
+>
+> **Claude Code 사용자라면?** 플러그인으로 설치하세요 — MCP 서버 + `/vault-ask`(볼트 근거 답변), `/vault-review`(망각 리뷰), `/vault-decision`(ADR 기록) 스킬이 두 명령으로 들어옵니다:
+>
+> ```
+> /plugin marketplace add Evanciel/stellavault
+> /plugin install stellavault@stellavault
 > ```
 
 **스스로 컴파일하는 세컨드 브레인.** Stellavault는 "지식이 어떻게 살아 숨 쉬고 자라야 하는가"에 대한 두 가지 아이디어를 하나로 녹였습니다:
@@ -68,8 +75,8 @@ Karpathy의 자기 컴파일 위키 × 제텔카스텐 — 완전 로컬, 볼트
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-win32-x64-0.3.0.zip"><br/><b>⬇ Windows용 다운로드</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-linux-x64-0.3.0.zip"><br/><b>⬇ Linux용 다운로드</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-win32-x64-0.5.0.zip"><br/><b>⬇ Windows용 다운로드</b><br/><sub>x64 · 258 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-linux-x64-0.5.0.zip"><br/><b>⬇ Linux용 다운로드</b><br/><sub>x64 · 237 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>곧 출시</sub></td>
   </tr>
 </table>
@@ -451,7 +458,7 @@ MIT — 전체 소스 코드를 감사(audit)할 수 있습니다.
 
 ## 링크
 
-- **[⬇ 데스크톱 앱 다운로드](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0)**
+- **[⬇ 데스크톱 앱 다운로드](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0)**
 - [랜딩 페이지](https://evanciel.github.io/stellavault/)
 - [Obsidian 플러그인](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)

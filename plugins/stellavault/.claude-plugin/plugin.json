@@ -1,0 +1,13 @@
+{
+  "name": "stellavault",
+  "description": "Local-first second brain for your markdown vault: semantic search with zero API keys, FSRS memory decay, and vault-grounded answers — via the bundled Stellavault MCP server (npx stellavault).",
+  "version": "0.9.0",
+  "author": {
+    "name": "Evanciel",
+    "url": "https://github.com/Evanciel/stellavault"
+  },
+  "homepage": "https://evanciel.github.io/stellavault/",
+  "repository": "https://github.com/Evanciel/stellavault",
+  "license": "MIT",
+  "keywords": ["obsidian", "second-brain", "mcp", "semantic-search", "fsrs", "zettelkasten", "karpathy-llm-wiki"]
+}

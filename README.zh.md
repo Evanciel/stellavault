@@ -9,7 +9,7 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文**
 
-[**🤖 添加到 Claude / Cursor**](#mcp-集成-21-个工具) · [**⬇ 桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0) · [**⚡ 快速开始**](#安装) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
+[**🤖 添加到 Claude / Cursor**](#mcp-集成-21-个工具) · [**⬇ 桌面应用**](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0) · [**⚡ 快速开始**](#安装) · [**🌐 在线演示**](https://evanciel.github.io/stellavault/)
 
 </div>
 
@@ -17,6 +17,13 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 >
 > ```bash
 > npx -y stellavault setup    # 将 MCP 服务器接入 Claude Code / Desktop、Cursor、Windsurf、VS Code
+> ```
+>
+> **Claude Code 用户?** 以插件方式安装 — 两条命令即可获得 MCP 服务器以及 `/vault-ask`、`/vault-review`、`/vault-decision` 技能:
+>
+> ```
+> /plugin marketplace add Evanciel/stellavault
+> /plugin install stellavault@stellavault
 > ```
 
 **一个会自我编译的第二大脑。** Stellavault 把两种关于"知识应当如何存活、生长"的思想融为一体：
@@ -68,8 +75,8 @@ Karpathy 的自编译 wiki × 卡片盒笔记法 — 完全本地、仓库非破
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-win32-x64-0.3.0.zip"><br/><b>⬇ 下载 Windows 版</b><br/><sub>x64 · 273 MB · ZIP</sub></a></td>
-    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.3.0/Stellavault-linux-x64-0.3.0.zip"><br/><b>⬇ 下载 Linux 版</b><br/><sub>x64 · 243 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-win32-x64-0.5.0.zip"><br/><b>⬇ 下载 Windows 版</b><br/><sub>x64 · 258 MB · ZIP</sub></a></td>
+    <td align="center"><a href="https://github.com/Evanciel/stellavault/releases/download/desktop-v0.5.0/Stellavault-linux-x64-0.5.0.zip"><br/><b>⬇ 下载 Linux 版</b><br/><sub>x64 · 237 MB · ZIP</sub></a></td>
     <td align="center"><br/><b>macOS</b><br/><sub>即将推出</sub></td>
   </tr>
 </table>
@@ -451,7 +458,7 @@ MIT — 全部源代码可供审计。
 
 ## 链接
 
-- **[⬇ 下载桌面应用](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.3.0)**
+- **[⬇ 下载桌面应用](https://github.com/Evanciel/stellavault/releases/tag/desktop-v0.5.0)**
 - [着陆页](https://evanciel.github.io/stellavault/)
 - [Obsidian 插件](https://github.com/Evanciel/stellavault-obsidian)
 - [npm](https://www.npmjs.com/package/stellavault)
