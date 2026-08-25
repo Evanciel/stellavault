@@ -136,7 +136,7 @@ function openaiMessageContent(m: ChatMessage): { role: string; content: unknown 
   return { role: m.role, content: m.text };
 }
 
-export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[]): ChatRequestSpec {
+export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMessage[], o?: { showThinking?: boolean }): ChatRequestSpec {
   const model = cfg.model || DEFAULT_MODELS[cfg.provider];
   // belt + braces: a 'system' role must NEVER come from the renderer-supplied turns.
   // SP4: fold audio/video transcripts into each user turn's text so all providers see them.
@@ -168,7 +168,9 @@ export function buildChatBody(cfg: LlmConfig, system: string, messages: ChatMess
       // tells the local server to skip thinking and answer directly (gemma4:e4b → 2.4s, clean).
       // Scoped to LOCAL servers only: the real OpenAI API + remote OpenAI-compat hosts
       // (Groq/OpenRouter) may reject the value, and non-reasoning models simply ignore it.
-      const skipThinking = cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL || '');
+      // showThinking (opt-in) lifts the suppression so reasoning models (deepseek-r1/qwen3)
+      // may think — their reasoning streams via the parser's thinkingDeltas.
+      const skipThinking = cfg.provider === 'openai-compatible' && isLocalProviderUrl(cfg.baseURL || '') && !o?.showThinking;
       return {
         url: `${base}/chat/completions`,
         headers: key ? { authorization: `Bearer ${key}` } : {},
@@ -210,6 +212,10 @@ export interface FrameResult {
   deltas: string[];
   done: boolean;
   refusal?: boolean;
+  // Thinking display (hermes absorb, v0.19 "show reasoning live"): reasoning-model chain-of-
+  // thought deltas, surfaced ONLY when the user opted in (showThinking). Ephemeral — never
+  // persisted to the session; rendered as a collapsible dim block in the streaming bubble.
+  thinkingDeltas?: string[];
 }
 
 /** Split a frame block into trimmed, non-empty lines. A "frame" is the text between
@@ -271,6 +277,7 @@ export function parseAnthropicSse(frame: string): FrameResult {
 export function parseOpenAiSse(frame: string): FrameResult {
   const lines = frameLines(frame);
   const deltas: string[] = [];
+  const thinkingDeltas: string[] = [];
   let done = false;
   for (const line of lines) {
     if (!line.startsWith('data:')) continue;
@@ -288,8 +295,13 @@ export function parseOpenAiSse(frame: string): FrameResult {
     }
     const content = obj?.choices?.[0]?.delta?.content;
     if (typeof content === 'string' && content.length > 0) deltas.push(content);
+    // Reasoning deltas (thinking display): Ollama's OpenAI-compat layer emits `reasoning`;
+    // DeepSeek-style APIs emit `reasoning_content`. Collected always (cheap), surfaced only
+    // when the caller wired onThinking (user opt-in).
+    const reasoning = obj?.choices?.[0]?.delta?.reasoning ?? obj?.choices?.[0]?.delta?.reasoning_content;
+    if (typeof reasoning === 'string' && reasoning.length > 0) thinkingDeltas.push(reasoning);
   }
-  return { deltas, done };
+  return { deltas, done, ...(thinkingDeltas.length > 0 ? { thinkingDeltas } : {}) };
 }
 
 /** Gemini SSE (?alt=sse): `data: <json>` lines; candidates[0].content.parts[].text. */
@@ -412,6 +424,8 @@ export interface OllamaFrameResult {
   deltas: string[];
   toolCalls: OllamaToolCall[];
   done: boolean;
+  /** Thinking display (opt-in): `message.thinking` deltas — present only when think:true. */
+  thinkingDeltas?: string[];
 }
 
 /** Parse ONE native /api/chat NDJSON line — one JSON object per line, '\n'-delimited
@@ -432,6 +446,8 @@ export function parseOllamaChatChunk(line: string): OllamaFrameResult {
   if (obj?.error) throw new ChatStreamError(String(obj.error), 'generic');
   const msg = obj?.message ?? {};
   const deltas: string[] = [];
+  const thinkingDeltas: string[] = [];
+  if (typeof msg.thinking === 'string' && msg.thinking.length > 0) thinkingDeltas.push(msg.thinking);
   const c = msg.content;
   if (typeof c === 'string') {
     if (c.length > 0) deltas.push(c);
@@ -451,7 +467,7 @@ export function parseOllamaChatChunk(line: string): OllamaFrameResult {
           },
         }))
     : [];
-  return { deltas, toolCalls, done: obj?.done === true };
+  return { deltas, toolCalls, done: obj?.done === true, ...(thinkingDeltas.length > 0 ? { thinkingDeltas } : {}) };
 }
 
 function parserFor(provider: LlmConfig['provider']): (frame: string) => FrameResult {
@@ -623,6 +639,12 @@ export interface ChatStreamOptions {
   // only, §4.5) — NOT injected into the cloud/single-shot path. '' / undefined → no skill section.
   skillCatalogue?: string;
   onSkill?: (name: string) => void; // invoke_skill → chat:skill-invoke surface
+  // Thinking display (hermes absorb): opt-in. When true, local reasoning models are ALLOWED to
+  // think (think:true on native; reasoning_effort:'none' suppressed on openai-compat) and their
+  // chain-of-thought streams via onThinking → chat:thinking. Default OFF preserves the measured
+  // gemma4 fast-path (thinking suppressed). Ephemeral — never persisted to the session.
+  showThinking?: boolean;
+  onThinking?: (delta: string) => void;
   onDelta: (delta: string) => void;
   onDone: (citations: ChatCitation[], fullText: string) => void;
   onError: (message: string, category?: ErrorCategory) => void;
@@ -743,7 +765,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
       toolset,
       executeTool,
       streamStep: (msgs) =>
-        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, false), signal, onDelta),
+        streamOnceNative(nativeUrl, buildOllamaChatBody(cfg, agentSystem, msgs, toolset.schemas, !!opts.showThinking), signal, onDelta, opts.onThinking),
       signal,
       onDelta,
       onToolCall: opts.onToolCall,
@@ -762,7 +784,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
 
   let spec: ChatRequestSpec;
   try {
-    spec = buildChatBody(cfg, system, messages);
+    spec = buildChatBody(cfg, system, messages, { showThinking: opts.showThinking });
   } catch (err) {
     fail(String((err as Error)?.message ?? 'failed to build request'), 'generic');
     return;
@@ -891,6 +913,7 @@ export async function chatStream(opts: ChatStreamOptions): Promise<void> {
               finish();
               return;
             }
+            for (const t of res.thinkingDeltas ?? []) opts.onThinking?.(t);
             for (const d of res.deltas) { fullText += d; onDelta(d); }
             if (res.done) {
               succeed(citations, fullText);
@@ -988,6 +1011,7 @@ export function streamOnceNative(
   body: unknown,
   signal: AbortSignal,
   onDelta: (d: string) => void,
+  onThinking?: (d: string) => void,
 ): Promise<StreamOnceResult> {
   return new Promise<StreamOnceResult>((resolve, reject) => {
     // Already-aborted signal: the 'abort' event already fired in the past, so a listener would
@@ -1055,6 +1079,7 @@ export function streamOnceNative(
             bad(new ChatStreamError(redactForLog(String((err as Error)?.message ?? 'stream error')), cat));
             return true;
           }
+          for (const t of res.thinkingDeltas ?? []) onThinking?.(t);
           for (const d of res.deltas) { fullText += d; onDelta(d); }
           for (const tc of res.toolCalls) toolCalls.push(tc);
           if (res.done) { ok({ text: fullText, toolCalls, aborted: false, refusal: false }); return true; }

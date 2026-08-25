@@ -40,6 +40,11 @@ export function getDefaults(): AppSettings {
     // P0-1 (hermes-port-audit §4): review-every-write confirm gate is OFF by default —
     // autonomous filing + undo is the shipped trust model; this is the explicit opt-in.
     confirmWrites: false,
+    // Thinking display (hermes absorb): OFF — gemma4 answers fastest with thinking suppressed;
+    // users who install a reasoning model (deepseek-r1/qwen3) opt in.
+    showThinking: false,
+    // Quick capture (hermes absorb): global hotkey ON by default (restart to apply changes).
+    quickCapture: true,
   };
 }
 

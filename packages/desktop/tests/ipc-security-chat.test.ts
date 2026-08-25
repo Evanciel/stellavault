@@ -67,6 +67,7 @@ const CHAT_EVENTS = [
   'chat:skill-invoke', // P3: invoke_skill loaded a skill
   'chat:memory-written', // memory-relax: autonomous core_memory_append → undo toast
   'chat:vitals',       // P1-4: context-fill bar frame (pre-stream)
+  'chat:thinking',     // wave2 C: opt-in reasoning stream (renderer-only, never persisted)
 ];
 
 describe('SP1 chat IPC — preload allowlist (renderer side)', () => {

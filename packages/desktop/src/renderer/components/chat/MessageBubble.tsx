@@ -37,9 +37,13 @@ export interface MessageBubbleProps {
   onEdit?: () => void;
   /** 'panel' = compact bubbles; 'main' = roomy, ChatGPT-style (assistant borderless). */
   variant?: 'panel' | 'main';
+  /** Thinking display (hermes absorb): accumulated reasoning text for THIS assistant turn.
+   *  Ephemeral (renderer-only, never persisted); rendered as a collapsible dim block —
+   *  open while the answer hasn't started, auto-collapsed once real text streams. */
+  thinking?: string;
 }
 
-export function MessageBubble({ message, state = 'done', errorLabel, onRetry, action, onRegenerate, onEdit, variant = 'panel' }: MessageBubbleProps) {
+export function MessageBubble({ message, state = 'done', errorLabel, onRetry, action, onRegenerate, onEdit, variant = 'panel', thinking }: MessageBubbleProps) {
   const t = useT();
   const openFile = useAppStore((s) => s.openFile);
   const isUser = message.role === 'user';
@@ -172,9 +176,21 @@ export function MessageBubble({ message, state = 'done', errorLabel, onRetry, ac
         ) : (
           // ASSISTANT turns: the ONLY place assistant markdown is rendered.
           <div className="sv-chat-md">
+            {thinking && (
+              // Thinking block: PLAIN TEXT (pre-wrap), never markdown — reasoning is model
+              // scratchwork, not content; rendering it inert avoids a second markdown surface.
+              <details open={!message.text && state === 'streaming'} style={{ marginBottom: message.text ? 8 : 0 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 10.5, color: 'var(--ink-faint)', listStyle: 'none', userSelect: 'none' }}>
+                  🧠 {t('panel.ai.thinkingLabel')}{state === 'streaming' && !message.text ? '…' : ''}
+                </summary>
+                <div style={{ marginTop: 4, padding: '6px 9px', borderLeft: '2px solid var(--border)', fontSize: 11, lineHeight: 1.55, color: 'var(--ink-faint)', whiteSpace: 'pre-wrap', maxHeight: 220, overflow: 'auto' }}>
+                  {thinking}
+                </div>
+              </details>
+            )}
             {message.text
               ? <SanitizedMarkdown>{message.text}</SanitizedMarkdown>
-              : <span style={{ color: 'var(--ink-faint)' }}>{t('panel.ai.streamingMessage')}</span>}
+              : !thinking && <span style={{ color: 'var(--ink-faint)' }}>{t('panel.ai.streamingMessage')}</span>}
             {state === 'streaming' && (
               <>
                 <span aria-hidden style={{ opacity: 0.5 }}> ▌</span>
