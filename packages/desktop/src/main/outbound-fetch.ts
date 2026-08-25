@@ -21,6 +21,22 @@
 import { net } from 'electron';
 import { assertPublicUrl } from '@stellavault/core';
 
+/**
+ * 자격증명(API 키 / Bearer / 토큰)을 실어 보내는 요청의 목적지 호스트를 기대 provider 호스트로 PIN한다.
+ * case-fold + trailing-dot strip 후 '정확히 일치'(NOT endsWith — 'api.openai.com.evil.com' 거부).
+ * redirect:'error'와 함께 쓰면 키가 절대 다른 호스트로 재전송되지 않는다.
+ * core assertPublicUrl은 IP/SSRF만 보고 호스트 화이트리스트가 없으므로 이 핀은 net-new다.
+ *  - 'api.openai.com' / 'API.OpenAI.COM' / 'api.openai.com.'  → 통과(같은 호스트)
+ *  - 'api.openai.com.evil.com' / 'evil.com' / '' / expected '' → throw
+ */
+export function assertExactHost(host: string, expected: string): void {
+  const norm = (h: string): string => h.trim().toLowerCase().replace(/\.+$/, '');
+  const e = norm(expected);
+  if (!e || norm(host) !== e) {
+    throw new Error('Outbound host pin mismatch');
+  }
+}
+
 export interface SafeFetchOptions {
   /** 누적 응답 바이트 상한. 기본 8MiB. */
   maxBytes?: number;

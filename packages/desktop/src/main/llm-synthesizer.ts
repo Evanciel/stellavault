@@ -14,6 +14,7 @@
 // never returned to the renderer.
 
 import { net } from 'electron';
+import { assertExactHost } from './outbound-fetch.js';
 import type { Synthesizer, SynthesisSource } from '@stellavault/core';
 import {
   ANTHROPIC_VERSION, DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_MODELS, OPENAI_BASE_URL, type AiProvider,
@@ -67,8 +68,18 @@ function wikiPrompt(topic: string, sources: SynthesisSource[]): string {
 /** Generic JSON POST over net.request (system-proxy aware). Parses protocol/host/port/
  *  path from `url`, so the SAME helper serves https://api.openai.com AND
  *  http://localhost:11434 (local loopback uses plain http via the URL's protocol).
- *  Resolves {status, body}; rejects on transport error / timeout. */
-function postJson(url: string, headers: Record<string, string>, bodyObj: unknown): Promise<{ status: number; body: string }> {
+ *  Resolves {status, body}; rejects on transport error / timeout.
+ *
+ *  Security: `expectedHost` PINS the destination — the key/Bearer (and Gemini's
+ *  key-in-URL) may ONLY ever reach that host. Combined with redirect:'error', a 3xx at
+ *  api.anthropic.com / api.openai.com hard-fails instead of replaying the credential to
+ *  the redirect host (Electron's default 'follow' would exfiltrate it). */
+function postJson(
+  url: string,
+  headers: Record<string, string>,
+  bodyObj: unknown,
+  expectedHost: string,
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     let u: URL;
     try {
@@ -82,12 +93,22 @@ function postJson(url: string, headers: Record<string, string>, bodyObj: unknown
       reject(new Error('Unsupported AI endpoint protocol'));
       return;
     }
+    // Host PIN before the request is built / any header set: the credential may only
+    // reach `expectedHost` (exact, case-folded, trailing-dot-stripped — NOT endsWith).
+    try {
+      assertExactHost(u.hostname, expectedHost);
+    } catch {
+      reject(new Error('AI endpoint host mismatch'));
+      return;
+    }
     const request = net.request({
       method: 'POST',
       protocol,
       hostname: u.hostname,
       port: u.port ? Number(u.port) : undefined,
       path: u.pathname + u.search,
+      // redirect:'error' — never auto-follow a 3xx and replay the credential off-host.
+      redirect: 'error',
     });
     request.setHeader('content-type', 'application/json');
     for (const [k, v] of Object.entries(headers)) request.setHeader(k, v);
@@ -120,6 +141,7 @@ function callAnthropic(cfg: LlmConfig, prompt: string): Promise<string> {
     'https://api.anthropic.com/v1/messages',
     { 'anthropic-version': ANTHROPIC_VERSION, 'x-api-key': cfg.apiKey },
     { model: cfg.model || DEFAULT_ANTHROPIC_MODEL, max_tokens: MAX_TOKENS, messages: [{ role: 'user', content: prompt }] },
+    'api.anthropic.com',
   ).then(({ status, body }) => {
     if (status < 200 || status >= 300) throw new Error(`Anthropic API error ${status}`);
     const parsed = JSON.parse(body);
@@ -140,12 +162,15 @@ function callOpenAiCompatible(cfg: LlmConfig, prompt: string, baseURL: string): 
   const key = (cfg.apiKey ?? '').trim();
   if (key) headers['authorization'] = `Bearer ${key}`;
   const url = `${baseURL.replace(/\/+$/, '')}/chat/completions`;
+  // Pin to the configured base's host (api.openai.com for 'openai'; the user's host for
+  // 'openai-compatible'). new URL throws on a malformed base → surfaces as a rejection.
+  const expectedHost = new URL(url).hostname;
   return postJson(url, headers, {
     model: cfg.model,
     max_tokens: MAX_TOKENS,
     messages: [{ role: 'user', content: prompt }],
     stream: false,
-  }).then(({ status, body }) => {
+  }, expectedHost).then(({ status, body }) => {
     if (status < 200 || status >= 300) throw new Error(`OpenAI-compatible API error ${status}`);
     const parsed = JSON.parse(body);
     const text = (parsed?.choices?.[0]?.message?.content ?? '').trim();
@@ -159,10 +184,11 @@ function callOpenAiCompatible(cfg: LlmConfig, prompt: string, baseURL: string): 
 function callGemini(cfg: LlmConfig, prompt: string): Promise<string> {
   const model = cfg.model || DEFAULT_GEMINI_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  // Gemini carries the key in the URL query — pin so a redirect can't replay the whole URL.
   return postJson(url, {}, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: MAX_TOKENS },
-  }).then(({ status, body }) => {
+  }, 'generativelanguage.googleapis.com').then(({ status, body }) => {
     if (status < 200 || status >= 300) throw new Error(`Gemini API error ${status}`);
     const parsed = JSON.parse(body);
     const cand = parsed?.candidates?.[0];
